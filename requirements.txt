@@ -1,0 +1,4 @@
+# 전국 공영도매시장 경매원천정보 API 수집기에 필요
+# preprocess_auction.py / preprocess_shipments.py는 표준 라이브러리만 사용
+requests>=2.31,<3
+urllib3>=1.26,<3

@@ -1,0 +1,41 @@
+# ---------------------------------------------
+# 제주 감귤 Agent — Git에 포함하지 않을 파일
+# ---------------------------------------------
+
+# 인증정보 (예시 템플릿 .env.example 은 추적 가능)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python 캐시 / 빌드 산출물
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# 가상환경
+.venv/
+venv/
+env/
+
+# 공영도매시장 API 원본 응답 캐시 (데이터 CSV는 제외하지 않음)
+data/.auction_api_cache*/
+data/**/.auction_api_cache*/
+
+# 임시 파일·개인 환경
+*.log
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Jupyter 체크포인트
+.ipynb_checkpoints/
