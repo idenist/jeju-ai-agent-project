@@ -121,7 +121,7 @@ def iter_records(input_files: list[Path]):
                 yield record, headers
 
 
-def run(input_files: list[Path], out_dir: Path) -> dict:
+def run(input_files: list[Path], out_dir: Path, report_dir: Path | None = None) -> dict:
     if not input_files:
         raise ValueError("입력 CSV가 최소 1개 필요합니다")
 
@@ -278,10 +278,13 @@ def run(input_files: list[Path], out_dir: Path) -> dict:
             quality_flags(transactions=metrics["count"], variety_summary=True),
         ))))
 
+    if report_dir is None:
+        report_dir = out_dir.parent / "reports"
     out_dir.mkdir(parents=True, exist_ok=True)
+    report_dir.mkdir(parents=True, exist_ok=True)
     detail_csv = out_dir / "daily_prices.csv"
     summary_csv = out_dir / "daily_variety_prices.csv"
-    report_path = out_dir / "auction_quality_report.json"
+    report_path = report_dir / "auction_quality_report.json"
     write_csv(detail_csv, DETAILED_FIELDS, detail_rows)
     write_csv(summary_csv, VARIETY_FIELDS, summary_rows)
 
@@ -333,9 +336,11 @@ def cli() -> int:
                         help="원본 CSV 경로(여러 개 가능). 기본: data/raw/auction_trades.csv")
     parser.add_argument("--out-dir", type=Path, default=root / "data/processed",
                         help="결과 저장 폴더 (기본: data/processed)")
+    parser.add_argument("--report-dir", type=Path, default=root / "data/reports",
+                        help="검증 보고서 저장 폴더 (기본: data/reports)")
     args = parser.parse_args()
     try:
-        result = run(args.input, args.out_dir)
+        result = run(args.input, args.out_dir, args.report_dir)
     except (OSError, ValueError) as exc:
         print(f"[오류] {exc}", file=sys.stderr)
         return 1
@@ -346,7 +351,7 @@ def cli() -> int:
     print(f"  제외 사유: {result['rejected_by_primary_reason']}")
     print(f"  파일: {args.out_dir / 'daily_prices.csv'}")
     print(f"        {args.out_dir / 'daily_variety_prices.csv'}")
-    print(f"        {args.out_dir / 'auction_quality_report.json'}")
+    print(f"        {args.report_dir / 'auction_quality_report.json'}")
     return 0
 
 

@@ -1,7 +1,7 @@
 {
   "source": "제주데이터허브 #855 신고소별 감귤류 및 만감류 출하량 통계",
   "source_files": {
-    "/mnt/data/신고소별감귤류및만감류출하량통계.csv": "cp949"
+    "data/raw/jeju_shipments.csv": "cp949"
   },
   "unit": "ton",
   "raw_rows": 46836,

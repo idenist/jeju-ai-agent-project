@@ -17,10 +17,11 @@ jeju/
 │   │   ├── daily_prices.csv         # 동일 조건별 일일 경매가격
 │   │   ├── daily_variety_prices.csv # 품종별 일일 가격 동향
 │   │   ├── daily_shipments.csv      # 품종별 일일 출하량
-│   │   ├── monthly_shipments.csv    # 품종별 월간 출하량
-│   │   ├── auction_quality_report.json
-│   │   ├── shipment_quality_report.json
-│   │   └── shipment_unassigned_rows.csv
+│   │   └── monthly_shipments.csv    # 품종별 월간 출하량
+│   ├── reports/
+│   │   ├── auction_quality_report.json  # 경매가격 검증·제외 사유
+│   │   ├── shipment_quality_report.json # 출하량 검증·누락 통계
+│   │   └── shipment_unassigned_rows.csv # 날짜 누락 등 미배정 원본
 │   ├── .auction_api_cache/         # 이전 방식 수집 캐시 (Git 제외)
 │   └── .auction_api_cache_mclsf14/ # 현재 수집 방식 캐시 (Git 제외)
 ├── docs/
@@ -35,7 +36,7 @@ jeju/
 └── README.md
 ```
 
-현재 검증 보고서는 **`data/processed/`에 저장**됩니다. `data/reports/`로 옮길 경우에는 두 전처리 스크립트의 출력 경로도 같이 수정해야 합니다.
+**출력 경로:** 두 전처리 스크립트 모두 집계 CSV는 `data/processed/`, 품질 보고서·날짜 미배정 기록은 `data/reports/`에 저장합니다. `--report-dir` 옵션으로 보고서 경로를 별도로 바꿀 수도 있습니다.
 
 ## 2. 환경 설정
 
@@ -64,7 +65,7 @@ python scripts/preprocess_shipments.py
 ```
 
 입력: `data/raw/auction_trades.csv`, `data/raw/jeju_shipments.csv`  
-출력: `data/processed/` 아래 가격·출하량 CSV 및 품질 검증 파일
+출력: 집계 CSV 4종 → `data/processed/`, 검증 보고서·날짜 미배정 기록 → `data/reports/`
 
 ### B. 경매 원본 추가 수집 (필요할 때만)
 
@@ -96,12 +97,13 @@ python scripts/preprocess_auction.py
 - 제주 출하량 원본: 2018-01-01 ~ 2025-09-17, 마지막 월은 부분 집계
 - 출하량 원본의 **날짜가 없는 한라봉 기록**은 날짜를 추정하지 않고 별도 CSV에 보관합니다.
 - `조생귤`(경매)과 `노지온주`(출하량) 등 서로 다른 분류체계를 확인 없이 일대일 매핑하지 않습니다.
+- `daily_variety_prices.csv`는 등급·크기 구성이 혼합된 참고용 요약이고, 동일 조건 비교에는 `daily_prices.csv`를 우선 사용합니다.
 
 ## 5. 팀 개발·공유 규칙
 
 1. `data/raw/`의 원본 파일은 직접 수정하지 않습니다.
 2. 전처리 규칙을 바꾸면 해당 스크립트를 수정하고 `data/processed/`를 재생성합니다.
-3. Agent는 가능하면 가공 CSV를 읽고, 보관비·감량률 등은 사용자 입력으로 받습니다.
+3. Agent는 가능하면 `data/processed/`의 가공 CSV를 읽고, 보관비·감량률 등은 사용자 입력으로 받습니다. `data/reports/`는 검증·오류 분석용입니다.
 4. Git에 올리기 전 `.gitignore`가 적용됐는지 `git status`로 확인합니다. **API 캐시·인증키는 올리지 않습니다.**
 5. 신규 팀원은 `requirements.txt` 설치 → 전처리 스크립트 실행 → `agents/`에서 개발을 시작합니다.
 

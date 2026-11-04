@@ -4,8 +4,8 @@
 입력:  data/raw/jeju_shipments.csv (원본은 수정하지 않음)
 출력:  data/processed/daily_shipments.csv
        data/processed/monthly_shipments.csv
-       data/processed/shipment_unassigned_rows.csv
-       data/processed/shipment_quality_report.json
+       data/reports/shipment_unassigned_rows.csv
+       data/reports/shipment_quality_report.json
 
 사용: python scripts/preprocess_shipments.py
       python scripts/preprocess_shipments.py --input data/raw/jeju_shipments.csv
@@ -88,7 +88,7 @@ def save_csv(path: Path, fields: list[str], records: Iterable[dict]) -> None:
         writer.writerows(records)
 
 
-def preprocess(inputs: list[Path], out_dir: Path) -> dict:
+def preprocess(inputs: list[Path], out_dir: Path, report_dir: Path | None = None) -> dict:
     all_rows: list[tuple[str, dict[str, str]]] = []
     encodings: dict[str, str] = {}
     for path in inputs:
@@ -262,11 +262,14 @@ def preprocess(inputs: list[Path], out_dir: Path) -> dict:
         ],
     }
 
+    if report_dir is None:
+        report_dir = out_dir.parent / "reports"
     out_dir.mkdir(parents=True, exist_ok=True)
+    report_dir.mkdir(parents=True, exist_ok=True)
     save_csv(out_dir / "daily_shipments.csv", DAILY_COLS, daily_rows)
     save_csv(out_dir / "monthly_shipments.csv", MONTHLY_COLS, monthly_rows)
-    save_csv(out_dir / "shipment_unassigned_rows.csv", UNASSIGNED_COLS, invalid)
-    (out_dir / "shipment_quality_report.json").write_text(
+    save_csv(report_dir / "shipment_unassigned_rows.csv", UNASSIGNED_COLS, invalid)
+    (report_dir / "shipment_quality_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     return report
@@ -282,9 +285,13 @@ def main() -> int:
         "--output-dir", default="data/processed", metavar="DIR",
         help="출력 폴더. 기본값: data/processed",
     )
+    parser.add_argument(
+        "--report-dir", default="data/reports", metavar="DIR",
+        help="검증 보고서·날짜 누락 기록 저장 폴더. 기본값: data/reports",
+    )
     args = parser.parse_args()
     try:
-        report = preprocess([Path(p) for p in args.input], Path(args.output_dir))
+        report = preprocess([Path(p) for p in args.input], Path(args.output_dir), Path(args.report_dir))
     except (OSError, ValueError, AssertionError) as exc:
         print(f"[전처리 실패] {exc}", file=sys.stderr)
         return 1
@@ -292,7 +299,8 @@ def main() -> int:
     print(f"[완료] 일별 {report['daily_rows']:,}행, 월별 {report['monthly_rows']:,}행")
     print(f"[주의] 날짜 미상 {report['excluded_by_reason'].get('missing_date', 0):,}건 / "
           f"{report['unassigned_numeric_volume_tons']}톤 (월별 집계에서 제외)")
-    print(f"[저장] {Path(args.output_dir).resolve()}")
+    print(f"[저장] 가격·출하량 집계: {Path(args.output_dir).resolve()}")
+    print(f"[저장] 검증 보고서: {Path(args.report_dir).resolve()}")
     return 0
 
 

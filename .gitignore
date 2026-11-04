@@ -8,6 +8,13 @@
 !.env.example
 *.pem
 *.key
+.envrc
+# Streamlit 및 기타 서비스 인증정보
+secrets.toml
+credentials.json
+service_account.json
+*.p12
+*.pfx
 
 # Python 캐시 / 빌드 산출물
 __pycache__/
