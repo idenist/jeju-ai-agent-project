@@ -1,118 +1,86 @@
 # 제주 감귤 출하 의사결정 AI Agent
 
-제주 감귤의 **즉시 출하 vs. 지연 출하**를 비교하는 팀 프로젝트입니다. 도매시장 거래가격과 과거 제주 출하량을 조회하고, 사용자에게 받은 **물량·보관비·감량률**을 바탕으로 손익분기 조건을 설명하는 AI Agent를 구현합니다.
+제주 감귤의 **즉시 출하와 지연 출하**를 비교하는 팀 프로젝트입니다. 도매시장 경매가격과 사용자 입력 조건(물량·보관비·감량률)을 활용하여 **지연 출하 손익분기 단가**를 계산합니다.
 
-> **주의:** 현재 프로젝트의 가격 데이터는 과거 경매 거래 결과입니다. 미래 가격이나 수익을 보장하는 예측값이 아닙니다. 도매시장 경락가격도 농가의 실제 수취가격과 다릅니다.
+> **현재 구현 범위:** `seunghyuk` 브랜치에는 Python 기반 계산 베이스라인과 OpenAI Responses API **Tool Calling Agent**가 구현되어 있습니다. 미래 가격 예측 모델이나 출하 시점의 확정적인 추천 기능은 아직 없습니다. **경락가격은 농가 실제 수취가격과 다릅니다.**
 
-## 1. 프로젝트 구조
+## 문서 읽는 순서
+
+| 순서 | 문서 | 대상·내용 |
+|---|---|---|
+| **01 (먼저)** | [Agent 기술 설명서](docs/01_Agent_기술설명서.md) | 전 팀원: 목적, 구조, 도구, 실제 시연, 한계 |
+| **02 (그다음)** | [Agent 실행 및 검증 안내](docs/02_Agent_실행_및_검증.md) | 개발·시연 담당: CMD 실행, `.env`, 테스트, 베이스라인 단독 실행, 수치 일관성 |
+| 03 (필요할 때) | [경매가격 전처리 안내](docs/03_경매가격_전처리.md) | 데이터 담당: 경매 원본, 필터링, 집계, 품질 검증 |
+| 04 (필요할 때) | [제주 출하량 전처리 안내](docs/04_제주_출하량_전처리.md) | 데이터 담당: 출하량 원본, 누락 처리, 월별·일별 집계 |
+
+**처음 온 팀원은 01 → 02만 읽으면 Agent 구조를 파악하고 실행할 수 있습니다.** 03·04는 원본 데이터나 전처리 규칙을 확인할 때 찾아보세요. 이전의 `베이스라인_실행안내.md`, `수치_일관성_수정_안내.md` 내용은 02에 통합했습니다.
+
+## 빠른 실행 (Windows CMD)
+
+명령어는 프로젝트 최상위 폴더에서 실행합니다. Python 3.10 이상 권장.
+
+```bat
+cd /d "C:\SKN projects\jeju"
+python -m pip install -r requirements.txt
+if not exist .env copy .env.example .env
+notepad .env
+python -m unittest discover -s tests -v
+python agents\agent.py --show-tools
+```
+
+- Conda를 사용하는 경우 설치 전에 원하는 환경을 먼저 활성화합니다. 예: `conda activate test_env`.
+- `.env`에 **OpenAI 플랫폼의 실제 `OPENAI_API_KEY`**를 설정합니다. 모델은 `OPENAI_MODEL`로 지정합니다.
+- `.env`는 Git 추적 대상이 아닙니다. **실제 키를 커밋하지 마세요.** `.env.example`만 공유합니다.
+- API로 새 경매자료를 수집할 때만 `DATA_GO_KR_KEY`가 별도로 필요합니다.
+- 상세 명령·인증 오류·베이스라인 실행법은 [02 실행 및 검증](docs/02_Agent_실행_및_검증.md)을 참고합니다.
+
+## 프로젝트 구조
 
 ```text
 jeju/
-├── agents/                   # 팀원별 Agent 구현
+├── agents/
+│   ├── agent.py                 # 자연어 질문·Tool Calling·결과 표시
+│   └── baseline.py              # 경매가격 조회·손익분기 계산
 ├── data/
 │   ├── raw/
-│   │   ├── auction_trades.csv       # 경매원천정보 API에서 수집한 감귤 거래
-│   │   └── jeju_shipments.csv      # 제주데이터허브 #855 원본
+│   │   ├── auction_trades.csv   # 경매원천정보 API 수집본
+│   │   └── jeju_shipments.csv  # 제주데이터허브 #855 원본
 │   ├── processed/
-│   │   ├── daily_prices.csv         # 동일 조건별 일일 경매가격
-│   │   ├── daily_variety_prices.csv # 품종별 일일 가격 동향
+│   │   ├── daily_prices.csv         # 동등 거래 조건별 일일 경매가격
+│   │   ├── daily_variety_prices.csv # 품종별 일일 가격 동향(참고용)
 │   │   ├── daily_shipments.csv      # 품종별 일일 출하량
 │   │   └── monthly_shipments.csv    # 품종별 월간 출하량
-│   ├── reports/
-│   │   ├── auction_quality_report.json  # 경매가격 검증·제외 사유
-│   │   ├── shipment_quality_report.json # 출하량 검증·누락 통계
-│   │   └── shipment_unassigned_rows.csv # 날짜 누락 등 미배정 원본
-│   ├── .auction_api_cache/         # 이전 방식 수집 캐시 (Git 제외)
-│   └── .auction_api_cache_mclsf14/ # 현재 수집 방식 캐시 (Git 제외)
-├── docs/
-│   ├── 감귤_경매가격_전처리_실행안내.md
-│   └── 제주_감귤_출하량_전처리_실행안내.md
+│   └── reports/                  # 품질 보고서·날짜 누락 기록
 ├── scripts/
 │   ├── collect_auction_raw.py
 │   ├── preprocess_auction.py
 │   └── preprocess_shipments.py
+├── tests/                       # 베이스라인·Tool Calling·환경설정 테스트
+├── docs/
+│   ├── 01_Agent_기술설명서.md
+│   ├── 02_Agent_실행_및_검증.md
+│   ├── 03_경매가격_전처리.md
+│   └── 04_제주_출하량_전처리.md
+├── .env.example                 # 인증키가 없는 환경설정 예시
 ├── .gitignore
-├── requirements.txt
-└── README.md
+└── requirements.txt
 ```
 
-**출력 경로:** 두 전처리 스크립트 모두 집계 CSV는 `data/processed/`, 품질 보고서·날짜 미배정 기록은 `data/reports/`에 저장합니다. `--report-dir` 옵션으로 보고서 경로를 별도로 바꿀 수도 있습니다.
+## 데이터 및 적용 범위
 
-## 2. 환경 설정
-
-- **Python 3.10 이상** 권장
-- 명령어는 반드시 프로젝트 최상위 폴더(`jeju/`)에서 실행
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-경매 API **수집 시에만** 공공데이터포털 서비스키가 필요합니다. PowerShell에서 해당 터미널 세션에 설정하세요.
-
-```powershell
-$env:DATA_GO_KR_KEY = "본인의_공공데이터포털_인증키"
-```
-
-인증키를 코드·문서·Git에 저장하거나 오류 로그의 요청 URL을 공유하지 마세요.
-
-## 3. 실행 순서
-
-### A. 이미 확보한 원본 CSV 전처리 (인터넷·API 키 불필요)
-
-```powershell
-python scripts/preprocess_auction.py
-python scripts/preprocess_shipments.py
-```
-
-입력: `data/raw/auction_trades.csv`, `data/raw/jeju_shipments.csv`  
-출력: 집계 CSV 4종 → `data/processed/`, 검증 보고서·날짜 미배정 기록 → `data/reports/`
-
-### B. 경매 원본 추가 수집 (필요할 때만)
-
-```powershell
-python scripts/collect_auction_raw.py --start 2026-10-01 --end 2026-11-03 --markets 110001
-python scripts/preprocess_auction.py
-```
-
-- 시장코드 `110001`은 **서울가락시장**입니다.
-- 현재 수집기는 **감귤 중분류 코드 `14`만 API에 전달**하고, 반환된 거래 중 과실류(`06`)·감귤(`14`)을 골라 `auction_trades.csv`를 만듭니다.
-- 전체 요청 응답 캐시는 `data/.auction_api_cache_mclsf14/`에 저장되며 Git에서는 제외합니다.
-- 수집 기간을 늘린 뒤에는 반드시 경매가격 전처리를 **다시 실행**하세요.
-- 기존 날짜 캐시를 삭제할 필요는 없습니다. 단, 수집기 옵션·캐시 경로를 변경한 경우 이전 데이터 포함 여부를 확인하세요.
-
-## 4. 데이터별 Agent 활용
-
-| 데이터 | 활용 방법 | 해석상 주의 |
+| 데이터 | 범위·용도 | 주의사항 |
 |---|---|---|
-| `daily_prices.csv` | 동일 **시장·품종·등급·크기·포장중량** 조건에서 일자별 경락가격 비교 | 등급·크기가 `미상`인 행은 구분하여 사용 |
-| `daily_variety_prices.csv` | 품종별 전체 가격 추세·거래량 요약 | 규격 구성이 달라질 수 있어 의사결정 단독 근거로 사용하지 않음 |
-| `daily_shipments.csv` | 제주 감귤류 품종별 과거 일일 출하 동향 | 시장 거래량과 같은 지표가 아님 |
-| `monthly_shipments.csv` | 과거 계절별 출하 집중 시기 파악 | 2026년 실시간 출하량이 아님 |
-| 사용자 입력 | 출하 물량, 보관기간, 추가 보관비, 감량·부패율 | 값을 모르면 임의의 실제 수치로 단정하지 않음 |
+| `daily_prices.csv` | 서울가락시장 2026-10-01 ~ 2026-11-03 경매자료, 동등 조건 가격 조회 | 현재 Agent가 실제 사용하는 가격 데이터. 실시간 가격 아님 |
+| `daily_variety_prices.csv` | 품종별 가격 동향·거래량 참고 | 크기·등급이 혼합되어 단독 손익 판단 근거로 쓰지 않음 |
+| `daily_shipments.csv`, `monthly_shipments.csv` | 2018-01-01 ~ 2025-09-17 과거 제주 신고소별 출하량 | 전처리 완료, **현재 개인 Agent에는 미연결** |
+| 사용자 입력 | 물량, 지연일수, 보관비, 전체 감량률, 선택적 가정가격 | 실제 미래 가격을 임의로 생성하지 않음 |
 
-**가격 처리:** 유효 경매 거래의 `총낙찰금액 ÷ 총중량(kg)`으로 물량 가중평균가격을 계산합니다.  
-**출하량 처리:** 신고소별 물량을 날짜·품종별로 합산합니다. 단위는 **톤(t)**입니다.
+가격은 동일 시장·품종·등급·크기·포장중량 조건에서 **총낙찰금액 ÷ 총중량(kg)**으로 산출합니다. 제주 출하량 자료의 단위는 **톤**이고, 한라봉 날짜 누락 기록은 추정하지 않고 따로 보관합니다. 경매 품종명과 출하량 품종명은 자동으로 일대일 대응시키지 않습니다.
 
-- 경매가격 원본: 2026-10-01 ~ 2026-11-03, 서울가락시장 기준 수집본
-- 제주 출하량 원본: 2018-01-01 ~ 2025-09-17, 마지막 월은 부분 집계
-- 출하량 원본의 **날짜가 없는 한라봉 기록**은 날짜를 추정하지 않고 별도 CSV에 보관합니다.
-- `조생귤`(경매)과 `노지온주`(출하량) 등 서로 다른 분류체계를 확인 없이 일대일 매핑하지 않습니다.
-- `daily_variety_prices.csv`는 등급·크기 구성이 혼합된 참고용 요약이고, 동일 조건 비교에는 `daily_prices.csv`를 우선 사용합니다.
+## 팀 개발 원칙 및 출처
 
-## 5. 팀 개발·공유 규칙
-
-1. `data/raw/`의 원본 파일은 직접 수정하지 않습니다.
-2. 전처리 규칙을 바꾸면 해당 스크립트를 수정하고 `data/processed/`를 재생성합니다.
-3. Agent는 가능하면 `data/processed/`의 가공 CSV를 읽고, 보관비·감량률 등은 사용자 입력으로 받습니다. `data/reports/`는 검증·오류 분석용입니다.
-4. Git에 올리기 전 `.gitignore`가 적용됐는지 `git status`로 확인합니다. **API 캐시·인증키는 올리지 않습니다.**
-5. 신규 팀원은 `requirements.txt` 설치 → 전처리 스크립트 실행 → `agents/`에서 개발을 시작합니다.
-
-## 6. 데이터 출처 및 자세한 설명
-
-- [공공데이터포털 — 전국 공영도매시장 경매원천정보 API](https://www.data.go.kr/data/15141810/openapi.do)
-- 제주데이터허브 #855 **「신고소별 감귤류 및 만감류 출하량 통계」**
-- 전처리 세부 규칙·컬럼 명세: `docs/감귤_경매가격_전처리_실행안내.md`, `docs/제주_감귤_출하량_전처리_실행안내.md`
-
-### 현재 단계
-
-경매가격·제주 출하량 **수집 및 전처리 파이프라인 구축 완료**. 다음 작업은 팀원별 Agent 프로토타입 구현과, 필요시 추가 시즌 데이터 확보입니다.
+- `data/raw/` 원본을 수정하지 않습니다. 전처리 규칙 변경 시 스크립트 및 처리 결과를 함께 검증합니다.
+- Agent에는 `data/processed/`를 사용하고, `data/reports/`는 전처리 품질 확인에 사용합니다.
+- 인증키, `.env`, 개인 API 응답 캐시는 커밋하지 않습니다.
+- 경매 원본: [공공데이터포털 전국 공영도매시장 경매원천정보 API](https://www.data.go.kr/data/15141810/openapi.do)
+- 출하량 원본: 제주데이터허브 #855 「신고소별 감귤류 및 만감류 출하량 통계」
