@@ -1,6 +1,6 @@
 # 제주 감귤 출하 의사결정 AI Agent
 
-제주 감귤의 **즉시 출하와 지연 출하**를 비교하기 위한 팀 프로젝트입니다. 현재 `seunghyuk` 브랜치에는 **실제 경매가격 CSV + 사용자 보관 조건 + OpenAI Tool Calling**으로 손익분기 단가를 계산하는 베이스라인이 구현되어 있습니다.
+제주 감귤의 **즉시 출하와 지연 출하**를 비교하기 위한 팀 프로젝트입니다. 현재 `seunghyuk` 브랜치에는 **실제 경매가격 CSV + 사용자 보관 조건 + OpenAI Tool Calling**으로 손익분기 단가를 계산하는 V0 베이스라인이 구현되어 있습니다. **V1에는 과거 N일 구간별 가상 손익과 데이터 근거 품질 검사**가 추가되었습니다.
 
 > **현재 구현 범위:** 미래 경락가격을 예측하거나 출하 시점을 확정적으로 추천하지 않습니다. **경락가격은 농가의 실제 수취가격이 아니며**, 보관비·감량률은 사용자가 지정하는 가정입니다.
 
@@ -27,7 +27,8 @@ python -m pip install -r requirements.txt
 if not exist .env copy .env.example .env
 notepad .env
 python -m unittest discover -s tests -v
-python agents\agent.py --show-tools
+python agents\agent.py --show-tools       REM V0 손익분기 Agent
+python agents\v1_agent.py --show-tools    REM V1 과거 시뮬레이션 포함 Agent
 ```
 
 `.env`에 **본인의 OpenAI API 키(`OPENAI_API_KEY`)**를 입력하고 `OPENAI_MODEL`을 설정해야 합니다. `.env`는 Git에서 제외되며 실제 키는 공유하지 않습니다. **API 결제는 ChatGPT 구독과 별개**입니다. 자세한 내용은 [05 실행 및 테스트](docs/05_실행_및_테스트_가이드.md)를 참고하세요.
@@ -43,8 +44,11 @@ python agents\agent.py --show-tools
 ```text
 jeju/
 ├── agents/
-│   ├── agent.py                  # 자연어·Responses API Tool Calling·출력
-│   └── baseline.py               # 동일 규격 경락가격 조회·손익 계산
+│   ├── agent.py                  # V0 자연어·Tool Calling·출력(수정하지 않음)
+│   ├── baseline.py               # V0 동일 규격 경락가격 조회·손익 계산
+│   ├── v1_agent.py               # V1 신규 도구를 포함한 독립 실행 진입점
+│   ├── historical_analysis.py    # V1 과거 날짜쌍·가상 손익 계산
+│   └── evidence_quality.py      # V1 거래건수·관측일·자료 한계 검증
 ├── scripts/
 │   ├── collect_auction_raw.py    # 공공데이터 경매 원본 수집
 │   ├── preprocess_auction.py     # 경매가격 집계·검증
@@ -74,7 +78,7 @@ jeju/
 
 - 가격은 동일 시장·품종·등급·크기·포장중량 조건에서 **총낙찰금액 ÷ 총중량(kg)**으로 계산합니다.
 - 출하량 자료의 단위는 **톤**입니다. 신고소 기준 제주 출하량과 도매시장 경매 물량은 서로 다른 지표이며, 경매 품종명과 출하량 품종명을 검증 없이 직접 연결하지 않습니다.
-- 현재 자동화 테스트 16개가 통과했고, 실제 OpenAI API에서 Tool Calling 동작을 확인했습니다. 단, **테스트가 전체 의사결정 정확도나 미래 수익을 보증하지는 않습니다.**
+- V0 기존 16개와 V1 신규 13개의 자동화 테스트(총 29개)가 통과했습니다. **실제 OpenAI API를 통한 도구 호출은 V0에서만 검증했으며, V1은 온라인 평가 전**입니다. 단, **테스트가 전체 의사결정 정확도나 미래 수익을 보증하지는 않습니다.**
 
 ## 팀 개발 원칙·출처
 
