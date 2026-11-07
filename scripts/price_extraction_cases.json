@@ -1,0 +1,290 @@
+[
+  {
+    "id": "variety-and-interval",
+    "turns": [
+      {
+        "question": "조생귤 일주일 가격 보여줘",
+        "expected": {
+          "intent": "history",
+          "variety": "조생귤",
+          "interval_days": 7
+        }
+      }
+    ]
+  },
+  {
+    "id": "missing-package-type",
+    "turns": [
+      {
+        "question": "온주 특등급 소과 5키로 조건으로 3일 차이 보고 싶어.",
+        "expected": {
+          "intent": "history",
+          "variety": "온주",
+          "grade": "특",
+          "size": "소",
+          "package_kg": 5,
+          "interval_days": 3
+        }
+      }
+    ]
+  },
+  {
+    "id": "alias",
+    "turns": [
+      {
+        "question": "극조생 감귤의 과거 14일 가격 변화는?",
+        "expected": {
+          "intent": "history",
+          "variety": "극조생감귤",
+          "interval_days": 14
+        }
+      }
+    ]
+  },
+  {
+    "id": "missing-interval",
+    "turns": [
+      {
+        "question": "조생귤 특등급 소과 상자 5kg 과거 가격을 비교해 줘.",
+        "expected": {
+          "intent": "history",
+          "variety": "조생귤",
+          "grade": "특",
+          "size": "소",
+          "package": "상자",
+          "package_kg": 5
+        }
+      }
+    ]
+  },
+  {
+    "id": "explicit-market",
+    "turns": [
+      {
+        "question": "서울가락시장의 조생귤 경매 가격을 과거 7일 간격으로 비교해 줘.",
+        "expected": {
+          "intent": "history",
+          "variety": "조생귤",
+          "market_code": "110001",
+          "trade_type": "경매",
+          "interval_days": 7
+        }
+      }
+    ]
+  },
+  {
+    "id": "exact-date",
+    "turns": [
+      {
+        "question": "2026년 10월 19일 기준 조생귤 특등급 소과 상자 5kg의 과거 7일 비교를 보여줘.",
+        "expected": {
+          "intent": "history",
+          "variety": "조생귤",
+          "grade": "특",
+          "size": "소",
+          "package": "상자",
+          "package_kg": 5,
+          "interval_days": 7,
+          "base_date": "2026-10-19"
+        }
+      }
+    ]
+  },
+  {
+    "id": "unsupported-interval",
+    "turns": [
+      {
+        "question": "과거 온주 가격을 10일 간격으로 비교해 줘.",
+        "expected": {
+          "intent": "history",
+          "variety": "온주",
+          "interval_days": 10
+        }
+      }
+    ]
+  },
+  {
+    "id": "no-spec-invented",
+    "turns": [
+      {
+        "question": "제주 감귤 과거 가격이 일주일 사이 얼마나 달라졌어? 품종이나 규격은 아직 못 정했어.",
+        "expected": {
+          "intent": "history",
+          "interval_days": 7
+        }
+      }
+    ]
+  },
+  {
+    "id": "forecast",
+    "turns": [
+      {
+        "question": "내일 조생귤 가격 오를까?",
+        "expected": {
+          "intent": "unsupported"
+        }
+      }
+    ]
+  },
+  {
+    "id": "profit",
+    "turns": [
+      {
+        "question": "감귤 3톤을 7일 보관하면 이익인지 계산해 줘.",
+        "expected": {
+          "intent": "unsupported"
+        }
+      }
+    ]
+  },
+  {
+    "id": "unrelated",
+    "turns": [
+      {
+        "question": "제주도 관광 일정 추천해 줘.",
+        "expected": {
+          "intent": "unsupported"
+        }
+      }
+    ]
+  },
+  {
+    "id": "change-weight",
+    "turns": [
+      {
+        "question": "조생귤 일주일 과거 가격 보여줘.",
+        "expected": {
+          "intent": "history",
+          "variety": "조생귤",
+          "interval_days": 7
+        }
+      },
+      {
+        "question": "특등급 소과 5키로 상자로 비교해 줘.",
+        "expected": {
+          "intent": "history",
+          "variety": "조생귤",
+          "interval_days": 7,
+          "grade": "특",
+          "size": "소",
+          "package": "상자",
+          "package_kg": 5
+        }
+      },
+      {
+        "question": "아 3kg으로 바꿔서 비교해 줘.",
+        "expected": {
+          "intent": "history",
+          "variety": "조생귤",
+          "interval_days": 7,
+          "grade": "특",
+          "size": "소",
+          "package": "상자",
+          "package_kg": 3
+        }
+      }
+    ]
+  },
+  {
+    "id": "change-interval-and-grade",
+    "turns": [
+      {
+        "question": "조생귤 특등급 소과 상자 5kg의 과거 7일 가격을 비교해 줘.",
+        "expected": {
+          "intent": "history",
+          "variety": "조생귤",
+          "interval_days": 7,
+          "grade": "특",
+          "size": "소",
+          "package": "상자",
+          "package_kg": 5
+        }
+      },
+      {
+        "question": "그 조건에서 간격만 14일로 바꿔 줘.",
+        "expected": {
+          "intent": "history",
+          "variety": "조생귤",
+          "interval_days": 14,
+          "grade": "특",
+          "size": "소",
+          "package": "상자",
+          "package_kg": 5
+        }
+      },
+      {
+        "question": "등급은 특 말고 등외로.",
+        "expected": {
+          "intent": "history",
+          "variety": "조생귤",
+          "interval_days": 14,
+          "grade": "등외",
+          "size": "소",
+          "package": "상자",
+          "package_kg": 5
+        }
+      }
+    ]
+  },
+  {
+    "id": "change-date-and-variety",
+    "turns": [
+      {
+        "question": "2026-10-19 기준 조생귤 특등급 소과 상자 5kg의 7일 과거 가격 비교를 해 줘.",
+        "expected": {
+          "intent": "history",
+          "variety": "조생귤",
+          "interval_days": 7,
+          "grade": "특",
+          "size": "소",
+          "package": "상자",
+          "package_kg": 5,
+          "base_date": "2026-10-19"
+        }
+      },
+      {
+        "question": "기준일만 2026-10-27로 바꿔 줘.",
+        "expected": {
+          "intent": "history",
+          "variety": "조생귤",
+          "interval_days": 7,
+          "grade": "특",
+          "size": "소",
+          "package": "상자",
+          "package_kg": 5,
+          "base_date": "2026-10-27"
+        }
+      },
+      {
+        "question": "나머지는 두고 품종만 온주로 바꿔 줘.",
+        "expected": {
+          "intent": "history",
+          "variety": "온주",
+          "interval_days": 7,
+          "grade": "특",
+          "size": "소",
+          "package": "상자",
+          "package_kg": 5,
+          "base_date": "2026-10-27"
+        }
+      }
+    ]
+  },
+  {
+    "id": "box-alias",
+    "turns": [
+      {
+        "question": "온주 특등급 소과 10kg 박스로 과거 7일 가격 차이를 보여 줘.",
+        "expected": {
+          "intent": "history",
+          "variety": "온주",
+          "grade": "특",
+          "size": "소",
+          "package": "상자",
+          "package_kg": 10,
+          "interval_days": 7
+        }
+      }
+    ]
+  }
+]
