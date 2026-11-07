@@ -31,6 +31,7 @@ from agents.baseline import (  # noqa: E402
 
 MARKET_CODE = "110001"  # 현재 수집된 원본은 서울가락시장만 포함한다.
 
+# 이 지침은 LLM에게 판단의 범위를 제한한다. 실제 계산·데이터 검증은 아래 Python 도구가 담당한다.
 SYSTEM_PROMPT = """당신은 제주 감귤의 출하 시점 판단을 보조하는 AI Agent입니다.
 
 원칙:
@@ -54,6 +55,7 @@ SYSTEM_PROMPT = """당신은 제주 감귤의 출하 시점 판단을 보조하�
 """
 
 
+# 등록 가능한 도구의 JSON 인수 형식을 엄격히 제한해 예기치 않은 키가 섞이지 않도록 한다.
 def tool_schema(name: str, description: str, properties: dict, required: list[str]) -> dict:
     """Responses API의 엄격한 함수 호출 스키마를 구성한다."""
     return {
@@ -70,6 +72,7 @@ def tool_schema(name: str, description: str, properties: dict, required: list[st
     }
 
 
+# 가격 조회에 필요한 최소 4개 규격. 이 정보가 없으면 서로 다른 상품 가격이 혼합될 수 있다.
 PRICE_FIELDS = {
     "variety": {"type": "string", "description": "표준 감귤 품종명. 예: 조생귤, 극조생감귤"},
     "grade": {"type": "string", "description": "경매 등급. 예: 특, 상, 미상"},
@@ -77,6 +80,8 @@ PRICE_FIELDS = {
     "package_kg": {"type": "number", "description": "포장 한 개의 중량(kg). 예: 5"},
 }
 
+# 비교 도구는 규격뿐 아니라 물량·기간·비용·감량률을 추가로 요구한다.
+# 엄격한 스키마에서는 현재/미래 가격도 키를 포함해야 하며, 모르면 null을 사용한다.
 SHIPPING_FIELDS = {
     **PRICE_FIELDS,
     "quantity_kg": {"type": "number", "description": "출하 물량(kg). 3톤이라면 3000"},
@@ -93,6 +98,7 @@ SHIPPING_FIELDS = {
     },
 }
 
+# 이 이름을 LLM에 광고한다. 모델은 호출할 도구·인수만 결정하고 구현 코드는 실행하지 못한다.
 TOOLS = [
     tool_schema(
         "get_market_price",
@@ -109,6 +115,7 @@ TOOLS = [
 ]
 
 
+# 모든 도구가 같은 규격 검증·가격 필터를 공유해 서로 다른 결과를 내지 않도록 한다.
 def _validated_options(args: dict, prices_file: Path):
     """가격 조회에서 사용할 조건을 검사하고 기존 베이스라인을 호출한다."""
     variety = str(args["variety"]).strip()
@@ -119,6 +126,7 @@ def _validated_options(args: dict, prices_file: Path):
     package_kg = to_decimal(args["package_kg"], "포장중량")
     if package_kg <= 0:
         raise ValueError("포장중량은 0보다 커야 합니다.")
+    # 단가 자체를 LLM이 만들지 않도록 실제 CSV의 일별 관측 목록을 조회한다.
     observations = load_price_observations(
         prices_file,
         variety=variety,
@@ -130,6 +138,7 @@ def _validated_options(args: dict, prices_file: Path):
     return variety, grade, size, package_kg, observations
 
 
+# 조회된 날짜별 기록을 LLM에 돌려줄 근거 데이터로 정리한다.
 def _observation_info(observations: list, days: int | None = None) -> dict:
     """최근 거래와 정확히 N일 전 거래를 구분해서 반환한다."""
     if not observations:
@@ -146,6 +155,7 @@ def _observation_info(observations: list, days: int | None = None) -> dict:
         "quality_flags": list(latest.quality_flags),
         "is_future_forecast": False,
     }
+    # 보관 일수와 동일한 N일 전을 찾되, 거래일 기준 N번째 이전으로 대체하지 않는다.
     if days is not None:
         previous_date = latest.date - timedelta(days=days)
         previous = next((o for o in observations if o.date == previous_date), None)
@@ -167,6 +177,7 @@ def _observation_info(observations: list, days: int | None = None) -> dict:
     return info
 
 
+# 가격만 묻는 질문용. 계산 도구와 달리 사용자 물량·보관 조건은 요구하지 않는다.
 def get_market_price(args: dict, prices_file: Path) -> dict:
     variety, grade, size, pkg, observations = _validated_options(args, prices_file)
     return {
@@ -179,10 +190,13 @@ def get_market_price(args: dict, prices_file: Path) -> dict:
     }
 
 
+# 손익분기 비교용. 가격 조회가 내부에 포함되므로 가격 도구를 따로 호출할 필요가 없다.
 def compare_shipping(args: dict, prices_file: Path) -> dict:
     variety, grade, size, pkg, observations = _validated_options(args, prices_file)
     latest = observations[-1] if observations else None
+    # 실제 견적 단가를 사용자가 제공했다면 그 값을 우선하고, 없을 때만 CSV 관측가격을 쓴다.
     user_price = args["current_price_per_kg"]
+    # 시장 거래가 없는 규격이라도 사용자 기준단가가 있으면 가정 계산을 진행할 수 있다.
     if user_price is None and latest is None:
         raise ValueError("동일 조건 경락가격이 없습니다. 실제 현재 단가(원/kg)를 알려 주세요.")
     actual_price = (
@@ -192,10 +206,12 @@ def compare_shipping(args: dict, prices_file: Path) -> dict:
     delay_days = args["delay_days"]
     if isinstance(delay_days, bool) or not isinstance(delay_days, int):
         raise ValueError("보관 일수는 정수여야 합니다.")
+    # 미래 단가는 모델이 추측하지 않는다. 사용자가 직접 제시한 경우에만 시나리오에 사용한다.
     future_price = (
         to_decimal(args["future_price_per_kg"], "미래 가정가격")
         if args["future_price_per_kg"] is not None else None
     )
+    # 계산식을 agent.py에 복제하지 않고 재현 가능한 순수 Python 함수에 위임한다.
     result = calculate_break_even(
         current_price_per_kg=actual_price,
         quantity_kg=to_decimal(args["quantity_kg"], "출하 물량"),
@@ -204,6 +220,7 @@ def compare_shipping(args: dict, prices_file: Path) -> dict:
         loss_percent=to_decimal(args["loss_percent"], "누적 감량률"),
         future_price_per_kg=future_price,
     )
+    # 원 단위로만 제시할 때 반올림 대신 올림해야 최소 손익분기 단가를 보장한다.
     whole = result.break_even_price_per_kg.quantize(Decimal("1"), rounding=ROUND_CEILING)
     data = {
         "conditions": {
@@ -234,6 +251,7 @@ def compare_shipping(args: dict, prices_file: Path) -> dict:
             "보관비·감량률은 사용자 가정값이고 두 선택지의 공통 비용은 제외했습니다.",
         ],
     }
+    # 이 필드는 조건부 가정 손익이다. 모델 예측값이나 실제 수익으로 표현하면 안 된다.
     if future_price is not None:
         data["future_hypothesis"] = {
             "assumed_price_krw_per_kg": fixed(future_price, 2),
@@ -245,12 +263,14 @@ def compare_shipping(args: dict, prices_file: Path) -> dict:
 
 
 
+# 응답의 수치는 반드시 Python 도구가 반환한 문자열을 인용하며, LLM이 재계산하지 않는다.
 def format_verified_result(name: str, result: dict) -> str:
     """숫자는 도구 결과를 그대로 사용해 한국어 보고서를 구성한다.
 
     LLM이 표시용 반올림 단가로 총금액을 재계산하면 수 원 차이가 발생할 수 있다.
     따라서 Tool Calling은 LLM이 담당하되, 최종 수치 표시는 Python이 담당한다.
     """
+    # 조회 결과만 요구된 경우에는 가격·날짜·거래건수만 출력한다.
     if name == "get_market_price":
         conditions = result["conditions"]
         lines = [
@@ -289,6 +309,7 @@ def format_verified_result(name: str, result: dict) -> str:
         )
         if observation.get("quality_flags"):
             lines.append("데이터 주의 표시: " + ", ".join(observation["quality_flags"]))
+    # 최근 시장 관측가격과 사용자 직접 입력가격의 출처를 반드시 구분한다.
     revenue_label = (
         "최근 관측가격 기준 즉시 출하 가정 매출"
         if result["current_price_source"] == "CSV 최근 관측값"
@@ -303,6 +324,7 @@ def format_verified_result(name: str, result: dict) -> str:
         f"필요 가격 상승률: {result['required_increase_percent']}%",
         "※ 총매출은 표시용 단가를 다시 곱하지 않고, 반올림 전 가격으로 계산했습니다.",
     ]
+    # 사용자가 미래 가정가격을 제시한 경우에만 추가 차액이 존재한다.
     future = result.get("future_hypothesis")
     if future:
         lines += [
@@ -312,6 +334,7 @@ def format_verified_result(name: str, result: dict) -> str:
             f"즉시 출하 대비 차액: {future['difference_vs_now_krw']}원",
         ]
 
+    # 과거 단 한 쌍의 시점 비교다. 가격 상승 가능성이나 미래 수익을 의미하지 않는다.
     past = observation.get("past_price_change", {})
     if past and past.get("change_percent") is not None:
         lines.append(
@@ -325,6 +348,7 @@ def format_verified_result(name: str, result: dict) -> str:
     return "\n".join(lines)
 
 
+# 함수명 허용 목록(화이트리스트)과 인수 형태를 확인한 뒤에만 실제 Python 함수를 호출한다.
 def execute_tool(name: str, args: dict, prices_file: Path) -> dict:
     """LLM이 지정한 도구만 허용하고, 계산 관련 오류는 결과로 전달한다."""
     allowed = {
@@ -333,15 +357,18 @@ def execute_tool(name: str, args: dict, prices_file: Path) -> dict:
     }
     if name not in allowed:
         return {"error": "등록되지 않은 도구입니다.", "tool_name": name}
+    # 스키마에서 선언한 입력 키와 실제 전달 키를 비교해 누락·추가 인수를 거부한다.
     expected = set(PRICE_FIELDS if name == "get_market_price" else SHIPPING_FIELDS)
     if not isinstance(args, dict) or set(args) != expected:
         return {"error": "도구 입력 필드가 누락되었거나 예상하지 않은 필드가 있습니다.", "required_fields": sorted(expected)}
     try:
         return allowed[name](args, prices_file)
+    # 예측 가능한 도구 오류는 전체 대화 중단 대신 오류 데이터를 LLM에 돌려준다.
     except (KeyError, OSError, ValueError, TypeError, ArithmeticError) as exc:
         return {"error": str(exc), "tool_name": name}
 
 
+# 한 번의 사용자 질문에 대해 LLM의 도구 요청·실행·도구 결과 회신을 왕복한다.
 def run_turn(
     client: Any,
     question: str,
@@ -355,6 +382,8 @@ def run_turn(
     """Responses API의 함수 호출을 실행하고, 호출 결과를 LLM에 다시 전달한다."""
     if not question.strip():
         raise ValueError("질문이 비어 있습니다.")
+    # tool_choice="auto": 모델이 도구 호출 또는 추가 질문 중 하나를 선택한다.
+    # parallel_tool_calls=False: 같은 시점에 여러 함수 호출이 뒤섞이는 상황을 피한다.
     request = {
         "model": model,
         "instructions": SYSTEM_PROMPT,
@@ -363,21 +392,27 @@ def run_turn(
         "tool_choice": "auto",
         "parallel_tool_calls": False,
     }
+    # 이전 응답 ID를 전달하면 새 질문이 앞선 대화 문맥을 이어받는다.
     if previous_response_id:
         request["previous_response_id"] = previous_response_id
     response = client.responses.create(**request)
+    # 도구 결과는 LLM의 설명 텍스트와 별도로 보관해 최종 숫자 출력을 보호한다.
     successful_results: list[tuple[str, dict]] = []
     had_tool_error = False
 
+    # 모델이 도구를 반복 요청할 수 있지만 무한 반복하지 않도록 횟수를 제한한다.
     for _ in range(max_rounds):
         if response.status != "completed":
             raise RuntimeError(f"LLM 응답이 완료되지 않았습니다: {response.status}")
+        # tool 호출 응답과 최종 자연어 응답은 형태가 다르다. function_call 항목만 실행한다.
         calls = [item for item in response.output if item.type == "function_call"]
+        # 더 이상 호출할 함수가 없으면 한 턴이 완료된 것이다.
         if not calls:
             # LLM의 설명 문장에 포함된 숫자는 재계산·반올림 오류가 생길 수 있다.
             # 성공한 분석 결과가 있으면 모델의 숫자 설명 대신 검증된 도구
             # 결과로 보고서를 구성한다. 입력이 부족한 경우에는 LLM의 추가 질문을 쓴다.
             if successful_results and not had_tool_error:
+                # 가격 조회와 출하 비교를 모두 했다면 더 완전한 compare_shipping 결과만 보고한다.
                 comparisons = [item for item in successful_results if item[0] == "compare_shipping"]
                 selected = comparisons or [
                     item for item in successful_results if item[0] == "get_market_price"
@@ -390,6 +425,7 @@ def run_turn(
                 raise RuntimeError("LLM이 빈 답변을 반환했습니다.")
             return content, response.id
 
+        # 각 function_call의 JSON 문자열을 파싱하여 이름에 맞는 Python 함수로 전달한다.
         outputs = []
         for call in calls:
             try:
@@ -398,6 +434,7 @@ def run_turn(
                 result = {"error": "도구 입력이 유효한 JSON이 아닙니다."}
             else:
                 result = execute_tool(call.name, args, prices_file)
+            # 예외를 정상 분석결과로 착각해 보고서에 쓰지 않는다.
             if "error" in result:
                 had_tool_error = True
             elif call.name == "compare_shipping" or (
@@ -408,12 +445,14 @@ def run_turn(
                 print(f"[도구 호출] {call.name}", file=sys.stderr)
                 if "error" in result:
                     print(f"[도구 오류] {result['error']}", file=sys.stderr)
+            # call_id가 원래 모델의 요청과 실행 결과를 연결하는 식별자다.
             outputs.append({
                 "type": "function_call_output",
                 "call_id": call.call_id,
                 "output": json.dumps(result, ensure_ascii=False),
             })
         # 완료된 응답 ID와 도구별 call_id를 이용해 동일 대화를 이어간다.
+        # 도구 결과를 직전 response.id에 연결해 모델이 계속 대화하게 한다.
         response = client.responses.create(
             model=model,
             instructions=SYSTEM_PROMPT,
@@ -426,6 +465,7 @@ def run_turn(
     raise RuntimeError("도구 호출이 반복되어 최대 실행 횟수를 초과했습니다.")
 
 
+# CLI 진입점: 설정 파일 확인 → 패키지 및 CSV 확인 → 대화 반복 순서로 수행한다.
 def main(argv: list[str] | None = None) -> int:
     # 프로젝트 루트의 .env를 읽는다. OS 환경변수가 설정되어 있다면 그 값을 우선한다.
     try:
@@ -434,6 +474,7 @@ def main(argv: list[str] | None = None) -> int:
         print("[오류] python-dotenv가 설치되지 않았습니다. "
               "python -m pip install -r requirements.txt", file=sys.stderr)
         return 1
+    # override=False이므로 잘못된 OS 환경변수가 남아 있으면 .env 수정만으로 해결되지 않는다.
     load_dotenv(dotenv_path=PROJECT_ROOT / ".env", override=False)
 
     parser = argparse.ArgumentParser(description="감귤 출하 판단 Tool Calling Agent")
@@ -455,6 +496,7 @@ def main(argv: list[str] | None = None) -> int:
         print("[오류] Python 패키지가 없습니다: python -m pip install -r requirements.txt", file=sys.stderr)
         return 1
 
+    # API 호출 재시도·연결 제한과 분석 도구의 최대 라운드 수는 서로 다른 개념이다.
     client = OpenAI(timeout=30, max_retries=2)
     previous_id = None
     try:
@@ -475,6 +517,7 @@ def main(argv: list[str] | None = None) -> int:
                 break
             if not question:
                 continue
+            # 매 턴 반환된 응답 ID를 다음 질문에 넘겨 이전 사용자 조건을 기억하게 한다.
             reply, previous_id = run_turn(client, question,
                                           previous_response_id=previous_id,
                                           model=args.model, prices_file=args.prices_file,

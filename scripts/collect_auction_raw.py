@@ -36,10 +36,12 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+# 외부 API는 원자료 수집 전용이다. 실행 중인 Agent가 호출하는 실시간 가격 API가 아니다.
 API_URL = "https://apis.data.go.kr/B552845/katOrigin/trades"
 PAGE_SIZE = 100  # 이미 실험으로 정상 동작이 검증된 크기
 
 
+# 요청 범위 오류를 수집 시작 전에 차단한다. 미래 날짜는 조회하지 않는다.
 def dates_between(start: str, end: str) -> list[str]:
     first, last = date.fromisoformat(start), date.fromisoformat(end)
     if first > last:
@@ -50,6 +52,7 @@ def dates_between(start: str, end: str) -> list[str]:
             for i in range((last - first).days + 1)]
 
 
+# HTTP 오류나 일시적인 통신 실패를 제한적으로 재시도하는 세션을 구성한다.
 def make_session() -> requests.Session:
     session = requests.Session()
     retry = Retry(
@@ -64,6 +67,7 @@ def make_session() -> requests.Session:
     return session
 
 
+# 날짜·시장별 페이지를 요청한다. 중분류 14만 API에서 필터링하고 과실류 여부는 로컬에서 확인한다.
 def get_page(session: requests.Session, key: str, market: str,
              day: str, page: int, timeout: int) -> tuple[list[dict], int]:
     params = {
@@ -73,6 +77,7 @@ def get_page(session: requests.Session, key: str, market: str,
         "numOfRows": PAGE_SIZE,
         "cond[whsl_mrkt_cd::EQ]": market,
         "cond[trd_clcln_ymd::EQ]": day,
+        # 대분류까지 동시에 API 필터링하면 응답이 지연될 수 있어 중분류 조건만 전달한다.
         "cond[gds_mclsf_cd::EQ]": "14",  # 단독 조건은 실제 0.4초 응답 확인
     }
     # 연결 대기(10초)와 API 응답 대기(--timeout)를 분리한다.
@@ -90,6 +95,7 @@ def get_page(session: requests.Session, key: str, market: str,
             f"유형={kind} HTTP={status} / 응답 제한={timeout}초 "
             "(인증키를 포함한 요청 URL은 출력하지 않음)"
         ) from None
+    # API가 반환하는 totalCount와 페이지별 실제 행 수의 일치 여부도 확인한다.
     try:
         payload = resp.json()
         api_response = payload["response"]
@@ -119,10 +125,12 @@ def get_page(session: requests.Session, key: str, market: str,
                            f"응답 앞부분={resp.text[:180]}") from exc
 
 
+# 하루·시장 단위 파일명을 일정하게 유지해 실패한 날짜만 재수집할 수 있도록 한다.
 def cache_file(cache_dir: Path, market: str, day: str) -> Path:
     return cache_dir / f"{market}_{day}.json"
 
 
+# 파일 존재만으로 완료 처리하지 않고, 기록 건수와 쿼리 조건까지 검증한다.
 def read_cache(file: Path) -> dict:
     result = json.loads(file.read_text(encoding="utf-8"))
     if (result.get("query_filter") != "gds_mclsf_cd=14"
@@ -133,10 +141,12 @@ def read_cache(file: Path) -> dict:
     return result
 
 
+# 하루의 모든 페이지가 완성되기 전에는 캐시를 정상 완료로 저장하지 않는다.
 def collect_one_day(session: requests.Session, key: str, market: str,
                     day: str, cache_dir: Path, gap: float, timeout: int,
                     refresh: bool) -> dict:
     path = cache_file(cache_dir, market, day)
+    # 기존 캐시가 유효하면 API를 재호출하지 않아 시간과 할당량을 아낀다.
     if path.exists() and not refresh:
         cached = read_cache(path)
         print(f"[캐시] {market} {day}: {cached['total_count']:,}건")
@@ -156,6 +166,7 @@ def collect_one_day(session: requests.Session, key: str, market: str,
             raise RuntimeError(f"수집 중 totalCount 변경: {market} {day}, "
                                f"{total} → {latest_total}; 다시 실행하세요.")
         records.extend(rows)
+    # 페이지 누락이 있는 날짜는 이후 전처리에서 정상적인 0건으로 처리하면 안 된다.
     if len(records) != total:
         raise RuntimeError(f"페이지 누락: {market} {day}, "
                            f"기대={total:,}, 실제={len(records):,}")
@@ -178,12 +189,14 @@ def collect_one_day(session: requests.Session, key: str, market: str,
     return result
 
 
+# 중분류 코드 14는 다른 대분류에도 나타나므로 대분류 06까지 함께 검사한다.
 def is_citrus(row: dict) -> bool:
     """중분류코드 14는 다른 대분류에도 존재하므로 과실류 06을 추가 확인."""
     return (str(row.get("gds_lclsf_cd")) == "06"
             and str(row.get("gds_mclsf_cd")) == "14")
 
 
+# 캐시 JSON에는 API 응답 전체를 보존하고, 분석용 원본 CSV로는 감귤 행만 내보낸다.
 def export_all_cached(cache_dir: Path, out: Path) -> tuple[int, int, int]:
     files = sorted(cache_dir.glob("*.json"))
     if not files:
@@ -194,6 +207,7 @@ def export_all_cached(cache_dir: Path, out: Path) -> tuple[int, int, int]:
     seen_cols: set[str] = set()
     total_rows = 0
     citrus_rows = 0
+    # 미리 모든 캐시의 컬럼을 확인하여 날짜별 응답 스키마 차이로 값이 누락되지 않게 한다.
     for file in files:
         cached = read_cache(file)
         total_rows += len(cached["records"])
@@ -212,6 +226,7 @@ def export_all_cached(cache_dir: Path, out: Path) -> tuple[int, int, int]:
 
     out.parent.mkdir(parents=True, exist_ok=True)
     temp = out.with_name(out.name + ".tmp")
+    # 최종 CSV도 임시 파일을 모두 작성한 다음 교체하여 쓰기 중단 손상을 줄인다.
     try:
         with temp.open("w", encoding="utf-8-sig", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=columns, extrasaction="raise")
@@ -227,6 +242,7 @@ def export_all_cached(cache_dir: Path, out: Path) -> tuple[int, int, int]:
     return len(files), total_rows, citrus_rows
 
 
+# API 키·기간·캐시 위치를 입력받고 날짜별 수집 → 전체 CSV 재생성 순으로 수행한다.
 def main() -> int:
     ap = argparse.ArgumentParser(description="공영도매시장 감귤 경매 원본 CSV 자동 수집")
     ap.add_argument("--start", required=True, help="첫 날짜 YYYY-MM-DD")
@@ -246,6 +262,7 @@ def main() -> int:
     key = os.environ.get("DATA_GO_KR_KEY", "").strip()
     if not key:
         ap.error("DATA_GO_KR_KEY 환경변수에 공공데이터포털 서비스키를 넣어주세요.")
+    # 서비스키는 인코딩 형태로 발급될 수 있으므로 중복 URL 인코딩을 피한다.
     key = unquote(key)  # 인코딩 키를 넣었어도 requests가 중복 인코딩하지 않도록
     days = dates_between(args.start, args.end)
     if not days:
@@ -278,6 +295,7 @@ def main() -> int:
         print(f"수집 완료: {count_dates}개 날짜·시장 / API 원본 {count_rows:,}건 / CSV 감귤 거래 {citrus_rows:,}건")
         print("※ 원본 JSON 캐시는 모든 응답 행을 보존합니다. CSV에서는 과실류(06)·감귤(14)만 선별합니다.")
         print("※ 제주산/경매 여부 및 거래의 수치·품종·등급은 임의 수정하거나 제외하지 않았습니다.")
+    # 일부 날짜 수집이 실패하면 종료 코드를 1로 돌려줘 성공과 구분한다.
     if failed:
         print("실패한 날짜를 확인하고 같은 명령어를 다시 실행하세요. "
               "완료된 날짜는 재수집하지 않습니다.", file=sys.stderr)
