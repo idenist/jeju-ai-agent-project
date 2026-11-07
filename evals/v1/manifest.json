@@ -1,0 +1,27 @@
+{
+  "dataset_version": "1.0.0",
+  "dataset_file": "dataset.jsonl",
+  "dataset_sha256": "e48e77aedbbc3ba5bdc0eab30a08c283a62c75b835d09f1e98775aff7704312c",
+  "price_data_repo_path": "data/processed/daily_prices.csv",
+  "price_data_git_blob_sha": "397cda80e3fed539d639ce6d35db3f71ed46586e",
+  "v0_baseline_commit": "f87481d65ccffbbc10d5c083168cc59c6ca7768e",
+  "created_on": "2026-11-07",
+  "evaluation_analysis_date": "2026-11-07",
+  "split_counts": {
+    "dev": 14,
+    "holdout": 6
+  },
+  "category_counts": {
+    "historical": 8,
+    "options": 4,
+    "sensitivity": 4,
+    "evidence": 4
+  },
+  "case_count": 20,
+  "turn_count": 20,
+  "status": "goldset_frozen_no_live_evaluation",
+  "reference_rounding": "Decimal ROUND_HALF_UP, money whole KRW, price 2 decimals; ceil for minimum whole-KRW price",
+  "scope": "시장=서울가락(110001), 경매, 상자, 동일 품종/등급/크기/포장중량",
+  "schema_version": "v1-new-feature-eval-1",
+  "evaluation_rubric": "structured tool outputs and natural-language safety/manual review are separate; existing V0 grader not compatible"
+}
