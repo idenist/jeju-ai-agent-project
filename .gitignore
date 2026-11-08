@@ -43,6 +43,8 @@ data/**/.auction_api_cache*/
 Thumbs.db
 .vscode/
 .idea/
+artifacts/
+output/
 
 # Jupyter 체크포인트
 .ipynb_checkpoints/

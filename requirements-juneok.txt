@@ -1,0 +1,6 @@
+-r requirements.txt
+openai==2.52.0
+python-dotenv==1.2.1
+streamlit>=1.42,<2
+reportlab==5.1.0
+pypdf==7.0.0
