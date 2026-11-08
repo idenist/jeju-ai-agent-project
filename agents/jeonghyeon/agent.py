@@ -51,6 +51,13 @@ def format_result(result: dict) -> str:
             return result["error"]
         return "조회하지 못했습니다. 입력 조건과 비교 데이터 파일을 확인해 주세요."
     lines = []
+    changes = result.get("normalized_conditions", {})
+    if changes:
+        labels = [
+            f"{FIELD_LABELS[field]} {change['from']} → {change['to'] or '조건 확인 필요'}"
+            for field, change in changes.items()
+        ]
+        lines.append("자료 표기로 바꾼 조건 — " + ", ".join(labels))
     if result.get("applied_defaults_note"):
         lines.append("자료에서 자동 적용한 기준 — " + result["applied_defaults_note"])
     if status == "NEEDS_CLARIFICATION":

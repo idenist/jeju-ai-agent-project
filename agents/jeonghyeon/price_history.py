@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 from collections import Counter
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
@@ -88,6 +89,37 @@ def read_rows(path: Path) -> list[dict]:
     return rows
 
 
+def normalize_conditions(args, rows):
+    normalized = dict(args)
+    changes = {}
+    aliases = {
+        "grade": {"특등급": "특", "등외등급": "등외"},
+        "size": {"소과": "소", "중과": "중", "대과": "대"},
+    }
+    # 확인한 별칭만 사용하고 자료에 없는 규격은 그대로 조회한다.
+    for field in (*aliases, "package"):
+        original = args.get(field)
+        if not isinstance(original, str):
+            continue
+        value = original.strip()
+        labels = {r[field] for r in rows}
+        if original in labels:
+            continue
+        candidate = aliases.get(field, {}).get(value, value)
+        if field == "package":
+            weight = r"[0-9]+(?:\.[0-9]+)?\s*(?:kg|키로|킬로그램)"
+            if re.fullmatch(weight, value, re.IGNORECASE):
+                normalized[field] = None
+                changes[field] = {"from": original, "to": None}
+                continue
+            if re.fullmatch(rf"(?:{weight}\s*)?박스", value, re.IGNORECASE):
+                candidate = "상자"
+        if candidate != original and candidate in labels:
+            normalized[field] = candidate
+            changes[field] = {"from": original, "to": candidate}
+    return normalized, changes
+
+
 def get_price_history(args: dict, data_file: Path = DEFAULT_FILE) -> dict:
     allowed = {*FILTERS, "interval_days", "base_date", "limit"}
     if not isinstance(args, dict) or set(args) - allowed:
@@ -122,6 +154,8 @@ def get_price_history(args: dict, data_file: Path = DEFAULT_FILE) -> dict:
             value = value.strip()
         supplied[field] = value
     rows = read_rows(Path(data_file))
+    supplied, normalized_conditions = normalize_conditions(supplied, rows)
+    supplied = {k: v for k, v in supplied.items() if v is not None}
     try:
         source = Path(data_file).resolve().relative_to(ROOT.resolve()).as_posix()
     except ValueError:
@@ -136,7 +170,7 @@ def get_price_history(args: dict, data_file: Path = DEFAULT_FILE) -> dict:
                 supplied[field] = value
                 applied_defaults[field] = value
     common = {"is_future_forecast": False, "source": source, "cautions": CAUTIONS,
-              "applied_defaults": applied_defaults}
+              "applied_defaults": applied_defaults, "normalized_conditions": normalized_conditions}
     if "market_code" in applied_defaults:
         names = sorted({r.get("market", "") for r in rows} - {""})
         common["applied_defaults_note"] = "시장: " + (" / ".join(names) or applied_defaults["market_code"])

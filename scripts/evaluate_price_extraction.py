@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from agents.jeonghyeon.agent import PROPERTIES, TOOL_NAME, run_turn
+from agents.jeonghyeon.price_history import DEFAULT_FILE, normalize_conditions, read_rows
 
 
 CASE_FILE = Path(__file__).with_name("price_extraction_cases.json")
@@ -106,15 +107,50 @@ def fixture_client(expected):
     ))
 
 
+def add_effective_scores(report):
+    rows = read_rows(DEFAULT_FILE)
+    previous_by_case = {}
+    for result in report["results"]:
+        actual = result["actual"]
+        effective = None
+        changes = {}
+        if actual is not None:
+            effective, changes = normalize_conditions(actual, rows)
+        # 자동 적용값과 별칭 변환의 효과를 섞지 않고, 원래 호출 채점도 보존한다.
+        case = result["case"]
+        expected = result["expected"]
+        scored = score(expected, effective, previous_by_case.get(case))
+        previous_by_case[case] = expected
+        result.update(effective_actual=effective, normalized_conditions=changes,
+                      effective_exact_match=scored["exact_match"],
+                      effective_differences=scored["differences"],
+                      effective_invented_fields=scored["invented_fields"],
+                      effective_missed_changes=scored["missed_changes"],
+                      effective_dropped_fields=scored["dropped_fields"])
+    report["effective_exact_matches"] = sum(r["effective_exact_match"] for r in report["results"])
+    for metric in ("invented_fields", "missed_changes", "dropped_fields"):
+        key = f"effective_{metric}"
+        report[key] = sum(len(r[key]) for r in report["results"])
+        report[f"effective_turns_with_{metric}"] = sum(bool(r[key]) for r in report["results"])
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dry-run", action="store_true", help="정답을 모의 응답으로 사용해 실행 경로 확인")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--dry-run", action="store_true", help="정답을 모의 응답으로 사용해 실행 경로 확인")
+    modes.add_argument("--replay", type=Path, help="저장된 모델 호출을 API 없이 다시 채점")
     parser.add_argument("--model", default=os.getenv("OPENAI_MODEL", "gpt-5-mini"))
     parser.add_argument("--output", type=Path, help="평가 결과 JSON 저장 경로")
     args = parser.parse_args()
-    cases = json.loads(CASE_FILE.read_text(encoding="utf-8"))
+    if args.replay and args.output and args.replay.resolve() == args.output.resolve():
+        parser.error("재채점 결과는 원본과 다른 경로에 저장해 주세요.")
+    cases = json.loads(CASE_FILE.read_text(encoding="utf-8")) if not args.replay else None
     client = None
-    if not args.dry_run:
+    if args.replay:
+        report = json.loads(args.replay.read_text(encoding="utf-8"))
+        report["mode"] = "replay"
+    elif not args.dry_run:
         if not os.getenv("OPENAI_API_KEY"):
             parser.error("실제 모델 평가는 OPENAI_API_KEY 설정이 필요합니다. --dry-run으로 모의 검증을 실행할 수 있습니다.")
         try:
@@ -128,12 +164,16 @@ def main():
             parser.exit(1, f"모델 호출 실패 ({type(exc).__name__}). 키, 모델 접근 권한, 연결을 확인해 주세요.\n")
     else:
         report = evaluate(cases, None, args.model, dry_run=True)
+    report = add_effective_scores(report)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print("모의 실행 검증" if args.dry_run else f"실제 모델 평가 ({args.model})")
+    labels = {"fixture": "모의 실행 검증", "live": "실제 모델 평가", "replay": "저장된 모델 응답 재채점"}
+    print(f"{labels[report['mode']]} ({report['model'] or '모의 응답'})")
     print(f"정답 일치 {report['exact_matches']}/{report['turns']}턴 · 호출 오류 {report['invalid_calls']}턴")
-    print(f"말하지 않은 조건 추가 {report['turns_with_invented_fields']}턴 · 변경 미반영 {report['turns_with_missed_changes']}턴 · 기존 조건 유실 {report['turns_with_dropped_fields']}턴")
+    print(f"표준화 후 정답 일치 {report['effective_exact_matches']}/{report['turns']}턴 (자동 적용 전)")
+    print(f"원래 인자 기준 · 조건 추가 {report['turns_with_invented_fields']}턴 · 변경 미반영 {report['turns_with_missed_changes']}턴 · 기존 조건 유실 {report['turns_with_dropped_fields']}턴")
+    print(f"표준화 후 기준 · 조건 추가 {report['effective_turns_with_invented_fields']}턴 · 변경 미반영 {report['effective_turns_with_missed_changes']}턴 · 기존 조건 유실 {report['effective_turns_with_dropped_fields']}턴")
     for row in report["results"]:
         if not row["exact_match"]:
             print(f"- {row['case']} 턴 {row['turn']}: {row['differences'] or '유효한 호출 없음'}")

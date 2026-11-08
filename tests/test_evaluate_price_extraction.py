@@ -2,7 +2,7 @@ import json
 import unittest
 from types import SimpleNamespace
 
-from scripts.evaluate_price_extraction import PROPERTIES, TOOL_NAME, evaluate, score
+from scripts.evaluate_price_extraction import PROPERTIES, TOOL_NAME, add_effective_scores, evaluate, score
 
 
 def full(**fields):
@@ -28,6 +28,22 @@ def scripted_client(replies):
 
 
 class ScoreTest(unittest.TestCase):
+    def test_replay_scores_normalized_and_raw_arguments_separately(self):
+        actual = {**BASE, "grade": "특등급", "size": "소과"}
+        changed = {**BASE, "interval_days": 14}
+        follow_up = {**actual, "interval_days": 14}
+        report = add_effective_scores({"exact_matches": 0, "results": [
+            {"case": "c", "expected": BASE, "actual": actual, **score(BASE, actual, None)},
+            {"case": "c", "expected": changed, "actual": follow_up, **score(changed, follow_up, BASE)},
+        ]})
+        row = report["results"][0]
+        self.assertEqual(report["exact_matches"], 0)
+        self.assertEqual(report["effective_exact_matches"], 2)
+        self.assertEqual(report["results"][1]["dropped_fields"], ["grade", "size"])
+        self.assertEqual(report["effective_turns_with_dropped_fields"], 0)
+        self.assertEqual(row["effective_actual"], BASE)
+        self.assertEqual(row["actual"]["grade"], "특등급")
+
     def test_invented_field(self):
         result = score(full(intent="history", variety="조생귤"),
                        full(intent="history", variety="조생귤", grade="특"), None)
