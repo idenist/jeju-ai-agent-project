@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from .comparison import compare_shipment_options
+from agents.common.calculation_service import compare_shipment_options
 from .state import ScenarioStore
 
 

@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from .comparison import compare_shipment_options, decimal
+from .comparison import decimal
+from agents.common.calculation_service import compare_shipment_options
 
 
 def compare_sensitivity(scenario: dict, option_id: str, loss_values: list, price_values: list | None) -> dict:

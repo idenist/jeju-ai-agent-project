@@ -1,6 +1,6 @@
 """One read-only review task with explicit component statuses and provenance."""
 from copy import deepcopy
-from .comparison import compare_shipment_options
+from agents.common.calculation_service import compare_shipment_options
 from .evidence import get_historical_shipment_context, get_market_evidence
 from .insights import decision_conditions
 from .sensitivity import compare_sensitivity

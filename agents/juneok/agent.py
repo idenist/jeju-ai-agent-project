@@ -194,7 +194,7 @@ class AgentSession:
         if not visible:
             # A free-form final response cannot establish market facts or money.
             # Missing-field guidance is generated from application state too.
-            from .comparison import compare_shipment_options
+            from agents.common.calculation_service import compare_shipment_options
             topics = [("price_basis", ("수수료", "실수취", "차감")), ("loss_rate", ("감모",)),
                       ("cost_policy", ("비용",)), ("data_scope", ("자료 범위", "관측", "출하량")),
                       ("forecast_limits", ("예측", "다음 주", "미래가격"))]

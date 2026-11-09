@@ -1,7 +1,8 @@
 """Solve one economic boundary with the existing comparison cost contract."""
 from copy import deepcopy
 from decimal import Decimal, ROUND_FLOOR
-from .comparison import compare_shipment_options, validate_partial, decimal, fixed
+from .comparison import validate_partial, decimal, fixed
+from agents.common.calculation_service import compare_shipment_options
 
 
 def solve_offer_limits(scenario, option_id, quoted_price_per_kg, solve_for):

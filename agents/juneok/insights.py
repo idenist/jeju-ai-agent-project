@@ -1,5 +1,6 @@
 """Explain finite user hypotheses without ranking or interpolating them."""
-from .comparison import compare_shipment_options, decimal
+from .comparison import decimal
+from agents.common.calculation_service import compare_shipment_options
 from .sensitivity import compare_sensitivity
 
 
