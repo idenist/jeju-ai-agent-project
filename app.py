@@ -65,6 +65,8 @@ def _reset_all():
     st.session_state.agent_messages = []
     st.session_state.pop("last_agent_reply", None)
     st.session_state.pop("sensitivity_result", None)
+    for key in ['pdf_cache', 'settlement_pdf', 'settlement_transfer']:
+        st.session_state.pop(key, None)
     _sync_card(force=True)
 
 
@@ -297,13 +299,21 @@ def _render_csv_manager():
 
 
 def _show_agent_reply(reply, current_version, draft_pending=False):
+    from agents.juneok.settlement_reporting import render_settlement, citation_details
+    settlements = [x['result'] for x in reply.get('visible_results', []) if x['result'].get('analysis_type') == 'settlement' and 'citations' in x['result']]
+    display_text = reply.get("text", "응답을 확인할 수 없습니다.")
+    for result in settlements:
+        display_text = display_text.replace(render_settlement(result), render_settlement(result, details=False))
     version = reply.get("state", {}).get("version")
     if draft_pending or version != current_version:
         suffix = "카드에 저장 전 수정이 있습니다" if draft_pending else f"현재 버전 {current_version}"
         with st.expander(f"이전 조건 버전 {version}의 응답 · {suffix}"):
-            st.markdown(reply.get("text", "응답을 확인할 수 없습니다."))
+            st.markdown(display_text)
     else:
-        st.markdown(reply.get("text", "응답을 확인할 수 없습니다."))
+        st.markdown(display_text)
+    for result in settlements:
+        with st.expander(f"정산 근거 보기 · 기록 버전 {result['record_revision']}"):
+            st.markdown(citation_details(result))
     with st.expander("실행 진단 · 필요할 때 확인"):
         st.json({"status": reply.get("status"), "events": reply.get("events", []), "metrics": reply.get("metrics", {})})
 
@@ -442,6 +452,8 @@ def main():
         ws.session.client = None
         st.session_state.pop("last_agent_reply", None)
     _sync_card(force=st.session_state.pop("_force_card_sync", False))
+    from agents.juneok.settlement_ui import hide_pending_settlement
+    settlement_dirty = hide_pending_settlement(ws)
     st.title("제주 감귤 출하 대안 비교")
     st.caption("대화로 시작하고 조건 카드에서 확인·수정하세요. 필요한 가격 조건을 비교하며 미래가격을 예측하지 않습니다.")
     with st.sidebar:
@@ -485,8 +497,8 @@ def main():
                     _show_agent_reply(message["reply"], ws.store.version, dirty_before)
                 else:
                     st.markdown(message["content"])
-        question = st.chat_input("아는 조건이나 바꿀 항목을 알려 주세요", disabled=not settings.api_key or dirty_before)
-        if question and settings.api_key and not dirty_before:
+        question = st.chat_input("아는 조건이나 바꿀 항목을 알려 주세요", disabled=not settings.api_key or dirty_before or settlement_dirty)
+        if question and settings.api_key and not dirty_before and not settlement_dirty:
             st.session_state.setdefault("agent_messages", []).append({"role": "user", "content": question})
             with st.spinner("필요한 조건과 자료를 확인합니다"):
                 reply = ws.run(question)
@@ -508,6 +520,8 @@ def main():
     if not dirty:
         _render_task_context(ws)
         _render_report(ws.current_entries())
+    from agents.juneok.settlement_ui import render_shipments
+    render_shipments(ws, dirty)
     with st.expander("사용 안내와 자료의 한계"):
         st.markdown("모르는 값은 빈칸으로 두세요. 실제 무료라고 확인한 경우에만 0을 입력합니다. 기간 전체 감모와 하루 비용을 구분하고, 가격에 포함한 비용을 다시 차감하지 않습니다. 손익분기는 필요한 가격 조건이며 예측·자동 출하 권고가 아닙니다. 저장시설·계약·납기 조건을 별도로 확인하세요. 입력됨·실제 조건 표시는 외부 사실 검증을 뜻하지 않습니다.")
         st.caption("가격 관측과 농가 제시가격은 다릅니다. 출하량과 경매시장 반입량도 다릅니다. 자료 관리자 기능은 일반 사용자의 필수 단계가 아닙니다.")

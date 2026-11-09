@@ -40,6 +40,8 @@ def tool(name: str, description: str, properties: dict) -> dict:
 
 
 TOOLS = [
+    tool("reconcile_settlement", "정산 카드에서 확인한 출하 기록을 로컬 Python에서 읽기 전용 검산하고 금액·근거는 앱에 직접 표시. 모델에는 상세 금액 없는 처리 상태만 반환. 기록이 없으면 카드 연결/입력 안내. 자연어 금액의 자동 저장·원래 가정 대조·보관 효과/수익 예측 없음.",
+         {"expected_record_revision": nullable("integer", minimum=0)}),
     tool("review_case_changes", "사용자가 앱에서 명시적으로 선택한 저장 비교와 현재 조건의 변경·재계산 결과를 읽기 전용 검토. 기준 파일이 없으면 업로드/선택 질문. 복원/현재 조건 변경 없음. 당시 보관 숫자는 사실로 재사용하지 않음.",
          {"expected_version": {"type": "integer"}}),
     tool("explore_data", "확보 CSV에 실제 존재하는 거래규격 또는 출하 품종/연월 탐색. 조건을 모르면 null, 자동 매핑/자동 가격 대입 금지. 후보는 최대20개이며 next_offset으로 이어보기. shipment 필터는 shipment_variety/year/target_month, market은 나머지 거래조건만 사용.",
@@ -97,7 +99,7 @@ def explain_term(topic: str) -> dict:
     return {"status": "OK", "topic": topic, "explanation": HELP[topic]}
 
 
-def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=None, task_context=None, input_context=None) -> dict:
+def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=None, task_context=None, input_context=None, shipment=None) -> dict:
     if not isinstance(args, dict):
         return {"status": "INVALID_INPUT", "message": "도구 입력은 객체여야 합니다."}
     schemas = {t["name"]: t["parameters"] for t in TOOLS}
@@ -110,6 +112,11 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
     if type(finish) is not bool:
         return {"status": "INVALID_INPUT", "message": "완료 표시는 true 또는 false여야 합니다."}
     try:
+        if name == "reconcile_settlement":
+            from .settlement import reconcile
+            if shipment is not None and args.get("expected_record_revision") is not None and (type(args["expected_record_revision"]) is not int or args["expected_record_revision"] != shipment.revision):
+                return {"status": "INVALID_INPUT", "analysis_type": "settlement", "message": "정산 기록 버전이 바뀌었습니다. 최신 카드 기록을 확인하세요."}
+            return reconcile(shipment)
         if name == "review_case_changes":
             if type(args.get("expected_version")) is not int or args["expected_version"] != store.version:
                 return {"status": "INVALID_INPUT", "message": "변경 검토 기준 조건이 바뀌었습니다."}

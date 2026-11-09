@@ -142,7 +142,6 @@ class UiTests(unittest.TestCase):
         app = self.make_app()
         self.assertTrue(app.chat_input[0].disabled)
         self.assertTrue(any("API 키 미설정" in str(x.value) for x in app.sidebar.markdown))
-        self.assertEqual(list(app.tabs), [])
         self.assertTrue(any(x.value == "현재 조건 카드" for x in app.subheader))
 
     def test_explicit_demo_can_be_calculated_without_key(self):

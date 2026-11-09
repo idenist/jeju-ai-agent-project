@@ -64,6 +64,9 @@ def main():
     keys = [v.encode() for k, v in dotenv_values(root / ".env", interpolate=False).items()
             if k in {"OPENAI_API_KEY", "DATA_GO_KR_KEY"} and v]
     for name, content in contents.items():
+        if Path(name).suffix.lower() == '.json':
+            from agents.juneok.settlement import reject_private_record
+            reject_private_record(content)
         if Path(name).name == ".env" or any(key in content for key in keys):
             raise ValueError("비밀정보 검사 실패: 패키지를 작성하지 않습니다.")
     manifest = {"scope": "LOCAL_TEAM_HANDOFF_CANDIDATE_NOT_TEAM_ACCEPTANCE",

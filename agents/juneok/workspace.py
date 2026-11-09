@@ -93,6 +93,9 @@ class SharedWorkspace:
         self.result_version: int | None = None
         self.data_revision = data_revision()
         self.result_data_revision = None
+        from .settlement import ShipmentStore
+        self.shipment = ShipmentStore()
+        self.session.shipment = self.shipment
 
     @property
     def store(self):
@@ -299,6 +302,7 @@ class SharedWorkspace:
         self.entries = []
         self.result_version = None
         if not preserve_conditions:
+            self.shipment.clear()
             self.session.comparison_reference = None
             from .state import ScenarioStore
             self.session.store = ScenarioStore()

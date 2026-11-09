@@ -23,7 +23,7 @@ def export_case(workspace, name):
     payload = {"name": name.strip(), "created_at_kst": datetime.now(timezone(timedelta(hours=9))).isoformat(),
         "input_context": workspace.input_context, "snapshot": workspace.store.snapshot(),
         "history": deepcopy(workspace.store.history[-100:]), "data_revision": list(workspace.data_revision),
-        "archived_results": workspace.current_entries(), "task_context": workspace.session.task_context.snapshot()}
+        "archived_results": [x for x in workspace.current_entries() if x.get("tool") != "reconcile_settlement"], "task_context": workspace.session.task_context.snapshot()}
     content = _canonical(payload)
     result = _canonical({"format": FORMAT, "version": 2, "payload": payload, "sha256": hashlib.sha256(content).hexdigest()})
     if len(result) > MAX_BYTES:

@@ -12,6 +12,7 @@ from .task_context import TaskContext, data_revision
 from .harness import ExecutionPolicy, RunStopped, RepeatGuard, bound_history, encoded_size, user_starts, classify_failure, FAILURE_GUIDANCE
 
 SYSTEM_PROMPT = """당신은 제주 감귤 출하 대안 비교 Agent입니다. 한국어로 필요한 조건을 간단히 확인합니다.
+실제 출하 기록·정산·공제·입금 검산 요청에는 reconcile_settlement를 사용하세요. 현재 기록 버전을 expected_record_revision에 넣고 기록이 없으면 null로 조회해 입력 안내를 표시합니다. 실제 기록은 카드에서 사용자 확인 후만 저장하며 update_scenario에 정산 금액을 넣지 않습니다. 검산 금액·입력·근거는 Python이 로컬 화면에 직접 표시하고 모델은 금액 없는 처리 상태만 받습니다. 동의 절차를 요구하거나 볼 수 없는 금액을 만들지 마세요. 후속 정산 질문도 최신 기록에 대해 이 도구를 다시 호출하세요. 원래 가정 대조·보관 효과 추정은 아직 미지원입니다. 근거 ID·URL을 생성하지 마세요.
 어떤 자료/규격이 있는지 모르거나 선택 도움이 필요하면 explore_data로 실제 후보를 탐색합니다. 필터는 사용자가 명시한 값만 넣고 null은 생략합니다. 후보를 실제 농가 조건으로 자동 확정하지 않습니다. 같은 표시명의 코드 모호성을 피하고 출하/경매 품종을 연결하지 않습니다.
 주어진 제안단가에서 감모나 하루 보관비를 얼마까지 감당할 수 있는지 질문하면 solve_offer_limits를 사용합니다. 제안단가를 시장조회값으로 자동 채우지 말고 사용자 값/가정을 확인합니다. 역산 변수의 기존 미확인 값은 필요하지 않지만 고정할 다른 조건은 필요합니다. 상태를 바꾸지 말고 한 변수씩 계산합니다.
 역산/민감도용 가정 단가는 해당 도구 인수에만 넣습니다. 역산 요청의 3300원 같은 가정을 update_scenario의 future_price_per_kg에 저장하면 안 됩니다. 현재 조건 유지 요청이면 update_scenario 자체를 호출하지 마세요. 사용자가 실제 저장 조건 변경을 별도로 명시한 경우에만 변경합니다.
@@ -58,6 +59,7 @@ class AgentSession:
         self.messages: list = []
         self.task_context = TaskContext()
         self.policy = policy or ExecutionPolicy()
+        self.shipment = None
 
     def run(self, question: str) -> dict:
         from .presentation import select_results, render_dialogue, report_for
@@ -93,6 +95,7 @@ class AgentSession:
                 self.messages[latest_user]["content"] = (
                     f"현재 확인된 조건: {json.dumps(self.store.snapshot(), ensure_ascii=False)}\n"
                     f"이번 검토의 과업 맥락(선택 기록·현재 수치 아님): {json.dumps(self.task_context.snapshot(), ensure_ascii=False)}\n"
+                    f"정산 기록: {json.dumps({'available': bool(self.shipment and self.shipment.revision), 'revision': self.shipment.revision if self.shipment else None, 'details': 'local_only'}, ensure_ascii=False)}\n"
                     f"사용자: {question.strip()}")
                 metrics["trimmed_history_turns"] += bound_history(self.messages, self.policy.history_turns, self.policy.input_characters)
                 metrics["request_input_characters"].append(encoded_size(self.messages))
@@ -139,7 +142,9 @@ class AgentSession:
                     calls += 1
                     tool_started = time.monotonic()
                     self.store.origin_turn_id = run_id
-                    if call.name == "review_case_changes":
+                    if call.name == "reconcile_settlement":
+                        result = execute_tool(call.name, arguments, self.store, shipment=self.shipment)
+                    elif call.name == "review_case_changes":
                         result = execute_tool(call.name, arguments, self.store, reference_case=getattr(self, "comparison_reference", None),
                             task_context=self.task_context.snapshot(), input_context=getattr(self, "comparison_input_context", None))
                     else:
@@ -150,12 +155,16 @@ class AgentSession:
                     events.append({"tool": call.name, "status": result["status"], "scenario_version": self.store.version,
                                    "task_context_version": self.task_context.snapshot()["version"],
                                    "elapsed_seconds": round(time.monotonic() - tool_started, 3)})
+                    model_output = result
+                    if call.name == 'reconcile_settlement':
+                        from .settlement import model_receipt
+                        model_output = model_receipt(result)
                     self.messages.append({"type": "function_call_output", "call_id": call.call_id,
-                                          "output": json.dumps(result, ensure_ascii=False)})
+                                          "output": json.dumps(model_output, ensure_ascii=False)})
                     if time.monotonic() - started >= self.policy.seconds:
                         raise RunStopped("TIME_LIMIT")
                     if isinstance(arguments, dict) and arguments.get("finish_turn") is True and result["status"] in {
-                            "OK", "NEEDS_INPUT", "NEEDS_CLARIFICATION", "NO_DATA"}:
+                            "OK", "NEEDS_INPUT", "NEEDS_CLARIFICATION", "NO_DATA", "PARTIAL", "CHECK_REQUIRED"}:
                         finished = True
                 if finished:
                     break

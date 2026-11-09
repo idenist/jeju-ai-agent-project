@@ -42,6 +42,9 @@ def main():
         if path.name.startswith(".env") and path.name != ".env.example":
             raise ValueError("Credential file is not packageable")
         content = path.read_bytes()
+        if path.suffix.lower() == '.json':
+            from agents.juneok.settlement import reject_private_record
+            reject_private_record(content)
         if any(key in content for key in keys):
             raise ValueError("Configured secret detected; package was not written")
         contents[relative] = content

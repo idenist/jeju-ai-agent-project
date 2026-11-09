@@ -45,8 +45,21 @@ def _visible_text(text):
 def _inline(text):
     text = _visible_text(text)
     # Escape source data before introducing our own small, known formatting vocabulary.
-    text = re.sub(r"\[([^\]]+)\]\((https?://[^\s)]+)\)", r"\1 (\2)", text)
-    escaped = escape(text, quote=False)
+    from urllib.parse import urlsplit
+    chunks, cursor = [], 0
+    for match in re.finditer(r"\[([^\]]+)\]\((https?://[^\s)]+)\)", text):
+        chunks.append(escape(text[cursor:match.start()], quote=False))
+        label, url = match.groups()
+        visible = escape(f"{label} ({url})", quote=False)
+        try:
+            parsed = urlsplit(url)
+            allowed = parsed.scheme in {"http", "https"} and bool(parsed.hostname) and not parsed.username and not parsed.password
+        except ValueError:
+            allowed = False
+        chunks.append(f'<link href="{escape(url, quote=True)}">{visible}</link>' if allowed else visible)
+        cursor = match.end()
+    chunks.append(escape(text[cursor:], quote=False))
+    escaped = "".join(chunks)
     return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", escaped).replace("`", "")
 
 

@@ -20,6 +20,7 @@ TOOL_LABELS = {"compare_shipment_options": "출하 대안 비교", "compare_sens
                "get_market_evidence": "동일조건 시장 참고가격", "update_scenario": "비교 조건 변경",
                "build_review_brief": "출하 검토 브리핑", "explain_decision_conditions": "판단이 바뀌는 조건"}
 TOOL_LABELS.update(explore_data="확보 자료 탐색", solve_offer_limits="제안단가의 허용 조건", review_case_changes="저장 비교의 변경 검토")
+TOOL_LABELS.update(reconcile_settlement="출하 기록·정산 검산")
 FIELD_NAMES.update(quoted_price_per_kg="제안 단가 또는 미래 단가 가정(원/kg)", option_id="검토할 보관 대안")
 FIELD_NAMES.update(comparison_reference="변경 검토 기준으로 선택한 저장 JSON")
 
@@ -103,6 +104,9 @@ def _render_result_body(result: dict) -> str:
     if not isinstance(result, dict):
         return "결과 형식을 확인할 수 없습니다."
     status = result.get("status", "UNKNOWN")
+    if result.get("analysis_type") == "settlement":
+        from .settlement_reporting import render_settlement
+        return render_settlement(result)
     if result.get("analysis_type") == "review_brief":
         labels = {"OK": "확인 완료", "NO_DATA": "관측자료 없음", "NEEDS_INPUT": "추가 입력 필요", "INVALID_INPUT": "입력 확인", "DATA_ERROR": "자료 오류"}
         lines = ["**" + ("선택한 검토 항목 완료" if result["review_status"] == "COMPLETE" else "부분 검토 · 확인할 항목 남음") + "**", _text(result["message"]),
@@ -264,6 +268,8 @@ def _render_result_body(result: dict) -> str:
 
 def render_result(result: dict) -> str:
     body = _render_result_body(result)
+    if result.get("analysis_type") == "settlement":
+        return body
     context = result.get("ui_context") if isinstance(result, dict) else None
     if not context:
         return body
@@ -316,7 +322,7 @@ def _report_fragment(result: dict) -> tuple[str, list[str]]:
         if stripped == "미래 단가가 입력되지 않아 미래 비교금액과 추천 순위를 제시하지 않습니다.":
             line = "미래 단가 미입력: 필요한 최소 단가만 산출했습니다."
         line = line.replace(" (사용자 표시이며 사실 검증 아님)", "")
-        if stripped == "**입력 조건에 따른 출하 대안 비교**":
+        if stripped in {"**입력 조건에 따른 출하 대안 비교**", "**출하 기록·정산 검산**"}:
             continue
         if stripped == "계산에 사용한 입력:":
             line = ""
@@ -330,7 +336,9 @@ def render_report(results: list[dict]) -> str:
     """A traceable report with canonical values and consolidated end notes."""
     fingerprint = hashlib.sha256(json.dumps({"format_version": 2, "results": results},
         ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12].upper()
-    sections = ["# 제주 감귤 출하 비교 보고서", f"문서 ID: CIT-{fingerprint}"]
+    settlement_only = bool(results) and all(x.get('result', x).get('analysis_type') == 'settlement' for x in results)
+    title = "제주 감귤 출하·정산 검산 보고서" if settlement_only else "제주 감귤 출하 비교 보고서"
+    sections = ["# " + title, f"문서 ID: CIT-{fingerprint}"]
     notices = []
     table_number = 0
     for index, entry in enumerate(results, 1):
