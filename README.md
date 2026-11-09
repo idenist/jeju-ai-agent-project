@@ -130,6 +130,25 @@ python scripts/preprocess_auction.py
 
 실제 시연에서는 조생귤·특·소·상자 5kg의 **7일 비교 20쌍**을 조회했고, “간격만 14일로 바꿔 줘”라는 후속 질문에 같은 규격을 유지해 **15쌍**을 보여줬습니다. [실제 평가 원본](data/reports/evaluation/extraction_result_1.json)은 `gpt-5-mini`의 응답입니다. [같은 응답의 재채점](data/reports/evaluation/extraction_result_1_replay.json)에서는 자료 표기를 맞춘 뒤 정답과 일치한 턴이 **9/21 → 19/21**로 바뀌었습니다.
 
+### 아키텍처
+
+```text
+데이터 준비
+  팀의 일별 경매가격 CSV → build_price_comparisons.py → 3·7·14일 비교 CSV
+
+자연어 조회
+  사용자 질문 → agent.py → OpenAI Responses API
+    → get_price_history 함수 호출 인자 → price_history.py
+    → 조건 검증·표기 변환 → 비교 CSV 조회
+    → Python이 결과·품질 경고·자료 부족 사유를 출력
+```
+
+### Tool Calling 사용 방식
+
+1. **질문에서 조건 추출.** `agent.py`는 Responses API에 `get_price_history` 함수 스키마를 등록하고 호출할 도구로 지정합니다. 스키마에 품종·등급·크기·포장·기간 등 조회 조건과 요청 의도를 정의합니다. 사용자가 말하지 않은 값은 `null`로 전달하도록 지시합니다.
+2. **호출 인자 확인 후 로컬 조회.** 모델이 반환한 함수명과 JSON 필드를 검사합니다. 과거 가격 조회 요청이면 Python에서 도구를 실행합니다. `price_history.py`는 자료 표기에 맞춰 규격을 바꾸고, 동일 조건의 비교 자료를 조회합니다. 필요한 조건이 빠졌으면 사용자에게 되묻습니다.
+3. **조회 결과를 화면에 표시.** Python이 비교 건수, 변동률, 품질 경고를 포맷해 답변합니다. 후속 질문에서는 같은 대화 기록을 함께 전달해 “간격만 14일로” 같은 변경을 해석합니다.
+
 ### 담당 기능 실행과 재현
 
 ```powershell
@@ -146,5 +165,3 @@ python -m pip install openai
 python -X utf8 -m agents.jeonghyeon.agent --model gpt-6-luna
 python -X utf8 -m scripts.evaluate_price_extraction --model gpt-6-luna --output extraction_result_luna.json
 ```
-
-V1에서는 이 조회 결과를 Streamlit에 연결하고, 두 출하안의 예상 거래일 간격과 같은 과거 변동률을 팀의 손익 함수에 전달해 금액 차이를 보여주는 작업을 제안했습니다. 원천 가격 정제와 팀 손익분기 계산은 팀의 별도 기능이며, 이 README의 시연과 평가 기록은 과거 가격 조회에 해당합니다.
