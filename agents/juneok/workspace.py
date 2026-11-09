@@ -10,18 +10,8 @@ from .tools import execute_tool
 from .ui_workflow import INPUT_CONTEXTS, COST_LABELS, manual_scenario
 from .reporting import FIELD_NAMES
 from .config import PROJECT_ROOT
-
-
-def data_revision():
-    """Detect shared CSV selection changes, including changes made by another UI/CLI."""
-    from .data_refresh import digest, resolve_market_root
-    try:
-        selected = resolve_market_root()
-        manifest = PROJECT_ROOT / "data/metadata/juneok_manifest.json"
-        pointer = PROJECT_ROOT / "artifacts/market-active.json"
-        return (digest(manifest), digest(pointer) if pointer.exists() else "baseline", str(selected))
-    except (OSError, ValueError, KeyError, TypeError):
-        return ("DATA_UNAVAILABLE",)
+from .task_context import TaskContext, data_revision
+from .harness import FAILURE_GUIDANCE
 
 
 def card_values(snapshot: dict) -> tuple[dict, list[str]]:
@@ -112,17 +102,20 @@ class SharedWorkspace:
         self.entries = deepcopy(entries)
         if execution_status != "OK":
             self.entries.append({"tool": "execution_status", "result": {"status": "ERROR",
-                "message": f"이번 요청은 {execution_status} 상태로 끝났습니다. 아래 조회·계산은 확인된 부분 결과이며 요청 전체가 완료된 것은 아닙니다."}})
+                "reason": execution_status,
+                "message": FAILURE_GUIDANCE.get(execution_status, FAILURE_GUIDANCE["API_ERROR"]) + " 아래 조회·계산은 확인된 부분 결과이며 요청 전체가 완료된 것은 아닙니다."}})
         for entry in self.entries:
             context = self.input_context
-            if entry["tool"] in {"get_market_evidence", "get_historical_shipment_context"}:
+            if entry["tool"] in {"get_market_evidence", "get_historical_shipment_context", "explore_data"}:
                 context = "원출처 관측자료 조회 · 비교 조건의 가정과 별개"
             elif entry["tool"] == "explain_term":
                 context = "용어 설명 · 실제 농가 조건의 사실 검증 아님"
             entry["result"]["ui_context"] = {"version": self.store.version, "input_context": self.input_context,
+                "task_id": self.session.task_context.snapshot()["task_id"],
+                "task_context_version": self.session.task_context.snapshot()["version"],
                 "channel": channel, "changed_fields": changed_fields or []}
             entry["result"]["ui_context"]["input_context"] = context
-            entry["result"]["ui_context"]["kind"] = "evidence" if entry["tool"] in {"get_market_evidence", "get_historical_shipment_context", "explain_term"} else "comparison"
+            entry["result"]["ui_context"]["kind"] = "evidence" if entry["tool"] in {"get_market_evidence", "get_historical_shipment_context", "explore_data", "explain_term"} else "comparison"
         self.result_version = self.store.version
         self.result_data_revision = expected_data_revision if expected_data_revision is not None else data_revision()
         return deepcopy(self.entries)
@@ -135,12 +128,16 @@ class SharedWorkspace:
         if current == self.data_revision:
             return False
         self.clear_conversation(preserve_conditions=True)
+        self.session.task_context = TaskContext()
+        if hasattr(self, "restored_archive"):
+            del self.restored_archive
         self.data_revision = current
         return True
 
-    def calculate(self, changed_fields=None):
+    def calculate(self, changed_fields=None, preserve_task_goal=False):
         revision = data_revision()
         result = execute_tool("compare_shipment_options", {"expected_version": self.store.version}, self.store)
+        self.session.task_context.record("compare_shipment_options", {}, result, set_goal=not preserve_task_goal, scenario=self.store.scenario)
         self._freeze([{"tool": "compare_shipment_options", "result": result}], "공유 조건", changed_fields, expected_data_revision=revision)
         return result
 
@@ -148,6 +145,7 @@ class SharedWorkspace:
         revision = data_revision()
         result = execute_tool("compare_sensitivity", {"expected_version": self.store.version,
             "option_id": option_id, "loss_values": losses, "price_values": prices}, self.store)
+        self.session.task_context.record("compare_sensitivity", {"option_id": option_id, "loss_values": losses, "price_values": prices}, result, scenario=self.store.scenario)
         entries = [x for x in self.current_entries() if x["tool"] != "compare_sensitivity"]
         self._freeze([*entries, {"tool": "compare_sensitivity", "result": result}], "공유 조건", expected_data_revision=revision)
         return result
@@ -155,8 +153,98 @@ class SharedWorkspace:
     def history(self, args):
         revision = data_revision()
         result = execute_tool("get_historical_shipment_context", args, self.store)
+        self.session.task_context.record("get_historical_shipment_context", args, result, scenario=self.store.scenario)
         self._freeze([{"tool": "get_historical_shipment_context", "result": result}], "과거 출하자료 조회", expected_data_revision=revision)
         return result
+
+    def explore(self, source, filters=None, offset=0, limit=20):
+        revision = data_revision()
+        args = {"source": source, "filters": filters, "offset": offset, "limit": limit}
+        result = execute_tool("explore_data", args, self.store)
+        self.session.task_context.record("explore_data", args, result, scenario=self.store.scenario)
+        self._freeze([{"tool": "explore_data", "result": result}], "확보 자료 탐색", expected_data_revision=revision)
+        return result
+
+    def offer_limits(self, option_id, quote, solve_for):
+        revision = data_revision()
+        args = {"expected_version": self.store.version, "option_id": option_id, "quoted_price_per_kg": quote, "solve_for": solve_for}
+        result = execute_tool("solve_offer_limits", args, self.store)
+        self.session.task_context.record("solve_offer_limits", args, result, scenario=self.store.scenario)
+        self._freeze([{"tool": "solve_offer_limits", "result": result}], "제안단가 허용 조건", expected_data_revision=revision)
+        return result
+
+    def market(self, args):
+        revision = data_revision()
+        result = execute_tool("get_market_evidence", args, self.store)
+        self.session.task_context.record("get_market_evidence", args, result, scenario=self.store.scenario)
+        self._freeze([{"tool": "get_market_evidence", "result": result}], "선택한 시장 참고", expected_data_revision=revision)
+        return result
+
+    def review(self, **args):
+        revision = data_revision()
+        result = execute_tool("build_review_brief", {"expected_version": self.store.version, **args}, self.store)
+        self.session.task_context.record("build_review_brief", args, result, scenario=self.store.scenario)
+        from .presentation import select_results
+        self._freeze(select_results([{"tool": "build_review_brief", "result": result}], self.store.version),
+                     "출하 검토", expected_data_revision=revision)
+        return result
+
+    def explain_conditions(self, option_id=None, loss_values=None, price_values=None):
+        revision = data_revision()
+        result = execute_tool("explain_decision_conditions", {"expected_version": self.store.version,
+            "option_id": option_id, "loss_values": loss_values, "price_values": price_values}, self.store)
+        self.session.task_context.record("explain_decision_conditions", {"option_id": option_id, "loss_values": loss_values, "price_values": price_values}, result, scenario=self.store.scenario)
+        entries = [e for e in self.current_entries() if e["tool"] != "explain_decision_conditions"]
+        self._freeze([*entries, {"tool": "explain_decision_conditions", "result": result}], "판단 조건 설명", expected_data_revision=revision)
+        return result
+
+    def export_case(self, name):
+        from .casefiles import export_case
+        return export_case(self, name)
+
+    def compare_case(self, content, expected_version):
+        from .casefiles import parse_case
+        if type(expected_version) is not int or expected_version != self.store.version:
+            return {"status": "INVALID_INPUT", "message": "변경 검토 기준 조건이 바뀌었습니다. 다시 확인하세요."}
+        try: saved = parse_case(content)
+        except ValueError as exc: return {"status": "INVALID_INPUT", "message": str(exc)}
+        revision = data_revision()
+        result = execute_tool("review_case_changes", {"expected_version": expected_version}, self.store,
+            reference_case=saved, task_context=self.session.task_context.snapshot(), input_context=self.input_context)
+        if result["status"] == "OK":
+            self.session.comparison_reference = saved
+            self.session.comparison_input_context = self.input_context
+            self.session.task_context.record("review_case_changes", {}, result, scenario=self.store.scenario)
+            self._freeze([{"tool": "review_case_changes", "result": result}], "저장 비교 변경 검토", expected_data_revision=revision)
+        return result
+
+    def restore_case(self, content, expected_version):
+        from .casefiles import parse_case
+        if type(expected_version) is not int or expected_version != self.store.version:
+            return {"status": "INVALID_INPUT", "message": "복원 기준 조건이 바뀌었습니다. 파일을 다시 확인하세요."}
+        try:
+            saved = parse_case(content)
+        except ValueError as exc:
+            return {"status": "INVALID_INPUT", "message": str(exc)}
+        candidate = deepcopy(saved["snapshot"]["scenario"])
+        for option in candidate["options"]:
+            option["loss_confirmed_for_period"] = option.get("loss_percent") is not None
+        self.store.origin_turn_id = None
+        result = self.store.update(candidate, expected_version, [k for k, v in candidate.items() if k != "options" and v is None])
+        if result["status"] != "OK":
+            return result
+        self.clear_conversation(preserve_conditions=True)
+        self.input_context = saved["input_context"]
+        self.session.task_context = TaskContext(saved.get("task_context"))
+        self.data_revision = data_revision()
+        self.restored_archive = saved
+        self.session.comparison_reference = None
+        self.store.history = deepcopy([*saved["history"], saved["snapshot"]][-100:])
+        for value in self.store.provenance.values():
+            value.update(source="imported_user_input_not_verified", turn_id=None, changed_at_version=self.store.version)
+        self.calculate(["저장한 비교 조건 복원 · 현재 자료로 재계산"], preserve_task_goal=True)
+        return {"status": "OK", "name": saved["name"], "data_changed": saved["data_revision"] != list(self.data_revision),
+                "message": "조건을 복원하고 현재 자료 기준으로 재계산했습니다. 당시 결과는 보관 기록이며 현재 결과로 실행하지 않습니다."}
 
     def apply_card(self, values: dict, expected_version: int, option_ids: list[str]):
         if expected_version != self.store.version:
@@ -190,12 +278,18 @@ class SharedWorkspace:
         updated = self.store.update(scenario, self.store.version,
             [k for k, v in scenario.items() if k != "options" and v is None])
         if updated["status"] == "OK":
+            self.clear_conversation(preserve_conditions=True)
+            self.session.task_context = TaskContext()
+            if hasattr(self, "restored_archive"):
+                del self.restored_archive
+            self.session.comparison_reference = None
             self.input_context = INPUT_CONTEXTS[2]
             self.calculate([FIELD_NAMES.get(k, k) for k in updated.get("changed_fields", [])])
         return updated
 
     def run(self, question):
         revision = data_revision()
+        self.session.comparison_input_context = self.input_context
         reply = self.session.run(question)
         self._freeze(reply.get("visible_results", []), "대화와 공유 조건", execution_status=reply.get("status", "ERROR"), expected_data_revision=revision)
         return reply
@@ -205,6 +299,10 @@ class SharedWorkspace:
         self.entries = []
         self.result_version = None
         if not preserve_conditions:
+            self.session.comparison_reference = None
             from .state import ScenarioStore
             self.session.store = ScenarioStore()
+            self.session.task_context = TaskContext()
+            if hasattr(self, "restored_archive"):
+                del self.restored_archive
             self.input_context = INPUT_CONTEXTS[0]

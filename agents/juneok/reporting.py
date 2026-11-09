@@ -6,6 +6,7 @@ import hashlib
 from decimal import Decimal, InvalidOperation
 
 FIELD_NAMES = {
+    "shipment_variety": "출하통계 품종", "target_month": "조회 월", "start_year": "시작 연도", "end_year": "마지막 연도",
     "quantity_kg": "물량(kg)", "current_price_per_kg": "지금 판매 가능한 단가(원/kg)",
     "price_basis": "수수료 차감 전·후 기준", "cost_policy": "기타 비용 처리 기준",
     "included_costs": "단가에 이미 포함된 비용 확인", "current_fee_percent": "현재 수수료율(%)",
@@ -16,7 +17,11 @@ FIELD_NAMES = {
     "package": "포장 종류", "package_kg": "포장중량(kg)",
 }
 TOOL_LABELS = {"compare_shipment_options": "출하 대안 비교", "compare_sensitivity": "내 가정 범위 비교", "get_historical_shipment_context": "제주 과거 출하통계",
-               "get_market_evidence": "동일조건 시장 참고가격", "update_scenario": "비교 조건 변경"}
+               "get_market_evidence": "동일조건 시장 참고가격", "update_scenario": "비교 조건 변경",
+               "build_review_brief": "출하 검토 브리핑", "explain_decision_conditions": "판단이 바뀌는 조건"}
+TOOL_LABELS.update(explore_data="확보 자료 탐색", solve_offer_limits="제안단가의 허용 조건", review_case_changes="저장 비교의 변경 검토")
+FIELD_NAMES.update(quoted_price_per_kg="제안 단가 또는 미래 단가 가정(원/kg)", option_id="검토할 보관 대안")
+FIELD_NAMES.update(comparison_reference="변경 검토 기준으로 선택한 저장 JSON")
 
 
 def _text(value) -> str:
@@ -98,6 +103,22 @@ def _render_result_body(result: dict) -> str:
     if not isinstance(result, dict):
         return "결과 형식을 확인할 수 없습니다."
     status = result.get("status", "UNKNOWN")
+    if result.get("analysis_type") == "review_brief":
+        labels = {"OK": "확인 완료", "NO_DATA": "관측자료 없음", "NEEDS_INPUT": "추가 입력 필요", "INVALID_INPUT": "입력 확인", "DATA_ERROR": "자료 오류"}
+        lines = ["**" + ("선택한 검토 항목 완료" if result["review_status"] == "COMPLETE" else "부분 검토 · 확인할 항목 남음") + "**", _text(result["message"]),
+                 "| 검토 항목 | 처리 상태 |", "| --- | --- |"]
+        lines += [f"| {TOOL_LABELS.get(x['tool'], _text(x['tool']))} | {labels.get(x['status'], _text(x['status']))} |" for x in result["component_statuses"]]
+        return "\n".join([*lines, *_warnings(result)])
+    if result.get("analysis_type") == "decision_conditions":
+        labels = {"HIGHER": "지금보다 비교금액 높음", "LOWER": "지금보다 비교금액 낮음", "EQUAL": "같음", "PRICE_UNKNOWN": "미래 단가 미입력"}
+        limits = result["minimum_range"]
+        lines = [f"대안: {_text(result['option_id'])}", f"입력한 가정 안의 원 단위 최소 단가: {_number(limits['low'], 0)} ~ {_number(limits['high'], 0)}원/kg",
+                 "| 기간 전체 감모 | 가정 미래 단가(원/kg) | 최소 단가(원/kg) | 지금 대비 차이(원) | 조건부 비교 |",
+                 "| --- | --- | --- | --- | --- |"]
+        lines += [f"| {_number(r['loss_percent'])}% | {_number(r['future_price_per_kg'])} | {_number(r['minimum_whole_krw_per_kg'], 0)} | {_number(r['difference_krw'])} | {labels[r['outcome']]} |" for r in result["cases"]]
+        lines += ["다음 확인: 실제 제시가격·기간 전체 감모·보관비·별도 비용을 확인하고 같은 기준으로 다시 비교하세요.",
+                  "실행 가능성: " + {"CONFLICT": "실행 제약 충돌 · 금액과 별도로 제약부터 확인", "UNCONFIRMED": "미확인 · 저장시설·계약·납기 확인", "CONFIRMED_BY_USER": "사용자가 확인함 · 외부 사실 검증 아님"}[result["feasibility"]["status"]], *_warnings(result)]
+        return "\n".join(lines)
     if status != "OK":
         labels = {"NEEDS_INPUT": "추가 입력이 필요합니다", "NEEDS_CLARIFICATION": "조회 조건을 확인해 주세요",
                   "NO_DATA": "조회 가능한 자료가 없습니다", "INVALID_INPUT": "입력값을 확인해 주세요",
@@ -112,6 +133,49 @@ def _render_result_body(result: dict) -> str:
         lines += ["", *_warnings(result)]
         return "\n".join(lines).strip()
 
+    if result.get("analysis_type") == "data_catalog":
+        lines = ["**확보 자료의 실제 선택 후보**", f"조건에 맞는 후보 {result['total_candidates']}개 · 시작 {result['offset'] + 1} · 현재 표시 {len(result['candidates'])}개",
+                 "| 선택 조건 | 실제 관측 범위/월 | 관측일 수 | 품질 확인 |", "| --- | --- | --- | --- |"]
+        for item in result["candidates"]:
+            condition = " / ".join(f"{FIELD_NAMES.get(k, '연도' if k == 'year' else k)}: {_text(v)}" for k, v in item["conditions"].items())
+            period = f"{item['first_observed']} ~ {item['last_observed']}" if "first_observed" in item else f"{item['conditions']['year']}-{item['conditions']['target_month']:02d}"
+            flags = [*item["warnings"], *( ["동명이코드 확인 필요"] if item.get("ambiguous_codes") else [])]
+            lines.append(f"| {condition} | {period} | {item['observed_days']} | {_text(', '.join(flags) or '별도 경고 없음')} |")
+        if result.get("next_offset") is not None: lines.append(f"다음 후보 시작 offset: {result['next_offset']}")
+        return "\n".join([*lines, *_source_lines(result["source"]), *_warnings(result)])
+    if result.get("analysis_type") == "offer_limits":
+        label = "기간 전체 감모율" if result["solve_for"] == "loss_percent" else "전체 물량 하루 추가 보관비"
+        kinds = {"FINITE_LIMIT": "유한한 허용 상한", "NO_FEASIBLE_VALUE": "가능한 비음수 값 없음", "ALL_VALID_VALUES": "허용 영역 전체에서 경제성 조건 충족"}
+        lines = ["**제안 단가 기준 허용 조건**", f"대안 {_text(result['option_id'])} · {result['delay_days']}일 · 제안 단가/가정 {_number(result['quoted_price_per_kg'])}원/kg",
+                 f"역산 항목: {label} · {kinds[result['boundary_kind']]}", f"대상 영역: {result['domain']}"]
+        if result["boundary_kind"] == "FINITE_LIMIT":
+            lines += [f"보수적으로 내린 표시 상한: **{result['conservative_limit']} {result['unit']}**",
+                      f"산식 경계(소수 표시): {_text(result['exact_boundary'])} {result['unit']}"]
+        lines += [f"고정한 기간 전체 감모: {_number(result['fixed_loss_percent'])}% · 고정한 하루 보관비: {_number(result['fixed_daily_storage_cost'])}원 (역산한 항목은 미입력 표시)",
+                  "실행 가능성: " + {"CONFLICT": "실행 제약 충돌", "UNCONFIRMED": "미확인", "CONFIRMED_BY_USER": "사용자가 확인함"}.get(result["feasibility"]["status"], "확인 필요")]
+        values = dict(result["input"])
+        selected = dict(next(o for o in values["options"] if o["id"] == result["option_id"]))
+        selected[result["solve_for"]] = None
+        selected["future_price_per_kg"] = result["quoted_price_per_kg"]
+        values["options"] = [selected]
+        lines += ["역산 항목의 기존 값은 고정하지 않았습니다.", *_input_lines(values), *_warnings(result)]
+        return "\n".join(lines)
+    if result.get("analysis_type") == "case_changes":
+        lines = ["**저장한 비교와 현재 조건의 변경 검토**", f"기준: {_text(result['saved_name'])} · 저장시각 {_text(result['saved_at'])}",
+                 f"자료 버전 변경: {'있음' if result['data_changed'] else '없음'} · 당시 보관 결과 {result['archived_result_count']}건 (현재 결과로 사용하지 않음)",
+                 "| 달라진 조건 | 저장 조건 | 현재 조건 |", "| --- | --- | --- |"]
+        def cell(value):
+            if value is None: return "미확인/없음"
+            return _text(json.dumps(value, ensure_ascii=False) if isinstance(value, (list, dict)) else value)
+        lines += [f"| {_field(c['field'])} | {cell(c['before'])} | {cell(c['after'])} |" for c in result["changes"]]
+        if not result["changes"]: lines.append("| 조건 변경 없음 | 동일 | 동일 |")
+        lines += ["", "**두 조건을 현재 계산 규칙으로 다시 계산한 결과**", "| 대안 | 저장 조건 최소단가 | 현재 조건 최소단가 | 차이(원/kg) |", "| --- | --- | --- | --- |"]
+        lines += [f"| {_text(o['option_id'])} | {_number(o['saved_minimum'], 0)} | {_number(o['current_minimum'], 0)} | {_number(o['difference_per_kg'])} |" for o in result["outcomes"]]
+        for label, key in [("저장", "saved_recalculated"), ("현재", "current_recalculated")]:
+            output = result[key]
+            if output["status"] != "OK": lines.append(f"{label} 조건: {output['status']} · 필요한 입력 " + ", ".join(_field(x) for x in output.get("missing_fields", [])))
+        if not result["directly_comparable"]: lines.append("가격 또는 비용 기준이 달라 단가 차이를 산출하지 않았습니다.")
+        return "\n".join([*lines, *_warnings(result)])
     if "explanation" in result:
         return "**조건과 자료 이해하기**\n\n" + _text(result["explanation"])
     if result.get("analysis_type") == "sensitivity":
@@ -213,6 +277,8 @@ def render_result(result: dict) -> str:
     lines += [body, "**다음 확인과 행동**"]
     if result.get("status") != "OK":
         lines.append("위의 부족하거나 잘못된 조건을 확인하고 다시 비교하세요. 모르는 값은 0으로 채우지 말고 직접 정한 가정과 구분하세요.")
+    elif result.get("analysis_type") == "offer_limits":
+        lines.append("실제 제안 단가·해당 기간 감모·보관비와 저장/계약 가능성을 확인하세요. 표시 상한은 다른 조건을 고정한 경계입니다.")
     elif "options" in result or result.get("analysis_type") == "sensitivity":
         lines.append("손익분기 단가는 기다렸을 때 필요한 가격 조건입니다. 미래에 그 가격을 받을 것이라는 예측이 아닙니다.")
         feasibility = result.get("feasibility", {})

@@ -95,11 +95,12 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(session.store.scenario["quantity_kg"], 3000)
         self.assertEqual(session.store.scenario["current_price_per_kg"], 3000)
 
-    def test_request_limit_stops_loop(self):
+    def test_identical_calls_stop_before_global_request_limit(self):
         items = [response(call("compare_shipment_options", {"expected_version": 0}, i)) for i in range(6)]
         result = self.session(items).run("계속 호출")
-        self.assertEqual(result["status"], "LIMIT_REACHED")
-        self.assertEqual(len(result["events"]), 6)
+        self.assertEqual(result["status"], "REPEATED_TOOL_CALL")
+        self.assertEqual(len(result["tool_results"]), 2)
+        self.assertEqual(result["metrics"]["model_requests"], 3)
 
     def test_api_error_is_sanitized_but_keeps_tool_result(self):
         session = self.session([response(call("compare_shipment_options", {"expected_version": 0})), RuntimeError("PRIVATE_TOKEN_SHOULD_NOT_ESCAPE")])

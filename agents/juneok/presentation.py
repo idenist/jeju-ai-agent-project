@@ -6,8 +6,22 @@ from .reporting import render_report, render_result, FIELD_NAMES, _field
 
 
 def select_results(results: list[dict], version: int) -> list[dict]:
+    expanded = []
+    for entry in results:
+        if entry["tool"] == "build_review_brief" and entry["result"].get("analysis_type") == "review_brief":
+            if entry["result"].get("scenario_version") != version:
+                continue
+            summary = {k: v for k, v in entry["result"].items() if k != "components"}
+            expanded.append({"tool": "build_review_brief", "result": summary})
+            for component in entry["result"]["components"]:
+                item = deepcopy(component)
+                item["result"]["scenario_version"] = version
+                expanded.append(item)
+        else:
+            expanded.append(entry)
+    results = expanded
     visible = [x for x in results if x["tool"] != "update_scenario" and
-               (x["tool"] not in {"compare_shipment_options", "compare_sensitivity"} or x["result"].get("scenario_version") == version)]
+               (x["tool"] not in {"compare_shipment_options", "compare_sensitivity", "explain_decision_conditions", "build_review_brief", "solve_offer_limits", "review_case_changes"} or x["result"].get("scenario_version") == version)]
     sensitivities = [x for x in visible if x["tool"] == "compare_sensitivity"]
     if sensitivities:
         visible = [x for x in visible if x["tool"] != "compare_sensitivity"] + [sensitivities[-1]]
@@ -58,8 +72,12 @@ def connection_label(key_present: bool, last_reply: dict | None) -> str:
     if not last_reply:
         return "API 키 설정됨 · 실제 호출 전"
     metrics = last_reply.get("metrics", {})
-    if last_reply.get("status") == "API_ERROR":
+    if last_reply.get("status") in {"API_ERROR", "CONNECTION_ERROR", "API_TIMEOUT", "AUTH_ERROR", "RATE_LIMITED"}:
         return "마지막 모델 호출 실패 · 설정·연결 확인 필요"
+    if last_reply.get("status") == "INTERNAL_ERROR":
+        return "실행 처리 오류 · 직접 비교 가능, 운영자 점검 필요"
+    if last_reply.get("status") in {"TIME_LIMIT", "TOOL_LIMIT", "REPEATED_TOOL_CALL", "CONTEXT_LIMIT", "LIMIT_REACHED"}:
+        return "실행 한도 도달 · 조건 유지, 직접 비교 가능"
     if metrics.get("model_requests", 0) and last_reply.get("status") == "OK":
         return "실제 모델 호출 성공 · 마지막 실행 기준"
     return "모델 실행 미완료 · 실행 상태 확인 필요"

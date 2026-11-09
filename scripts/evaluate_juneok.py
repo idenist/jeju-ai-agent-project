@@ -35,11 +35,24 @@ def preflight(cases: list[dict]) -> list[dict]:
     return checks
 
 
+def evaluated_entries(entries):
+    """Inspect actual composite outputs; never invent an unexecuted tool result."""
+    expanded = []
+    for entry in entries:
+        expanded.append(entry)
+        result = entry["result"]
+        if entry["tool"] == "build_review_brief":
+            expanded.extend(evaluated_entries(result.get("components", [])))
+        if entry["tool"] == "explain_decision_conditions" and result.get("analysis_type") == "decision_conditions":
+            expanded.append({"tool": "compare_sensitivity", "result": {**result, "rows": result["cases"]}})
+    return expanded
+
+
 def score(case: dict, turns: list[dict]) -> dict:
     failures = []
     if any(t["status"] != "OK" for t in turns):
         failures.append("model_or_api_error")
-    entries = turns[-1]["tool_results"] if turns else []
+    entries = evaluated_entries(turns[-1]["tool_results"]) if turns else []
     matched = [x["result"] for x in entries if x["tool"] == case.get("expected_tool")]
     if case.get("expected_tool"):
         if not matched:
@@ -86,7 +99,7 @@ def score(case: dict, turns: list[dict]) -> dict:
     if case.get("forbid_successful_comparison") and any(x["tool"] == "compare_shipment_options" and x["result"]["status"] == "OK" for x in entries):
         failures.append("premature_calculation")
     for name in case.get("required_tools", []):
-        if not any(x["tool"] == name and x["result"].get("status") == "OK" for t in turns for x in t["tool_results"]):
+        if not any(x["tool"] == name and x["result"].get("status") == "OK" for t in turns for x in evaluated_entries(t["tool_results"])):
             failures.append("missing_required_tool:" + name)
     qualities = [assess_turn(t) for t in turns if "visible_results" in t]
     if any(not q["passed"] for q in qualities):
@@ -131,8 +144,7 @@ def main() -> int:
         prior = archives / (started.strftime("%Y%m%dT%H%M%S%f") + "-previous.json")
         prior.write_bytes(path.read_bytes())
     archive_path = archives / (started.strftime("%Y%m%dT%H%M%S%f") + ".json")
-    sources = ["agents/juneok/agent.py", "agents/juneok/tools.py", "agents/juneok/state.py", "agents/juneok/presentation.py", "agents/juneok/quality.py", "agents/juneok/sensitivity.py", "agents/juneok/data_refresh.py",
-               "agents/juneok/comparison.py", "agents/juneok/evidence.py", "agents/juneok/reporting.py",
+    sources = sorted(str(p.relative_to(PROJECT_ROOT)).replace("\\", "/") for p in (PROJECT_ROOT / "agents/juneok").glob("*.py")) + [
                "scripts/evaluate_juneok.py", "evals/juneok_cases.json", "data/metadata/juneok_manifest.json"]
     metadata = {"model": settings.model, "started_at_kst": started.isoformat(),
                 "expected_runs": len(cases) * args.repeat,

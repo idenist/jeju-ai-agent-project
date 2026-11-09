@@ -126,7 +126,7 @@ class UiTests(unittest.TestCase):
             app.run()
             self.assertEqual(list(app.exception), [])
             self.assertTrue(any("3,109원/kg" in str(x.value) for x in app.markdown))
-            self.assertEqual(len(app.get("download_button")), 2)
+            self.assertEqual({b.label for b in app.get("download_button")}, {"PDF 보고서 내려받기", "MD 내려받기", "비교 JSON 내려받기"})
             with patch.dict(os.environ, {"OPENAI_MODEL": "different-model"}):
                 app.run()
                 self.assertTrue(any("실제 호출 전" in str(x.value) for x in app.sidebar.markdown))
@@ -184,7 +184,7 @@ class UiTests(unittest.TestCase):
             next(b for b in app.button if b.label == "가상 예시 조건 불러오기").click().run()
             next(b for b in app.button if b.label == "입력 조건 비교").click().run()
             self.assertEqual(app.session_state.workspace.store.version, 1)
-            self.assertEqual(len(app.get("download_button")), 2)
+            self.assertEqual({b.label for b in app.get("download_button")}, {"PDF 보고서 내려받기", "MD 내려받기", "비교 JSON 내려받기"})
             next(x for x in app.text_input if x.key == "loss_0").set_value("4").run()
             self.assertTrue(any("입력 조건이 바뀌었습니다" in x.value for x in app.warning))
             self.assertFalse(any("3,109원/kg" in str(x.value) for x in app.markdown))

@@ -8,7 +8,7 @@ import streamlit as st
 
 from agents.juneok.agent import AgentSession
 from agents.juneok.config import PROJECT_ROOT, Settings
-from agents.juneok.reporting import render_report, render_result
+from agents.juneok.reporting import render_report, render_result, FIELD_NAMES
 from agents.juneok.presentation import connection_label
 from agents.juneok.ui_workflow import COST_LABELS, INPUT_CONTEXTS, form_snapshot, condition_rows
 from agents.juneok.workspace import SharedWorkspace, card_values
@@ -71,7 +71,183 @@ def _reset_all():
 def _clear_sensitivity():
     st.session_state.pop("sensitivity_result", None)
     ws = _workspace()
-    ws.entries = [x for x in ws.entries if x["tool"] != "compare_sensitivity"]
+    ws.entries = [] if any(x["tool"] in {"build_review_brief", "explain_decision_conditions"} for x in ws.entries) else [x for x in ws.entries if x["tool"] != "compare_sensitivity"]
+
+
+def _clear_review():
+    _workspace().entries = []
+    st.session_state.pop("sensitivity_result", None)
+
+
+def _render_cases(ws, disabled):
+    from agents.juneok.casefiles import parse_case
+    with st.expander("비교 건 저장·불러오기"):
+        st.caption("조건과 당시 결과를 로컬 JSON으로 보관합니다. 대화·API 키는 포함하지 않습니다. 가져온 값의 사실 여부는 별도로 확인하세요.")
+        name = st.text_input("저장할 비교 이름", value="내 출하 비교", max_chars=80, key="case_name")
+        if not disabled and name.strip():
+            try:
+                st.download_button("비교 JSON 내려받기", ws.export_case(name), file_name="감귤_비교기록.json", mime="application/json", key="download_case")
+            except ValueError as exc:
+                st.warning(str(exc))
+        uploaded = st.file_uploader("저장한 비교 JSON", type=["json"], key="case_upload")
+        if st.button("비교 파일 확인", disabled=uploaded is None or disabled):
+            try:
+                raw = uploaded.getvalue()
+                saved = parse_case(raw)
+                from agents.juneok.workspace import data_revision
+                st.session_state.case_preview = {"digest": hashlib.sha256(raw).hexdigest(), "version": ws.store.version,
+                    "name": saved["name"], "created": saved["created_at_kst"], "data_changed": saved["data_revision"] != list(data_revision()),
+                    "archive_count": len(saved["archived_results"])}
+            except ValueError as exc:
+                st.session_state.pop("case_preview", None)
+                st.error(str(exc))
+        preview = st.session_state.get("case_preview")
+        if preview and uploaded is not None and hashlib.sha256(uploaded.getvalue()).hexdigest() == preview["digest"]:
+            st.write({"비교 이름": preview["name"], "저장 시각": preview["created"], "자료 버전 변경": preview["data_changed"], "당시 보관 결과 수": preview["archive_count"]})
+            st.caption("복원하면 현재 조건을 대체하고 대화를 비웁니다. 당시 결과는 보관하고 현재 조건은 다시 계산합니다. 해시는 내용 변경 검사이며 작성자 인증이 아닙니다.")
+            if st.button("현재 조건과 변경 사항 검토 · 복원하지 않음", disabled=disabled):
+                compared = ws.compare_case(uploaded.getvalue(), preview["version"])
+                if compared["status"] != "OK": st.error(compared["message"])
+            if st.button("확인한 조건 복원 · 현재 기준 재계산", disabled=disabled):
+                result = ws.restore_case(uploaded.getvalue(), preview["version"])
+                if result["status"] == "OK":
+                    st.session_state.agent_messages = []
+                    for key in ["last_agent_reply", "sensitivity_result", "pdf_cache", "case_preview"]:
+                        st.session_state.pop(key, None)
+                    _sync_card(force=True)
+                    st.success(result["message"])
+                else:
+                    st.error(result["message"])
+
+
+def _discovery_changed(source, index, fields):
+    for field in fields[index + 1:]:
+        st.session_state.pop(f"discovery_{source}_{field}", None)
+    st.session_state.pop("discovery_result", None)
+    st.session_state.pop("discovery_candidate", None)
+    _workspace().entries = []
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def _discovery_choices(source, filters, revision):
+    from agents.juneok.catalog import explore_data
+    return explore_data(source, filters)
+
+
+def _render_discovery(ws, disabled):
+    from agents.juneok.catalog import explore_data, MARKET, SHIPMENT
+    with st.expander("확보 자료 탐색·선택 · 키 없이 사용"):
+        for entry in ws.current_entries():
+            result = entry["result"]
+            if entry["tool"] != "explore_data" or result.get("status") not in {"OK", "NO_DATA"} or result.get("ui_context", {}).get("channel") != "대화와 공유 조건": continue
+            signature = json.dumps([result.get("filters"), result.get("catalog_source"), result.get("offset"), result.get("ui_context", {}).get("task_context_version"), list(ws.data_revision)], sort_keys=True)
+            if st.session_state.get("discovery_chat_sync") != signature:
+                src = result["catalog_source"]
+                st.session_state.discovery_source = src
+                for field in (MARKET if src == "market" else SHIPMENT):
+                    st.session_state[f"discovery_{src}_{field}"] = result["filters"].get(field)
+                st.session_state.discovery_page = result["offset"] // 20 + 1
+                st.session_state.pop("discovery_candidate", None)
+                st.session_state.discovery_result = {"result": result, "revision": ws.data_revision, "source": src, "filters": result["filters"], "page": st.session_state.discovery_page}
+                st.session_state.discovery_chat_sync = signature
+        source = st.selectbox("탐색할 자료", ["market", "shipment"], format_func=lambda x: {"market": "경매 거래규격", "shipment": "과거 출하 품종·연월"}[x], key="discovery_source", on_change=_clear_review)
+        fields = MARKET if source == "market" else SHIPMENT
+        filters = {}
+        for i, field in enumerate(fields):
+            choices = _discovery_choices(source, filters, ws.data_revision).get("available_filters", {}).get(field, [])
+            key = f"discovery_{source}_{field}"
+            if st.session_state.get(key) not in [None, *choices]: st.session_state.pop(key, None)
+            value = st.selectbox("탐색 " + {"shipment_variety": "출하 품종", "year": "연도", "target_month": "월"}.get(field, FIELD_NAMES.get(field, field)),
+                [None, *choices], format_func=lambda x: "선택 안 함" if x is None else str(x), key=key,
+                on_change=_discovery_changed, args=(source, i, fields))
+            if value is not None: filters[field] = value
+        page = st.number_input("탐색 페이지 · 페이지당20개", min_value=1, value=1, step=1, key="discovery_page", on_change=_clear_review)
+        if st.button("실제 자료 후보 탐색", disabled=disabled):
+            st.session_state.pop("discovery_candidate", None)
+            result = ws.explore(source, filters, (page - 1) * 20)
+            st.session_state.discovery_result = {"result": result, "revision": ws.data_revision, "source": source, "filters": filters, "page": page}
+        saved = st.session_state.get("discovery_result")
+        if saved and saved["source"] == source and saved["filters"] == filters and saved["page"] == page and saved["revision"] == ws.data_revision:
+            result = saved["result"]
+            candidates = result.get("candidates", [])
+            if candidates:
+                chosen = st.selectbox("조회할 실제 후보", [None, *range(len(candidates))], format_func=lambda x: "후보를 직접 선택하세요" if x is None else " / ".join(str(v) for v in candidates[x]["conditions"].values()), key="discovery_candidate")
+                if st.button("선택 후보의 관측자료 조회", disabled=disabled or chosen is None):
+                    item = candidates[chosen]
+                    if item.get("ambiguous_codes"):
+                        st.warning("같은 표시명에 여러 원천 코드가 있습니다. 자동 합산하지 않으므로 관리자 확인이 필요합니다.")
+                    elif source == "market": ws.market({**item["conditions"], "as_of": None})
+                    else:
+                        c = item["conditions"]
+                        ws.history({"shipment_variety": c["shipment_variety"], "target_month": c["target_month"], "start_year": c["year"], "end_year": c["year"]})
+            elif result.get("status") == "OK": st.info("이 페이지에 후보가 없습니다. 앞 페이지를 선택하세요.")
+        st.caption("실제 조합만 제시합니다. 출하/경매 품종 자동 연결과 제시가격 자동 대입은 하지 않습니다.")
+
+
+def _render_offer_limits(ws, disabled):
+    with st.expander("제안가격에서 허용 감모·보관비 확인"):
+        options = ws.store.scenario.get("options", [])
+        if not options:
+            st.info("비교할 물량·보관 대안과 고정 조건을 먼저 입력하세요.")
+            return
+        option = st.selectbox("허용 조건을 검토할 대안", [o["id"] for o in options], key="limits_option", on_change=_clear_review)
+        quote = st.text_input("제안 단가 또는 사용자 가정(원/kg)", key="limits_quote", on_change=_clear_review)
+        target = st.selectbox("역산할 항목 · 한 번에 하나", ["loss_percent", "daily_storage_cost"], format_func=lambda x: "기간 전체 감모율 상한" if x == "loss_percent" else "전체 물량 하루 보관비 상한", key="limits_target", on_change=_clear_review)
+        if st.button("제안 단가의 허용 조건 계산", disabled=disabled): ws.offer_limits(option, quote.strip() or None, target)
+        st.caption("고정할 다른 조건이 필요합니다. 역산 결과로 현재 조건을 자동 수정하지 않습니다.")
+
+
+def _render_review(ws, disabled):
+    with st.expander("자료와 조건을 함께 검토하기"):
+        st.caption("사용자가 선택한 과거자료와 현재 비교 조건을 한 보고서로 묶습니다. 품종을 자동 연결하거나 경락가격을 제시가격으로 대입하지 않습니다.")
+        variety = st.selectbox("브리핑 출하통계 품종", ["선택 안 함", "노지온주", "월동온주", "하우스온주", "한라봉", "천혜향", "레드향"], key="review_variety", on_change=_clear_review)
+        month = st.number_input("브리핑 조회 월", min_value=1, max_value=12, value=11, key="review_month", on_change=_clear_review)
+        first = st.number_input("브리핑 시작 연도", min_value=2018, max_value=2100, value=2018, key="review_first", on_change=_clear_review)
+        last = st.number_input("브리핑 마지막 연도", min_value=2018, max_value=2100, value=2024, key="review_last", on_change=_clear_review)
+        market = None
+        if st.checkbox("동일 규격 경매 참고자료도 확인", key="review_market_enabled", on_change=_clear_review):
+            fields = [("market_code", "시장코드"), ("variety", "경매 품종"), ("grade", "등급"), ("size", "크기"), ("package", "포장 종류")]
+            market = {key: st.text_input("브리핑 " + label, key="review_" + key, on_change=_clear_review).strip() or None for key, label in fields}
+            market["package_kg"] = st.number_input("브리핑 포장중량(kg)", min_value=0.01, value=None, key="review_package_kg", on_change=_clear_review)
+            market["as_of"] = st.text_input("브리핑 기준일(YYYY-MM-DD, 선택)", key="review_as_of", on_change=_clear_review).strip() or None
+        options = ws.store.scenario.get("options", [])
+        option_id = st.selectbox("브리핑에서 설명할 대안", [o["id"] for o in options], key="review_option", on_change=_clear_review) if options else None
+        include_grid = st.checkbox("직접 입력한 가정 범위도 함께 검토", key="review_include_grid", on_change=_clear_review)
+        losses = st.session_state.get("sensitivity_losses", "")
+        prices = st.session_state.get("sensitivity_prices", "")
+        if include_grid:
+            st.caption(f"가정 범위 입력란의 현재 값: 감모 {losses or '미입력'} / 미래 단가 {prices or '미입력'}. 값을 자동으로 만들지 않습니다.")
+        if st.button("출하 검토 브리핑 만들기", disabled=disabled):
+            query = {"shipment_variety": variety, "target_month": int(month), "start_year": int(first), "end_year": int(last)} if variety != "선택 안 함" else None
+            ws.review(shipment_query=query, market_query=market, option_id=option_id,
+                loss_values=[x.strip() for x in losses.split(",") if x.strip()] if include_grid else None,
+                price_values=[x.strip() for x in prices.split(",") if x.strip()] if include_grid and prices.strip() else None)
+
+
+def _render_task_context(ws):
+    context = ws.session.task_context.snapshot()
+    if context["goal"] is None:
+        return
+    with st.expander("이번 검토의 선택과 미확인 사항"):
+        st.write("최근 수행 과업: " + context["goal"])
+        st.caption("이번 비교에서 선택한 조건입니다. 사용자 장기 프로필이나 조회 결과의 최신성을 뜻하지 않습니다.")
+        query = context["shipment_query"]
+        if query:
+            st.write({"출하통계 품종": query.get("shipment_variety"), "조회 월": query.get("target_month"),
+                      "시작 연도": query.get("start_year"), "마지막 연도": query.get("end_year")})
+        query = context["market_query"]
+        if query:
+            labels = {"market_code": "시장코드", "variety": "경매 품종", "grade": "등급", "size": "크기", "package": "포장", "package_kg": "포장중량(kg)", "as_of": "기준일"}
+            st.write({labels[k]: v for k, v in query.items()})
+        query = context["sensitivity_query"]
+        if query and query.get("loss_values"):
+            st.write({"기간 전체 감모 가정(%)": query["loss_values"], "미래 단가 가정(원/kg)": query.get("price_values")})
+        from agents.juneok.reporting import _field
+        pending = list(dict.fromkeys(x for items in context["pending"].values() for x in items))
+        if pending:
+            st.write("남은 확인: " + ", ".join(_field(x) for x in pending))
+        else:
+            st.caption("도구가 요청한 필수 입력의 미확인 항목은 없습니다. 저장·계약 등 실행 가능성은 결과에서 별도로 확인하세요.")
 
 
 def _clear_csv_preview():
@@ -247,6 +423,9 @@ def _render_sensitivity(ws, disabled):
         if st.button("가정 범위 비교", disabled=disabled):
             st.session_state.sensitivity_result = ws.sensitivity(option_id, [x.strip() for x in losses.split(",") if x.strip()],
                 [x.strip() for x in prices.split(",") if x.strip()] if prices.strip() else None)
+        if st.button("판단이 바뀌는 조건 설명", disabled=disabled):
+            ws.explain_conditions(option_id, [x.strip() for x in losses.split(",") if x.strip()] if losses.strip() else None,
+                [x.strip() for x in prices.split(",") if x.strip()] if prices.strip() else None)
 
 
 def main():
@@ -282,6 +461,7 @@ def main():
         if notice := st.session_state.pop("csv_applied_notice", None):
             st.success(notice)
         _render_csv_manager()
+        _render_cases(ws, _card_dirty())
     dirty_before = _card_dirty()
     chat, card = st.columns([3, 2], gap="large")
     with chat:
@@ -322,7 +502,11 @@ def main():
         st.session_state.pop("sensitivity_result", None)
     _render_sensitivity(ws, dirty)
     _render_history(ws, dirty)
+    _render_discovery(ws, dirty)
+    _render_offer_limits(ws, dirty)
+    _render_review(ws, dirty)
     if not dirty:
+        _render_task_context(ws)
         _render_report(ws.current_entries())
     with st.expander("사용 안내와 자료의 한계"):
         st.markdown("모르는 값은 빈칸으로 두세요. 실제 무료라고 확인한 경우에만 0을 입력합니다. 기간 전체 감모와 하루 비용을 구분하고, 가격에 포함한 비용을 다시 차감하지 않습니다. 손익분기는 필요한 가격 조건이며 예측·자동 출하 권고가 아닙니다. 저장시설·계약·납기 조건을 별도로 확인하세요. 입력됨·실제 조건 표시는 외부 사실 검증을 뜻하지 않습니다.")

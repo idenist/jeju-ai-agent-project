@@ -40,10 +40,32 @@ def tool(name: str, description: str, properties: dict) -> dict:
 
 
 TOOLS = [
+    tool("review_case_changes", "사용자가 앱에서 명시적으로 선택한 저장 비교와 현재 조건의 변경·재계산 결과를 읽기 전용 검토. 기준 파일이 없으면 업로드/선택 질문. 복원/현재 조건 변경 없음. 당시 보관 숫자는 사실로 재사용하지 않음.",
+         {"expected_version": {"type": "integer"}}),
+    tool("explore_data", "확보 CSV에 실제 존재하는 거래규격 또는 출하 품종/연월 탐색. 조건을 모르면 null, 자동 매핑/자동 가격 대입 금지. 후보는 최대20개이며 next_offset으로 이어보기. shipment 필터는 shipment_variety/year/target_month, market은 나머지 거래조건만 사용.",
+         {"source": {"type": "string", "enum": ["market", "shipment"]},
+          "filters": {"anyOf": [{"type": "null"}, object_schema({
+              **{k: nullable("string") for k in ["market_code", "variety", "grade", "size", "shipment_variety"]},
+              "package": nullable("string", description="포장 종류만: 상자/망 등. 5kg 상자이면 상자. 5kg를 이 필드에 넣지 말 것."),
+              "package_kg": nullable("number", description="포장당 중량 kg. 5kg 상자이면 숫자5. 포장 종류 package와 분리."), "year": nullable("integer"), "target_month": nullable("integer")})]},
+          "offset": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}}),
+    tool("solve_offer_limits", "사용자 제안 단가/가정에서 허용 감모율 또는 전체 물량 하루 보관비 상한을 하나씩 역산. 기존 상태 불변. quoted_price_per_kg와 고정할 다른 조건이 없으면 질문. 두 상한 동시 적용·최장 보관일·가격 예측 금지.",
+         {"expected_version": {"type": "integer"}, "option_id": nullable("string"), "quoted_price_per_kg": nullable("number", minimum=0),
+          "solve_for": {"type": "string", "enum": ["loss_percent", "daily_storage_cost"]}}),
+    tool("build_review_brief", "현재 조건·명시적으로 선택한 출하통계·선택적 시장 참고·사용자 가정을 함께 검토. 자료가 없으면 부분 결과로 남김. 품종 자동매핑·가격 자동대입 금지. 조회조건을 모르면 null. 가정 목록은 사용자가 정한 값만 사용.",
+         {"expected_version": {"type": "integer"},
+          "shipment_query": {"anyOf": [{"type": "null"}, object_schema({"shipment_variety": {"type": "string"}, "target_month": {"type": "integer", "minimum": 1, "maximum": 12}, "start_year": nullable("integer"), "end_year": nullable("integer")})]},
+          "market_query": {"anyOf": [{"type": "null"}, object_schema({"market_code": nullable("string"), "variety": nullable("string"), "grade": nullable("string"), "size": nullable("string"), "package": nullable("string"), "package_kg": nullable("number"), "as_of": nullable("string")})]},
+          "option_id": nullable("string"), "loss_values": nullable("array", minItems=1, maxItems=7, items={"type": "number", "minimum": 0, "exclusiveMaximum": 100}),
+          "price_values": nullable("array", minItems=1, maxItems=7, items={"type": "number", "minimum": 0})}),
+    tool("explain_decision_conditions", "Python이 계산한 최소단가와 사용자 지정 가정 조합별 유리/동일/불리·실행 제약 설명. 확률·최적 추천 없음. 복수 대안이면 ID 확인. 새로운 가정 목록은 직접 정하지 말 것.",
+         {"expected_version": {"type": "integer"}, "option_id": nullable("string"),
+          "loss_values": nullable("array", minItems=1, maxItems=7, items={"type": "number", "minimum": 0, "exclusiveMaximum": 100}),
+          "price_values": nullable("array", minItems=1, maxItems=7, items={"type": "number", "minimum": 0})}),
     tool("update_scenario", "사용자가 제공·확인한 조건만 저장. patch의 null은 기존값 유지. 대안은 전체 목록 교체. 기간이 바뀌면 새 기간 감모를 사용자가 확인했을 때만 loss_confirmed_for_period=true.",
          {"expected_version": {"type": "integer"}, "patch": PATCH,
           "clear_fields": {"type": "array", "items": {"type": "string", "enum": ["quantity_kg", "current_price_per_kg", "price_basis", "current_fee_percent", "cost_policy", "included_costs", "current_costs", "storage_available", "shipping_flexible"]}}}),
-    tool("compare_shipment_options", "저장된 현재 조건으로 대안별 금액과 필요한 미래 단가 계산. 입력이 부족하면 확인할 항목 반환. 미래가격 예측·최선 출하일 추천 아님.",
+    tool("compare_shipment_options", "저장된 현재 조건의 한 가정으로 대안별 금액과 필요한 미래 단가 계산. 사용자가 감모2%,4% 등 가정 목록의 표를 요청하면 이 도구 대신 compare_sensitivity 사용. 입력이 부족하면 확인할 항목 반환. 미래가격 예측·최선 출하일 추천 아님.",
          {"expected_version": {"type": "integer"}}),
     tool("compare_sensitivity", "사용자가 직접 정한 기간 전체 감모율·미래가격 목록의 조건부 민감도 표. 기존 보관기간·비용은 고정하고 원래 조건을 바꾸지 않음. 값을 만들거나 확률·가격예측으로 표시하지 말 것. 목록이 없으면 사용자에게 먼저 질문할 것.",
          {"expected_version": {"type": "integer"}, "option_id": {"type": "string"},
@@ -75,7 +97,7 @@ def explain_term(topic: str) -> dict:
     return {"status": "OK", "topic": topic, "explanation": HELP[topic]}
 
 
-def execute_tool(name: str, args: dict, store: ScenarioStore) -> dict:
+def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=None, task_context=None, input_context=None) -> dict:
     if not isinstance(args, dict):
         return {"status": "INVALID_INPUT", "message": "도구 입력은 객체여야 합니다."}
     schemas = {t["name"]: t["parameters"] for t in TOOLS}
@@ -88,15 +110,33 @@ def execute_tool(name: str, args: dict, store: ScenarioStore) -> dict:
     if type(finish) is not bool:
         return {"status": "INVALID_INPUT", "message": "완료 표시는 true 또는 false여야 합니다."}
     try:
+        if name == "review_case_changes":
+            if type(args.get("expected_version")) is not int or args["expected_version"] != store.version:
+                return {"status": "INVALID_INPUT", "message": "변경 검토 기준 조건이 바뀌었습니다."}
+            from .case_changes import compare_cases
+            from .task_context import data_revision
+            return compare_cases(reference_case, store.snapshot(), task_context or {}, data_revision(), input_context)
         if name == "update_scenario":
             return store.update(args.get("patch"), args.get("expected_version"), args.get("clear_fields"))
         if name == "explain_term":
             return explain_term(args.get("topic"))
-        if name in {"compare_shipment_options", "compare_sensitivity"}:
+        if name == "explore_data":
+            from .catalog import explore_data
+            return explore_data(args.get("source"), args.get("filters"), args.get("offset", 0), args.get("limit", 20))
+        if name in {"compare_shipment_options", "compare_sensitivity", "build_review_brief", "explain_decision_conditions", "solve_offer_limits"}:
             version = args.get("expected_version")
             if type(version) is not int or version != store.version:
                 return {"status": "INVALID_INPUT", "message": "계산할 시나리오 버전을 확인하세요.", "current": store.snapshot()}
-            if name == "compare_sensitivity":
+            if name == "solve_offer_limits":
+                from .limits import solve_offer_limits
+                result = solve_offer_limits(store.scenario, args.get("option_id"), args.get("quoted_price_per_kg"), args.get("solve_for"))
+            elif name == "build_review_brief":
+                from .briefing import build_review_brief
+                result = build_review_brief(store.scenario, *[args.get(k) for k in ["shipment_query", "market_query", "option_id", "loss_values", "price_values"]])
+            elif name == "explain_decision_conditions":
+                from .insights import decision_conditions
+                result = decision_conditions(store.scenario, *[args.get(k) for k in ["option_id", "loss_values", "price_values"]])
+            elif name == "compare_sensitivity":
                 from .sensitivity import compare_sensitivity
                 result = compare_sensitivity(store.scenario, args.get("option_id"), args.get("loss_values"), args.get("price_values"))
             else:
