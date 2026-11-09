@@ -129,7 +129,7 @@ def _fields(values):
 
 def _baseline(case_bytes, selected_option):
     saved = parse_case(case_bytes)
-    from .comparison import compare_shipment_options
+    from agents.common.calculation_service import compare_shipment_options
     if compare_shipment_options(saved["snapshot"]["scenario"])["status"] != "OK":
         raise ValueError("먼저 출하 전 비교 조건을 완성하고 계산하세요.")
     if isinstance(selected_option, str):
