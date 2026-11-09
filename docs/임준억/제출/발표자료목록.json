@@ -1,0 +1,26 @@
+{
+  "scope": "PERSONAL_PRESENTATION_CANDIDATE_NOT_TEAM_APPROVAL",
+  "implementation_commit": "dcae708f725ca208182adcff7ab609721011c517",
+  "documents": [
+    {
+      "source": "docs/임준억/제출/기획서.md",
+      "source_sha256": "989530aa702da17d237b2e134616b189c7a6e9ca686122f6d70d604ffb056886",
+      "pdf": "docs/임준억/제출/기획서_개인후보.pdf",
+      "pdf_sha256": "7b3c1cbb199793b80d2cee1af33deabb2851998d95d3a75ecfde0d38fc99176d",
+      "pages": 8,
+      "pdf_generation_source_sha256": "7db153c62d3bfe64dae17103fa4b7bd95b7456011ac5daa157da65a45a1af7ca"
+    },
+    {
+      "source": "docs/임준억/제출/결과설명자료.md",
+      "source_sha256": "26e712017e691a3a0c8e5f796ec2062d119d3602aad371dab9bb64bc787d2195",
+      "pdf": "docs/임준억/제출/결과설명자료_개인후보.pdf",
+      "pdf_sha256": "77be24e798511138edc08a18471acdf713481dff3aa8a0e332796586c59bd6ee",
+      "pages": 5,
+      "pdf_generation_source_sha256": "afdaeda89f51f6a149d3906d9319d66e47b76023fa18efafeff9035791215c7e"
+    }
+  ],
+  "hash_note": "내용 동일성 확인이며 작성자/자료 진위 인증은 아닙니다.",
+  "human_rehearsal": "NOT_PERFORMED",
+  "team_adoption": "PENDING",
+  "source_hash_encoding": "UTF-8 text with CRLF/CR normalized to LF; PDF hashes use exact bytes"
+}
