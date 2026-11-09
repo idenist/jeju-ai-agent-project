@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "purpose": "고정된 감귤 Agent V0의 자연어 평가 기준",
+  "baseline_branch": "seunghyuk",
+  "baseline_commit": "f87481d65ccffbbc10d5c083168cc59c6ca7768e",
+  "git_blob_shas": {
+    "agent": "c92176dcff37ba0a4b80860e4bb629c79785a802",
+    "baseline": "b4992e0b2aadb62e9bd2d6dc7bcd6df84017d2b0",
+    "daily_prices": "397cda80e3fed539d639ce6d35db3f71ed46586e"
+  },
+  "holdout_policy": "dev로 평가 코드를 검증하고 holdout은 고도화 전후 고정 비교에 사용; 질문과 정답 수정 시 새 평가셋 버전 부여",
+  "notes": "브랜치의 HEAD가 달라져도 위 핵심 코드·입력 데이터의 내용이 같으면 V0 일치로 판단"
+}
