@@ -9,6 +9,7 @@ import sys
 from .price_history import DEFAULT_FILE, execute_tool
 
 
+DEFAULT_MODEL = "gpt-6-luna"
 TOOL_NAME = "get_price_history"
 FIELD_LABELS = {
     "market_code": "시장", "variety": "품종", "grade": "등급", "size": "크기",
@@ -133,7 +134,7 @@ def main():
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--question", help="질문 하나를 실행하고 종료")
     modes.add_argument("--demo", action="store_true", help="API 없이 예시 조건 세 가지를 조회")
-    parser.add_argument("--model", default=os.getenv("OPENAI_MODEL", "gpt-5-mini"))
+    parser.add_argument("--model", default=os.getenv("OPENAI_MODEL") or DEFAULT_MODEL)
     args = parser.parse_args()
     if args.demo:
         spec = dict(variety="조생귤", grade="특", size="소", package="상자", package_kg=5, interval_days=7)

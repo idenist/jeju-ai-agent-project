@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
-from agents.jeonghyeon.agent import PROPERTIES, TOOL_NAME, run_turn
+from agents.jeonghyeon.agent import DEFAULT_MODEL, PROPERTIES, TOOL_NAME, run_turn
 from agents.jeonghyeon.price_history import DEFAULT_FILE, normalize_conditions, read_rows
 
 
@@ -140,7 +140,7 @@ def main():
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--dry-run", action="store_true", help="정답을 모의 응답으로 사용해 실행 경로 확인")
     modes.add_argument("--replay", type=Path, help="저장된 모델 호출을 API 없이 다시 채점")
-    parser.add_argument("--model", default=os.getenv("OPENAI_MODEL", "gpt-5-mini"))
+    parser.add_argument("--model", default=os.getenv("OPENAI_MODEL") or DEFAULT_MODEL)
     parser.add_argument("--output", type=Path, help="평가 결과 JSON 저장 경로")
     args = parser.parse_args()
     if args.replay and args.output and args.replay.resolve() == args.output.resolve():

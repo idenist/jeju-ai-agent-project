@@ -116,3 +116,35 @@ python scripts/preprocess_auction.py
 ### 현재 단계
 
 경매가격·제주 출하량 **수집 및 전처리 파이프라인 구축 완료**. 다음 작업은 팀원별 Agent 프로토타입 구현과, 필요시 추가 시즌 데이터 확보입니다.
+
+## 양정현 담당 · 과거 가격 비교와 조회 에이전트
+
+팀의 날짜별 경매가격을 입력으로 받아 **같은 시장·품종·등급·크기·포장 종류·포장 중량·거래 방식**의 가격만 정확히 **3·7·14일** 간격으로 연결했습니다. 비교일 자료가 없으면 이유를 남기고, 적은 거래 건수나 미상 규격 등 품질 경고가 있는 쌍은 기본 사례와 구분합니다.
+
+| 기여 | 코드와 결과 |
+|---|---|
+| 비교 데이터 생성 | [build_price_comparisons.py](scripts/build_price_comparisons.py), [비교 가능 범위 보고서](data/reports/price_comparison_coverage.md) |
+| 비교 방법 실험 | [explore_price_methods.py](scripts/explore_price_methods.py). 정확히 7일 290건, 가까운 거래일 361건, 주간 가중평균 246건을 비교했습니다. |
+| 자연어 조회 | [agent.py](agents/jeonghyeon/agent.py), [price_history.py](agents/jeonghyeon/price_history.py). ‘특등급·소과’를 ‘특·소’로 맞추고 자료에 있는 조건으로 조회합니다. |
+| 조건 추출 평가 | [평가 스크립트](scripts/evaluate_price_extraction.py), [21턴 평가셋](scripts/price_extraction_cases.json). 미지정 조건 추가, 변경 미반영, 기존 조건 유실을 따로 집계합니다. |
+
+실제 시연에서는 조생귤·특·소·상자 5kg의 **7일 비교 20쌍**을 조회했고, “간격만 14일로 바꿔 줘”라는 후속 질문에 같은 규격을 유지해 **15쌍**을 보여줬습니다. [실제 평가 원본](data/reports/evaluation/extraction_result_1.json)은 `gpt-5-mini`의 응답입니다. [같은 응답의 재채점](data/reports/evaluation/extraction_result_1_replay.json)에서는 자료 표기를 맞춘 뒤 정답과 일치한 턴이 **9/21 → 19/21**로 바뀌었습니다.
+
+### 담당 기능 실행과 재현
+
+```powershell
+python -X utf8 -m agents.jeonghyeon.agent --demo
+python -X utf8 -m unittest discover -s tests
+python -X utf8 scripts/explore_price_methods.py
+python -X utf8 -m scripts.evaluate_price_extraction --replay data/reports/evaluation/extraction_result_1.json
+```
+
+자연어 조회와 새 모델 평가는 OpenAI SDK와 `OPENAI_API_KEY` 설정이 필요합니다. 두 실행 명령의 기본 모델은 **`gpt-6-luna`**이고, 아래처럼 `--model`을 지정하면 터미널의 `OPENAI_MODEL` 설정보다 우선합니다. 자세한 방법은 [정현 에이전트 실행 안내](docs/정현_에이전트_실행안내.md)에 있습니다.
+
+```powershell
+python -m pip install openai
+python -X utf8 -m agents.jeonghyeon.agent --model gpt-6-luna
+python -X utf8 -m scripts.evaluate_price_extraction --model gpt-6-luna --output extraction_result_luna.json
+```
+
+V1에서는 이 조회 결과를 Streamlit에 연결하고, 두 출하안의 예상 거래일 간격과 같은 과거 변동률을 팀의 손익 함수에 전달해 금액 차이를 보여주는 작업을 제안했습니다. 원천 가격 정제와 팀 손익분기 계산은 팀의 별도 기능이며, 이 README의 시연과 평가 기록은 과거 가격 조회에 해당합니다.
