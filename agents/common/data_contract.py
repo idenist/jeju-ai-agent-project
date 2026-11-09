@@ -163,3 +163,66 @@ def verify_price_pair_sources(project_root: Path, market_root: Path | None = Non
         # 원문 경로·입력 데이터 등은 사용자에게 그대로 전달하지 않습니다.
         return _error("SOURCE_READ_FAILED", "공통 데이터 또는 비교 자료를 검증하지 못했습니다.",
                       error_type=type(exc).__name__)
+
+
+def verify_integrated_price_sources(project_root: Path, market_root: Path | None = None) -> dict:
+    """가격 비교의 원천·보고서·각 결과 행을 전부 독립 재생성해 검증합니다.
+
+    기존 ``verify_price_pair_sources``는 해시·컬럼·행 수만 검사합니다.
+    실제 Agent에 가격 비교 도구를 연결할 때는 이 함수를 호출해야 합니다.
+    CSV를 다시 생성해 디스크에 저장하지 않고, 메모리에서 비교합니다.
+    """
+    root = Path(project_root)
+    basic = verify_price_pair_sources(root, market_root)
+    if basic["status"] != "OK":
+        return basic
+
+    try:
+        # 실행 중 활성 시장가격과 비교 원천이 달라질 수 있으므로 확인된
+        # 동결 원천으로만 비교쌍을 다시 계산합니다.
+        from scripts.build_price_comparisons import FIELDS, build_comparisons, load_prices
+
+        observations, actual_sha = load_prices(root / PRICE_FILE)
+        if actual_sha != basic["comparison_source_sha256"]:
+            return _error("BASELINE_CHANGED", "검증 도중 공통 가격 원본이 변경됐습니다.")
+        attempts, regenerated = build_comparisons(observations, basic["available_intervals"])
+        report = _read_json(root / REPORT_FILE)
+
+        # 단순한 행 수뿐 아니라 일자별·품종별 비교 집계 및 품질 사유가
+        # 원천으로부터 산출한 결과와 같은지 확인합니다.
+        for key, expected in regenerated.items():
+            if report.get(key) != expected:
+                return _error("REPORT_CONTENT_MISMATCH", "과거 가격 비교 집계가 원천 재계산 결과와 다릅니다.",
+                              field=key)
+
+        expected_files = (
+            (PAIR_FILES[0], [r for r in attempts if r["comparison_status"] != "UNAVAILABLE"]),
+            (PAIR_FILES[1], attempts),
+        )
+        for path, expected_rows in expected_files:
+            with (root / path).open(encoding="utf-8-sig", newline="") as handle:
+                reader = csv.DictReader(handle)
+                if reader.fieldnames != list(FIELDS):
+                    return _error("PAIR_SCHEMA_MISMATCH", "가격 비교 CSV의 컬럼 계약이 다릅니다.",
+                                  file=path.name)
+                for line_number, expected in enumerate(expected_rows, start=2):
+                    actual = next(reader, None)
+                    regenerated_row = {field: str(expected[field]) for field in FIELDS}
+                    if actual != regenerated_row:
+                        return _error("PAIR_CONTENT_MISMATCH", "가격 비교 CSV가 원천 재계산 결과와 다릅니다.",
+                                      file=path.name, line_number=line_number)
+                if next(reader, None) is not None:
+                    return _error("PAIR_CONTENT_MISMATCH", "가격 비교 CSV에 추가 행이 있습니다.",
+                                  file=path.name)
+
+        return {
+            **basic,
+            "message": "선택한 가격 원천, 과거 가격 비교 결과 및 보고서가 일치합니다.",
+            "full_content_verified": True,
+            "verified_comparison_rows": len(expected_files[0][1]),
+            "verified_availability_rows": len(attempts),
+        }
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError, ArithmeticError, csv.Error) as exc:
+        # 경로나 원문 데이터·사용자 입력값을 메시지에 노출하지 않습니다.
+        return _error("PAIR_REBUILD_FAILED", "가격 비교 원천 또는 결과를 재검증하지 못했습니다.",
+                      error_type=type(exc).__name__)
