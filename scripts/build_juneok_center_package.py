@@ -20,6 +20,11 @@ def main():
                      and "__pycache__" not in p.parts)
     selected = resolve_market_root()
     files.update(p for p in (root / "assets/fonts").rglob("*") if p.is_file() and p.suffix.lower() in {".ttf", ".txt", ".json"})
+    from scripts import build_juneok_notices
+    build_juneok_notices.main()
+    # Include full supplied license texts, including extensionless LICENSE/NOTICE.
+    files.update(p for p in (root / "assets/licenses").rglob("*") if p.is_file())
+    files.add(root / "docs/임준억/제출/외부라이선스목록.md")
     spec_path = root / "artifacts/center-spec/result.json"
     if spec_path.exists():
         files.add(spec_path)
