@@ -20,7 +20,7 @@ TOOL_LABELS = {"compare_shipment_options": "출하 대안 비교", "compare_sens
                "get_market_evidence": "동일조건 시장 참고가격", "update_scenario": "비교 조건 변경",
                "build_review_brief": "출하 검토 브리핑", "explain_decision_conditions": "판단이 바뀌는 조건"}
 TOOL_LABELS.update(explore_data="확보 자료 탐색", solve_offer_limits="제안단가의 허용 조건", review_case_changes="저장 비교의 변경 검토")
-TOOL_LABELS.update(reconcile_settlement="출하 기록·정산 검산")
+TOOL_LABELS.update(reconcile_settlement="출하 기록·정산 검산", get_price_history="과거 동일규격 경락가격 비교")
 FIELD_NAMES.update(quoted_price_per_kg="제안 단가 또는 미래 단가 가정(원/kg)", option_id="검토할 보관 대안")
 FIELD_NAMES.update(comparison_reference="변경 검토 기준으로 선택한 저장 JSON")
 
@@ -104,6 +104,9 @@ def _render_result_body(result: dict) -> str:
     if not isinstance(result, dict):
         return "결과 형식을 확인할 수 없습니다."
     status = result.get("status", "UNKNOWN")
+    if result.get("analysis_type") == "price_history":
+        from agents.common.price_history_reporting import render_price_history
+        return render_price_history(result)
     if result.get("analysis_type") == "settlement":
         from .settlement_reporting import render_settlement
         return render_settlement(result)

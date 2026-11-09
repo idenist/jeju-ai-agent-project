@@ -36,7 +36,9 @@ def render_dialogue(results: list[dict]) -> str:
     sections = []
     for entry in results:
         result = entry["result"]
-        if result.get("status") == "NEEDS_INPUT" and result.get("missing_fields"):
+        if result.get("analysis_type") == "price_history":
+            sections.append(render_result(result))
+        elif result.get("status") == "NEEDS_INPUT" and result.get("missing_fields"):
             fields = result["missing_fields"]
             first, rest = fields[:3], fields[3:]
             prompts = {

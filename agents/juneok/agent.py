@@ -18,6 +18,7 @@ SYSTEM_PROMPT = """당신은 제주 감귤 출하 대안 비교 Agent입니다. 
 역산/민감도용 가정 단가는 해당 도구 인수에만 넣습니다. 역산 요청의 3300원 같은 가정을 update_scenario의 future_price_per_kg에 저장하면 안 됩니다. 현재 조건 유지 요청이면 update_scenario 자체를 호출하지 마세요. 사용자가 실제 저장 조건 변경을 별도로 명시한 경우에만 변경합니다.
 저장한 비교와 현재 조건의 변경 검토에는 review_case_changes를 사용합니다. 기준 파일은 앱에서 사용자가 확인/선택한 파일만 사용합니다. 없으면 업로드/선택을 요청하고 임의 파일/경로를 만들지 마세요. 변경 검토는 현재 조건을 복원하거나 바꾸지 않습니다.
 사용자가 제공한 값만 update_scenario로 저장하고 계산·관측 숫자는 반드시 도구에서 얻습니다.
+사용자가 과거 동일규격 경락가격 변화나 과거 3·7·14일 가격쌍을 요청하면 get_price_history를 사용합니다. 미래가격 예측과 손익 계산은 별개입니다. 과거 가격쌍을 같은 감귤을 보관한 결과로 해석하거나 현재 판매 단가에 자동 입력하지 마세요. 시장·품종·등급·크기·포장·포장중량·거래방식·비교 간격은 사용자가 제공한 값만 지정하고 모르면 null로 둡니다. 일주일은 7일, 5kg 상자는 package=상자와 package_kg=5입니다. 다른 조건을 유지하고 간격만 변경하는 후속 질문에서는 사용자가 명시한 조건만 유지하세요. 제시된 후보나 자료에서 자동 적용한 시장·거래방식은 사용자 확인으로 간주하지 않습니다. limit는 기본 3입니다. 과거 가격 조회만 요청하면 update_scenario를 실행하지 않습니다.
 숫자를 암산하거나 가격·감모·비용·미래 시세를 만들어내지 마세요.
 가격은 commission_net(수수료 차감 후) 또는 gross(차감 전)인지 확인합니다.
 commission_net은 수수료만 차감된 단가이므로 다른 포함비용은 별도 확인합니다.
@@ -159,12 +160,16 @@ class AgentSession:
                     if call.name == 'reconcile_settlement':
                         from .settlement import model_receipt
                         model_output = model_receipt(result)
+                    elif call.name == "get_price_history":
+                        from agents.common.price_history_service import price_history_model_receipt
+                        model_output = price_history_model_receipt(result)
                     self.messages.append({"type": "function_call_output", "call_id": call.call_id,
                                           "output": json.dumps(model_output, ensure_ascii=False)})
                     if time.monotonic() - started >= self.policy.seconds:
                         raise RunStopped("TIME_LIMIT")
-                    if isinstance(arguments, dict) and arguments.get("finish_turn") is True and result["status"] in {
-                            "OK", "NEEDS_INPUT", "NEEDS_CLARIFICATION", "NO_DATA", "PARTIAL", "CHECK_REQUIRED"}:
+                    if isinstance(arguments, dict) and arguments.get("finish_turn") is True and (
+                            result["status"] in {"OK", "NEEDS_INPUT", "NEEDS_CLARIFICATION", "NO_DATA", "PARTIAL", "CHECK_REQUIRED"}
+                            or (call.name == "get_price_history" and result["status"] == "DATA_ERROR")):
                         finished = True
                 if finished:
                     break

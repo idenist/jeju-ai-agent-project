@@ -6,7 +6,7 @@ import re
 from uuid import uuid4
 
 GOALS = {"review_case_changes": "저장 비교의 변경 검토", "explore_data": "확보 자료 탐색", "solve_offer_limits": "제안단가 허용 조건 검토", "compare_shipment_options": "출하 조건 비교", "update_scenario": "출하 조건 비교",
-         "get_historical_shipment_context": "과거 출하자료 확인", "get_market_evidence": "동일규격 시장 참고",
+         "get_historical_shipment_context": "과거 출하자료 확인", "get_market_evidence": "동일규격 시장 참고", "get_price_history": "과거 경락가격 비교",
          "compare_sensitivity": "사용자 가정 범위 비교", "explain_decision_conditions": "판단 조건 설명",
          "build_review_brief": "자료와 조건의 종합 검토", "explain_term": "용어 확인"}
 SHIPMENT_FIELDS = {"shipment_variety", "target_month", "start_year", "end_year"}

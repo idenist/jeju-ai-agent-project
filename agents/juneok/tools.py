@@ -80,6 +80,14 @@ TOOLS = [
          {"market_code": nullable("string"), "variety": nullable("string"), "grade": nullable("string"),
           "size": nullable("string"), "package": nullable("string"), "package_kg": nullable("number"),
           "as_of": nullable("string")}),
+    tool("get_price_history", "같은 시장·품종·등급·크기·포장·거래방식의 정확한 날짜 간격 과거 경락가격 비교. 원천 버전 검증 후 조회하며 가정·현재 단가를 자동 변경하지 않음. 미래가격·보관효과·농가 실수취 예측이 아님.",
+         {"market_code": nullable("string", description="서울가락을 명시했으면 110001. 말하지 않았다면 null."),
+          "variety": nullable("string"), "grade": nullable("string"), "size": nullable("string"),
+          "package": nullable("string", description="상자/망 등 포장종류만 입력."),
+          "package_kg": nullable("number", exclusiveMinimum=0), "trade_type": nullable("string"),
+          "interval_days": nullable("integer", minimum=1, maximum=366),
+          "base_date": nullable("string", description="사용자가 명시한 과거 기준일 YYYY-MM-DD. 모르면 null."),
+          "limit": {"type": "integer", "minimum": 1, "maximum": 10, "description": "과거 관측 사례 출력 개수. 별도 요청이 없다면 3."}}),
     tool("explain_term", "가격기준·감모·비용·자료 범위에 대한 검증된 사용 안내를 표시합니다. 용어 질문에는 계산 조건을 요구하지 마세요.",
          {"topic": {"type": "string", "enum": ["price_basis", "loss_rate", "cost_policy", "data_scope", "forecast_limits"]}}),
 ]
@@ -149,6 +157,11 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
             else:
                 result = compare_shipment_options(store.scenario)
             return {**result, "scenario_version": store.version}
+        if name == "get_price_history":
+            from agents.common.price_history_service import get_integrated_price_history
+            if args.get("limit") is None:
+                args.pop("limit", None)
+            return get_integrated_price_history(args)
         from .evidence import get_historical_shipment_context, get_market_evidence
         return (get_historical_shipment_context if name == "get_historical_shipment_context" else get_market_evidence)(deepcopy(args))
     except (KeyError, TypeError, ValueError):

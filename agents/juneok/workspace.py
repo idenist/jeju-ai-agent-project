@@ -109,7 +109,7 @@ class SharedWorkspace:
                 "message": FAILURE_GUIDANCE.get(execution_status, FAILURE_GUIDANCE["API_ERROR"]) + " 아래 조회·계산은 확인된 부분 결과이며 요청 전체가 완료된 것은 아닙니다."}})
         for entry in self.entries:
             context = self.input_context
-            if entry["tool"] in {"get_market_evidence", "get_historical_shipment_context", "explore_data"}:
+            if entry["tool"] in {"get_market_evidence", "get_historical_shipment_context", "get_price_history", "explore_data"}:
                 context = "원출처 관측자료 조회 · 비교 조건의 가정과 별개"
             elif entry["tool"] == "explain_term":
                 context = "용어 설명 · 실제 농가 조건의 사실 검증 아님"
@@ -118,7 +118,7 @@ class SharedWorkspace:
                 "task_context_version": self.session.task_context.snapshot()["version"],
                 "channel": channel, "changed_fields": changed_fields or []}
             entry["result"]["ui_context"]["input_context"] = context
-            entry["result"]["ui_context"]["kind"] = "evidence" if entry["tool"] in {"get_market_evidence", "get_historical_shipment_context", "explore_data", "explain_term"} else "comparison"
+            entry["result"]["ui_context"]["kind"] = "evidence" if entry["tool"] in {"get_market_evidence", "get_historical_shipment_context", "get_price_history", "explore_data", "explain_term"} else "comparison"
         self.result_version = self.store.version
         self.result_data_revision = expected_data_revision if expected_data_revision is not None else data_revision()
         return deepcopy(self.entries)
