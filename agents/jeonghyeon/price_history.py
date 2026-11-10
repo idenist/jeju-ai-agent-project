@@ -92,6 +92,8 @@ def read_rows(path: Path) -> list[dict]:
 # 포장명 안의 중량 표기. '상자 5kg', '10kg 박스', '5키로'처럼 앞뒤 어디에 와도 찾는다.
 WEIGHT = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*(?:kg|키로|킬로그램|킬로)", re.IGNORECASE)
 PACKAGE_ALIASES = {"박스": "상자", "box": "상자"}
+# 품종이 아닌 통칭. 자료의 '감귤(일반)'과 같은 뜻인지 알 수 없어 조회 조건으로 쓰지 않고 품종을 되묻는다.
+GENERIC_VARIETIES = {"감귤", "귤", "밀감", "제주감귤", "제주 감귤", "제주귤"}
 
 
 def normalize_conditions(args, rows):
@@ -101,6 +103,10 @@ def normalize_conditions(args, rows):
         "grade": {"특등급": "특", "등외등급": "등외"},
         "size": {"소과": "소", "중과": "중", "대과": "대"},
     }
+    variety = args.get("variety")
+    if isinstance(variety, str) and variety.strip() in GENERIC_VARIETIES and variety not in {r["variety"] for r in rows}:
+        normalized["variety"] = None
+        changes["variety"] = {"from": variety, "to": None}
     # 확인한 별칭만 사용하고 자료에 없는 규격은 그대로 조회한다.
     for field in (*aliases, "package"):
         original = args.get(field)

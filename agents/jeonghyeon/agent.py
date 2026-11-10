@@ -80,6 +80,7 @@ A안과 B안을 둘 다 오늘 기준으로 말하면(예: 3일 뒤에 파는 �
 조생 감귤은 조생귤, 극조생은 극조생감귤로 표준화할 수 있다.
 비교 간격을 지정하면 해당 숫자를 그대로 전달한다.
 예시, 사용자에게 제시한 후보, 이전 조회의 자동 적용 조건은 사용자 선택으로 간주하지 않는다.
+이전 답변의 '자동 적용 기준' 줄에 나온 시장·거래방식은 프로그램이 넣은 값이다. 사용자가 직접 말하지 않았으면 market_code와 trade_type은 null로 둔다.
 """
 UNSUPPORTED = ("과거 감귤 거래 가격 비교와, A안 단가를 정하면 며칠 뒤 출하(B안)의 가정 단가를 보여 드릴 수 있어요. "
                "예: 조생귤 7일 가격 변화, A안 2,500원이면 7일 뒤 B안은? 가격 전망(예측)은 하지 않습니다.")
@@ -109,7 +110,7 @@ def _condition_notes(result: dict) -> list[str]:
         ]
         lines.append("자료 표기로 바꾼 조건 — " + ", ".join(labels))
     if result.get("applied_defaults_note"):
-        lines.append("자료에서 자동 적용한 기준 — " + result["applied_defaults_note"])
+        lines.append("자동 적용 기준(사용자 지정 아님, 자료에 하나뿐인 값) — " + result["applied_defaults_note"])
     return lines
 
 
