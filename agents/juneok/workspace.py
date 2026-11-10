@@ -160,6 +160,31 @@ class SharedWorkspace:
         self._freeze([{"tool": "get_historical_shipment_context", "result": result}], "과거 출하자료 조회", expected_data_revision=revision)
         return result
 
+    def price_history(self, args):
+        """키 없이도 검증된 과거 가격을 조회하고 다음 대화의 명시 조건만 유지합니다."""
+        from agents.common.price_history_followup import resolve_price_history_query
+
+        revision = data_revision()
+        # 직접 조회는 항상 새 조회입니다. 실패한 새 입력이 이전 조회 조건을 되살리면 안 됩니다.
+        self.session.price_history_query = None
+        self.session.price_history_revision = None
+        try:
+            query = resolve_price_history_query(args, None)
+        except (TypeError, ValueError) as exc:
+            query = None
+            result = {"analysis_type": "price_history", "status": "INVALID_INPUT",
+                      "source_status": "INVALID_INPUT", "reason": "INVALID_INPUT",
+                      "message": str(exc), "is_future_forecast": False}
+        else:
+            result = execute_tool("get_price_history", query, self.store)
+            if result.get("status") in {"OK", "NEEDS_INPUT", "NO_DATA"} and data_revision() == revision:
+                self.session.price_history_query = deepcopy(query)
+                self.session.price_history_revision = revision
+        self.session.task_context.record("get_price_history", query or {}, result, scenario=self.store.scenario)
+        self._freeze([{"tool": "get_price_history", "result": result}],
+                     "과거 경락가격 직접 조회", expected_data_revision=revision)
+        return result
+
     def explore(self, source, filters=None, offset=0, limit=20):
         revision = data_revision()
         args = {"source": source, "filters": filters, "offset": offset, "limit": limit}

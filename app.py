@@ -67,6 +67,12 @@ def _reset_all():
     st.session_state.pop("sensitivity_result", None)
     for key in ['pdf_cache', 'settlement_pdf', 'settlement_transfer']:
         st.session_state.pop(key, None)
+    # 새 비교는 직접 입력한 과거 경락가격의 화면 조건도 초기화합니다.
+    for key in ("price_history_variety", "price_history_grade", "price_history_size",
+                "price_history_package", "price_history_package_kg", "price_history_market_code",
+                "price_history_trade_type", "price_history_interval_days", "price_history_base_date",
+                "price_history_limit", "price_history_submitted_query", "show_price_history"):
+        st.session_state.pop(key, None)
     _sync_card(force=True)
 
 
@@ -409,6 +415,53 @@ def _render_cards(ws):
     return dirty
 
 
+def _render_price_history(ws, disabled):
+    with st.expander("과거 경락가격 비교 · 직접 조회(키 없이 사용)",
+                     expanded=st.session_state.get("show_price_history", False)):
+        st.caption("경매시장에서 관측한 같은 거래규격의 과거 가격쌍입니다. 농가 실수취가·미래가격·보관 수익의 예측이 아닙니다.")
+        left, right = st.columns(2)
+        with left:
+            variety = st.text_input("경매 품종", key="price_history_variety", placeholder="예: 조생귤")
+            grade = st.text_input("경매 등급", key="price_history_grade", placeholder="예: 특")
+            package = st.text_input("경매 포장 종류", key="price_history_package", placeholder="예: 상자 (5kg는 별도 입력)")
+            market_code = st.text_input("시장코드 · 선택", key="price_history_market_code", placeholder="예: 110001")
+        with right:
+            size = st.text_input("경매 크기", key="price_history_size", placeholder="예: 소")
+            package_kg = st.text_input("포장 한 개의 중량(kg)", key="price_history_package_kg", placeholder="예: 5")
+            trade_type = st.text_input("거래방식 · 선택", key="price_history_trade_type", placeholder="예: 경매")
+            interval = st.number_input("과거 가격 비교 간격(일)", key="price_history_interval_days",
+                                       min_value=1, max_value=366, value=None, step=1,
+                                       help="현재 동결 비교 자료는 3·7·14일입니다. 다른 간격은 지원 여부를 안내합니다.")
+        base_date = st.text_input("과거 기준일 · 선택 (YYYY-MM-DD)", key="price_history_base_date",
+                                  placeholder="미지정이면 같은 조건의 모든 기준일")
+        limit = st.number_input("표시할 과거 사례 수", key="price_history_limit", min_value=1,
+                                 max_value=10, value=3, step=1)
+        fields = {"variety": variety, "grade": grade, "size": size, "package": package,
+                  "package_kg": package_kg, "market_code": market_code,
+                  "trade_type": trade_type, "base_date": base_date}
+        query = {key: value.strip() for key, value in fields.items() if value.strip()}
+        if interval is not None:
+            query["interval_days"] = int(interval)
+        query["limit"] = int(limit)
+        # 입력을 바꾼 직후 이전 결과를 새 조회값의 증거처럼 내보내지 않습니다.
+        previous = st.session_state.get("price_history_submitted_query")
+        if (previous is not None and previous != query and len(ws.entries) == 1
+                and ws.entries[0].get("tool") == "get_price_history"
+                and ws.entries[0].get("result", {}).get("ui_context", {}).get("channel") == "과거 경락가격 직접 조회"):
+            ws.entries = []
+            ws.result_version = None
+            st.session_state.pop("pdf_cache", None)
+            st.info("조회 조건이 바뀌어 이전 과거 가격 결과를 숨겼습니다. 다시 조회해 주세요.")
+        if st.button("과거 경락가격 직접 조회", disabled=disabled):
+            st.session_state.price_history_submitted_query = dict(query)
+            result = ws.price_history(query)
+            if result.get("status") == "DATA_ERROR":
+                st.warning("가격 비교 자료의 원천 검증이 실패했습니다. 검증 전 가격 결과는 표시하지 않습니다.")
+        st.caption("비교 간격은 과거 두 거래일 사이의 달력일이며, 출하 손익 계산의 보관일과 다릅니다. "
+                   "시장·거래방식이 자료 전체에서 하나뿐이라 자동 적용되더라도 사용자 지정 조건으로 저장하지 않습니다. "
+                   "수정한 입력은 '직접 조회'를 눌러야 후속 대화에 반영됩니다.")
+
+
 def _render_history(ws, disabled):
     with st.expander("과거 출하통계 직접 조회 · 키 없이 사용", expanded=st.session_state.get("show_history", False)):
         st.caption("#855 과거 신고 출하량입니다. 현재 공급량·미래가격이 아닙니다. 경매 품종과 자동 매핑하지 않습니다.")
@@ -478,12 +531,14 @@ def main():
     chat, card = st.columns([3, 2], gap="large")
     with chat:
         st.subheader("대화로 조건 확인")
-        start = st.columns(3)
+        start = st.columns(4)
         if start[0].button("출하 조건 비교", disabled=dirty_before):
             ws.calculate()
-        if start[1].button("과거 출하자료", disabled=dirty_before):
+        if start[1].button("과거 경락가격", disabled=dirty_before):
+            st.session_state.show_price_history = True
+        if start[2].button("과거 출하자료", disabled=dirty_before):
             st.session_state.show_history = True
-        if start[2].button("용어 이해", disabled=dirty_before):
+        if start[3].button("용어 이해", disabled=dirty_before):
             from agents.juneok.tools import explain_term
             ws._freeze([{"tool": "explain_term", "result": explain_term("loss_rate")}], "용어 이해")
         st.caption("예: ‘3톤을 지금 팔지 7일 보관할지 비교하고 싶어요’ · ‘감모율이 무슨 뜻인가요?’")
@@ -513,6 +568,7 @@ def main():
         st.warning("입력 조건이 바뀌었습니다. ‘입력 조건 비교’를 눌러 적용하세요. 이전 결과·보고서·가정 범위 표는 숨겼습니다.")
         st.session_state.pop("sensitivity_result", None)
     _render_sensitivity(ws, dirty)
+    _render_price_history(ws, dirty)
     _render_history(ws, dirty)
     _render_discovery(ws, dirty)
     _render_offer_limits(ws, dirty)
