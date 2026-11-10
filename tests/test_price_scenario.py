@@ -114,11 +114,8 @@ class SourceVersionTest(unittest.TestCase):
 
 class HashRuleTest(unittest.TestCase):
     def test_build_and_check_use_same_rule(self):
-        import importlib.util
-        path = Path(__file__).resolve().parents[1] / "scripts/build_price_comparisons.py"
-        spec = importlib.util.spec_from_file_location("build_price_comparisons", path)
-        build = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(build)
+        # 표준 모듈 임포트를 사용해 dataclass의 타입 조회가 정상 동작하도록 합니다.
+        from scripts import build_price_comparisons as build
         sample = b"a,b\r\n1,2\r\n"
         self.assertEqual(build.content_sha256(sample), content_sha256(sample))
         self.assertEqual(content_sha256(sample), content_sha256(sample.replace(b"\r\n", b"\n")))
