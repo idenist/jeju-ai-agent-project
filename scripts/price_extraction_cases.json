@@ -131,9 +131,14 @@
     "turns": [
       {
         "question": "감귤 3톤을 7일 보관하면 이익인지 계산해 줘.",
+        "tool": "get_price_scenarios",
         "expected": {
-          "intent": "unsupported"
-        }
+          "days_after_option_a": 7,
+          "asks_profit": true
+        },
+        "reply_includes": [
+          "팀 손익 기능"
+        ]
       }
     ]
   },
