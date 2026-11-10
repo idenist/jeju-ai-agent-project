@@ -19,6 +19,7 @@ SYSTEM_PROMPT = """당신은 제주 감귤 출하 대안 비교 Agent입니다. 
 저장한 비교와 현재 조건의 변경 검토에는 review_case_changes를 사용합니다. 기준 파일은 앱에서 사용자가 확인/선택한 파일만 사용합니다. 없으면 업로드/선택을 요청하고 임의 파일/경로를 만들지 마세요. 변경 검토는 현재 조건을 복원하거나 바꾸지 않습니다.
 사용자가 제공한 값만 update_scenario로 저장하고 계산·관측 숫자는 반드시 도구에서 얻습니다.
 사용자가 과거 동일규격 경락가격 변화나 과거 3·7·14일 가격쌍을 요청하면 get_price_history를 사용합니다. 미래가격 예측과 손익 계산은 별개입니다. 과거 가격쌍을 같은 감귤을 보관한 결과로 해석하거나 현재 판매 단가에 자동 입력하지 마세요. 시장·품종·등급·크기·포장·포장중량·거래방식·비교 간격은 사용자가 제공한 값만 지정하고 모르면 null로 둡니다. 일주일은 7일, 5kg 상자는 package=상자와 package_kg=5입니다. 다른 조건을 유지하고 간격만 변경하는 후속 질문에서는 사용자가 명시한 조건만 유지하세요. 제시된 후보나 자료에서 자동 적용한 시장·거래방식은 사용자 확인으로 간주하지 않습니다. limit는 기본 3입니다. 과거 가격 조회만 요청하면 update_scenario를 실행하지 않습니다.
+과거 가격 조회에서 follow_up=false는 새 조회이며 이전 조건을 가져오지 않습니다. 사용자가 직전 과거 경락가격 조회의 일부만 변경하면 follow_up=true로 지정하고 명시한 변경 필드만 채우며 나머지 필드는 null로 두세요. 이전 조건을 명시적으로 철회하면 clear_fields에만 넣으세요. 모델에게 전달된 선택 후보나 자료 자동 적용값, 출하 시나리오, 시장 참고가격을 과거 가격 조회 조건으로 가져오지 마세요. 과거 가격의 interval_days는 보관 대안 delay_days와 다릅니다. limit는 사용자가 새 개수를 정하지 않으면 null로 두세요.
 숫자를 암산하거나 가격·감모·비용·미래 시세를 만들어내지 마세요.
 가격은 commission_net(수수료 차감 후) 또는 gross(차감 전)인지 확인합니다.
 commission_net은 수수료만 차감된 단가이므로 다른 포함비용은 별도 확인합니다.
@@ -61,6 +62,8 @@ class AgentSession:
         self.task_context = TaskContext()
         self.policy = policy or ExecutionPolicy()
         self.shipment = None
+        self.price_history_query = None
+        self.price_history_revision = None
 
     def run(self, question: str) -> dict:
         from .presentation import select_results, render_dialogue, report_for
@@ -84,6 +87,9 @@ class AgentSession:
         phase = "context"
         guard = RepeatGuard(self.policy.identical_calls)
         source_revision = data_revision()
+        if self.price_history_query is not None and self.price_history_revision != source_revision:
+            self.price_history_query = None
+            self.price_history_revision = None
         start_context_version = self.task_context.snapshot()["version"]
         try:
             for _ in range(self.policy.model_requests):
@@ -96,6 +102,7 @@ class AgentSession:
                 self.messages[latest_user]["content"] = (
                     f"현재 확인된 조건: {json.dumps(self.store.snapshot(), ensure_ascii=False)}\n"
                     f"이번 검토의 과업 맥락(선택 기록·현재 수치 아님): {json.dumps(self.task_context.snapshot(), ensure_ascii=False)}\n"
+                    f"이전 과거 경락가격 조회 인수(자동 적용값·후보 제외): {json.dumps(self.price_history_query, ensure_ascii=False)}\n"
                     f"정산 기록: {json.dumps({'available': bool(self.shipment and self.shipment.revision), 'revision': self.shipment.revision if self.shipment else None, 'details': 'local_only'}, ensure_ascii=False)}\n"
                     f"사용자: {question.strip()}")
                 metrics["trimmed_history_turns"] += bound_history(self.messages, self.policy.history_turns, self.policy.input_characters)
@@ -143,14 +150,36 @@ class AgentSession:
                     calls += 1
                     tool_started = time.monotonic()
                     self.store.origin_turn_id = run_id
-                    if call.name == "reconcile_settlement":
+                    recorded_arguments = arguments
+                    if call.name == "get_price_history":
+                        from agents.common.price_history_followup import (
+                            MissingPreviousPriceQuery, resolve_price_history_query,
+                        )
+                        try:
+                            recorded_arguments = resolve_price_history_query(arguments, self.price_history_query)
+                        except MissingPreviousPriceQuery:
+                            result = {"analysis_type": "price_history", "status": "NEEDS_INPUT",
+                                      "source_status": "MISSING_PREVIOUS_QUERY", "reason": "MISSING_PREVIOUS_QUERY",
+                                      "missing_fields": ["previous_price_history"],
+                                      "message": "이전에 사용한 과거 가격 조회 조건이 없습니다. 조회할 규격을 다시 알려주세요.",
+                                      "is_future_forecast": False}
+                        except ValueError as exc:
+                            result = {"analysis_type": "price_history", "status": "INVALID_INPUT",
+                                      "source_status": "INVALID_INPUT", "reason": "INVALID_INPUT",
+                                      "message": str(exc), "is_future_forecast": False}
+                        else:
+                            result = execute_tool(call.name, recorded_arguments, self.store)
+                            if result.get("status") in {"OK", "NEEDS_INPUT", "NO_DATA"}:
+                                self.price_history_query = deepcopy(recorded_arguments)
+                                self.price_history_revision = data_revision()
+                    elif call.name == "reconcile_settlement":
                         result = execute_tool(call.name, arguments, self.store, shipment=self.shipment)
                     elif call.name == "review_case_changes":
                         result = execute_tool(call.name, arguments, self.store, reference_case=getattr(self, "comparison_reference", None),
                             task_context=self.task_context.snapshot(), input_context=getattr(self, "comparison_input_context", None))
                     else:
                         result = execute_tool(call.name, arguments, self.store)
-                    self.task_context.record(call.name, arguments or {}, result, scenario=self.store.scenario)
+                    self.task_context.record(call.name, recorded_arguments or {}, result, scenario=self.store.scenario)
                     item = {"tool": call.name, "result": result}
                     results.append(item)
                     events.append({"tool": call.name, "status": result["status"], "scenario_version": self.store.version,

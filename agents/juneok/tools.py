@@ -87,7 +87,9 @@ TOOLS = [
           "package_kg": nullable("number", exclusiveMinimum=0), "trade_type": nullable("string"),
           "interval_days": nullable("integer", minimum=1, maximum=366),
           "base_date": nullable("string", description="사용자가 명시한 과거 기준일 YYYY-MM-DD. 모르면 null."),
-          "limit": {"type": "integer", "minimum": 1, "maximum": 10, "description": "과거 관측 사례 출력 개수. 별도 요청이 없다면 3."}}),
+          "limit": nullable("integer", minimum=1, maximum=10, description="과거 관측 사례 개수. 새로 지정하지 않으면 null."),
+          "follow_up": {"type": "boolean", "description": "앞선 과거 경락가격 조회의 일부만 변경하거나 미확인 조건에 답하는 후속 질문일 때만 true. 새 조회는 false."},
+          "clear_fields": {"type": "array", "items": {"type": "string", "enum": ["market_code", "variety", "grade", "size", "package", "package_kg", "trade_type", "interval_days", "base_date"]}, "description": "사용자가 이전 조회 조건을 명시적으로 철회할 때만 해당 필드를 넣습니다. 그 외에는 빈 배열."}}),
     tool("explain_term", "가격기준·감모·비용·자료 범위에 대한 검증된 사용 안내를 표시합니다. 용어 질문에는 계산 조건을 요구하지 마세요.",
          {"topic": {"type": "string", "enum": ["price_basis", "loss_rate", "cost_policy", "data_scope", "forecast_limits"]}}),
 ]

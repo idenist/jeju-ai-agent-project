@@ -299,6 +299,8 @@ class SharedWorkspace:
 
     def clear_conversation(self, preserve_conditions=True):
         self.session.messages = []
+        self.session.price_history_query = None
+        self.session.price_history_revision = None
         self.entries = []
         self.result_version = None
         if not preserve_conditions:

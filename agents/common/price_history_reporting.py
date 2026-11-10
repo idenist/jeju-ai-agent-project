@@ -9,6 +9,7 @@ LABELS = {
     "package": "포장 종류", "package_kg": "포장 중량(kg)",
     "trade_type": "거래 방식", "interval_days": "비교 간격(일)",
 }
+LABELS["previous_price_history"] = "이전에 사용한 과거 가격 조회 조건(다시 입력 필요)"
 QUALITY = {
     "LOW_SAMPLE": "거래 건수 적음", "GRADE_UNKNOWN": "등급 미상",
     "SIZE_UNKNOWN": "크기 미상", "KEY_FIELD_UNKNOWN": "일부 거래조건 미상",
