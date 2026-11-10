@@ -480,5 +480,10 @@
   },
   "pair_orientation": "target_date = base_date + interval_days",
   "rows": 2299,
-  "availability_rows": 4776
+  "availability_rows": 4776,
+  "output_hash_basis": "줄바꿈을 LF로 맞춘 파일 바이트의 SHA-256",
+  "output_sha256": {
+    "price_comparisons.csv": "f5b6397d8bb52b4afea74d1d36ac247dea4a1205b4ee05186c10ee64072bac20",
+    "price_comparison_availability.csv": "64395294cde8f4fd54e5afbb847d937319ee34725349c7dfca2d852c8362f384"
+  }
 }

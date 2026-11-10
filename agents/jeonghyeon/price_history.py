@@ -89,6 +89,11 @@ def read_rows(path: Path) -> list[dict]:
     return rows
 
 
+# 포장명 안의 중량 표기. '상자 5kg', '10kg 박스', '5키로'처럼 앞뒤 어디에 와도 찾는다.
+WEIGHT = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*(?:kg|키로|킬로그램|킬로)", re.IGNORECASE)
+PACKAGE_ALIASES = {"박스": "상자", "box": "상자"}
+
+
 def normalize_conditions(args, rows):
     normalized = dict(args)
     changes = {}
@@ -107,13 +112,24 @@ def normalize_conditions(args, rows):
             continue
         candidate = aliases.get(field, {}).get(value, value)
         if field == "package":
-            weight = r"[0-9]+(?:\.[0-9]+)?\s*(?:kg|키로|킬로그램)"
-            if re.fullmatch(weight, value, re.IGNORECASE):
+            weights = {number(w) for w in WEIGHT.findall(value)}
+            kg = args.get("package_kg")
+            if weights and kg is not None:
+                try:
+                    kg = number(kg)
+                except ValueError as exc:
+                    raise InputError("포장 중량(kg)을 숫자로 입력해 주세요.") from exc
+            # 포장명 속 중량과 포장 중량이 다르면 어느 쪽도 고르지 않고 사용자에게 되묻는다.
+            if len(weights) > 1 or (weights and kg is not None and kg not in weights):
+                stated = ", ".join(f"{w.normalize():f}kg" for w in sorted(weights))
+                extra = f"과 포장 중량 {number(kg).normalize():f}kg" if kg is not None else ""
+                raise InputError(f"포장 종류에 적힌 {stated}{extra}이 서로 다릅니다. 포장 한 개의 중량을 알려 주세요.")
+            rest = WEIGHT.sub("", value).strip()
+            if not rest:
                 normalized[field] = None
                 changes[field] = {"from": original, "to": None}
                 continue
-            if re.fullmatch(rf"(?:{weight}\s*)?박스", value, re.IGNORECASE):
-                candidate = "상자"
+            candidate = PACKAGE_ALIASES.get(rest.lower(), rest)
         if candidate != original and candidate in labels:
             normalized[field] = candidate
             changes[field] = {"from": original, "to": candidate}

@@ -288,6 +288,11 @@ def coverage_markdown(report: dict, attempts: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def content_sha256(raw: bytes) -> str:
+    # 체크아웃 환경마다 CSV 줄바꿈(LF/CRLF)이 달라질 수 있어 LF로 맞춘 뒤 해시한다. 검증 쪽도 같은 방식을 쓴다.
+    return hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+
+
 def run(input_path: Path, out_dir: Path, report_dir: Path, intervals=(3, 7, 14)) -> dict:
     prices, digest = load_prices(input_path)
     attempts, report = build_comparisons(prices, intervals)
@@ -309,6 +314,8 @@ def run(input_path: Path, out_dir: Path, report_dir: Path, intervals=(3, 7, 14))
             writer = csv.DictWriter(f, fieldnames=FIELDS)
             writer.writeheader()
             writer.writerows(rows)
+    report.update(output_hash_basis="줄바꿈을 LF로 맞춘 파일 바이트의 SHA-256",
+                  output_sha256={p.name: content_sha256(p.read_bytes()) for p in paths[:2]})
     paths[2].write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     paths[3].write_text(coverage_markdown(report, attempts), encoding="utf-8")
     return report
