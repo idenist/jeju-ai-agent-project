@@ -80,7 +80,7 @@ TOOLS = [
          {"market_code": nullable("string"), "variety": nullable("string"), "grade": nullable("string"),
           "size": nullable("string"), "package": nullable("string"), "package_kg": nullable("number"),
           "as_of": nullable("string")}),
-    tool("get_price_history", "같은 시장·품종·등급·크기·포장·거래방식의 정확한 날짜 간격 과거 경락가격 비교. 원천 버전 검증 후 조회하며 가정·현재 단가를 자동 변경하지 않음. 미래가격·보관효과·농가 실수취 예측이 아님.",
+    tool("get_price_history", "같은 거래규격의 과거 경락가격·날짜 간격 가격쌍 조회. 품종이 통칭이거나 일부 조건을 몰라도 이 도구를 호출해 누락 조건을 확인하며, explore_data로 대체해 NO_DATA라고 단정하지 않음. 원천 검증 후 조회하고 미래가격·보관효과·농가 실수취를 예측하거나 현재 단가를 자동 변경하지 않음.",
          {"market_code": nullable("string", description="서울가락을 명시했으면 110001. 말하지 않았다면 null."),
           "variety": nullable("string"), "grade": nullable("string"), "size": nullable("string"),
           "package": nullable("string", description="상자/망 등 포장종류만 입력."),
