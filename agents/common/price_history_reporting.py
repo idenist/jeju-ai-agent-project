@@ -50,6 +50,8 @@ def render_price_history(result: dict) -> str:
     if source_status == "INTERVAL_NOT_AVAILABLE":
         lines.append("요청한 비교 간격의 자료가 없습니다.")
         lines.append("- 지원되는 간격: " + ", ".join(f"{n}일" for n in result.get("available_intervals", [])))
+    elif source_status == "PACKAGE_WEIGHT_CONFLICT":
+        lines.append(_text(result["message"]))
     elif status == "NEEDS_INPUT":
         lines.append("다음 과거 가격 조회 조건을 확인해 주세요.")
         for field in result.get("missing_fields", []):

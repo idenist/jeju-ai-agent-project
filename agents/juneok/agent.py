@@ -20,6 +20,8 @@ SYSTEM_PROMPT = """당신은 제주 감귤 출하 대안 비교 Agent입니다. 
 사용자가 제공한 값만 update_scenario로 저장하고 계산·관측 숫자는 반드시 도구에서 얻습니다.
 사용자가 과거 동일규격 경락가격 변화나 과거 3·7·14일 가격쌍을 요청하면 get_price_history를 사용합니다. 미래가격 예측과 손익 계산은 별개입니다. 과거 가격쌍을 같은 감귤을 보관한 결과로 해석하거나 현재 판매 단가에 자동 입력하지 마세요. 시장·품종·등급·크기·포장·포장중량·거래방식·비교 간격은 사용자가 제공한 값만 지정하고 모르면 null로 둡니다. 일주일은 7일, 5kg 상자는 package=상자와 package_kg=5입니다. 다른 조건을 유지하고 간격만 변경하는 후속 질문에서는 사용자가 명시한 조건만 유지하세요. 제시된 후보나 자료에서 자동 적용한 시장·거래방식은 사용자 확인으로 간주하지 않습니다. limit는 기본 3입니다. 과거 가격 조회만 요청하면 update_scenario를 실행하지 않습니다.
 과거 경락가격 조회에서 사용자가 감귤·귤·밀감 같은 통칭만 말하면 세부 품종은 미확인입니다. 임의로 조생귤·감귤(일반) 등으로 확정하지 말고 사용자 표현을 variety에 그대로 전달해 Python 도구가 세부 품종을 확인하도록 하세요. 세부 품종이 미확인이라는 이유만으로 과거 가격 비교 결과를 NO_DATA라고 단정하지 마세요.
+과거 가격 조회 조건은 필드별로 추출합니다. 품종이 통칭이거나 미확인이어도 명시된 등급·크기·포장·중량·간격을 그대로 전달합니다. 예를 들어 '감귤, 특, 소, 상자 5kg, 7일'은 variety=감귤, grade=특, size=소, package=상자, package_kg=5, interval_days=7입니다. 이후 사용자가 품종만 확인하면 해당 필드만 바꾸는 후속 조회입니다.
+같은 포장 한 개에 대해 서로 다른 중량이 제시되고 어느 쪽이 맞는지 확인되지 않으면 get_price_history에 conflicting_package_kg로 서로 다른 중량(kg)을 전달하고 package_kg=null, finish_turn=true로 종료합니다. 포장 표기 10kg와 포장 한 개 5kg가 충돌하면 [10,5]를 전달합니다. 총 출하 물량과 포장 한 개 중량은 별개이며, 사용자가 명확히 정정한 경우 정정값을 사용합니다.
 과거 가격 조회에서 follow_up=false는 새 조회이며 이전 조건을 가져오지 않습니다. 사용자가 직전 과거 경락가격 조회의 일부만 변경하면 follow_up=true로 지정하고 명시한 변경 필드만 채우며 나머지 필드는 null로 두세요. 이전 조건을 명시적으로 철회하면 clear_fields에만 넣으세요. 모델에게 전달된 선택 후보나 자료 자동 적용값, 출하 시나리오, 시장 참고가격을 과거 가격 조회 조건으로 가져오지 마세요. 과거 가격의 interval_days는 보관 대안 delay_days와 다릅니다. limit는 사용자가 새 개수를 정하지 않으면 null로 두세요.
 숫자를 암산하거나 가격·감모·비용·미래 시세를 만들어내지 마세요.
 가격은 commission_net(수수료 차감 후) 또는 gross(차감 전)인지 확인합니다.
@@ -154,10 +156,10 @@ class AgentSession:
                     recorded_arguments = arguments
                     if call.name == "get_price_history":
                         from agents.common.price_history_followup import (
-                            MissingPreviousPriceQuery, resolve_price_history_query,
+                            MissingPreviousPriceQuery, resolve_price_history_request,
                         )
                         try:
-                            recorded_arguments = resolve_price_history_query(arguments, self.price_history_query)
+                            recorded_arguments, clarification = resolve_price_history_request(arguments, self.price_history_query)
                         except MissingPreviousPriceQuery:
                             result = {"analysis_type": "price_history", "status": "NEEDS_INPUT",
                                       "source_status": "MISSING_PREVIOUS_QUERY", "reason": "MISSING_PREVIOUS_QUERY",
@@ -169,7 +171,7 @@ class AgentSession:
                                       "source_status": "INVALID_INPUT", "reason": "INVALID_INPUT",
                                       "message": str(exc), "is_future_forecast": False}
                         else:
-                            result = execute_tool(call.name, recorded_arguments, self.store)
+                            result = clarification or execute_tool(call.name, recorded_arguments, self.store)
                             if result.get("status") in {"OK", "NEEDS_INPUT", "NO_DATA"}:
                                 self.price_history_query = deepcopy(recorded_arguments)
                                 self.price_history_revision = data_revision()
@@ -197,7 +199,9 @@ class AgentSession:
                                           "output": json.dumps(model_output, ensure_ascii=False)})
                     if time.monotonic() - started >= self.policy.seconds:
                         raise RunStopped("TIME_LIMIT")
-                    if isinstance(arguments, dict) and arguments.get("finish_turn") is True and (
+                    if result.get("source_status") == "PACKAGE_WEIGHT_CONFLICT":
+                        finished = True
+                    elif isinstance(arguments, dict) and arguments.get("finish_turn") is True and (
                             result["status"] in {"OK", "NEEDS_INPUT", "NEEDS_CLARIFICATION", "NO_DATA", "PARTIAL", "CHECK_REQUIRED"}
                             or (call.name == "get_price_history" and result["status"] == "DATA_ERROR")):
                         finished = True

@@ -92,11 +92,7 @@ def _render_cases(ws, disabled):
     with st.expander("비교 건 저장·불러오기"):
         st.caption("조건과 당시 결과를 로컬 JSON으로 보관합니다. 대화·API 키는 포함하지 않습니다. 가져온 값의 사실 여부는 별도로 확인하세요.")
         name = st.text_input("저장할 비교 이름", value="내 출하 비교", max_chars=80, key="case_name")
-        if not disabled and name.strip():
-            try:
-                st.download_button("비교 JSON 내려받기", ws.export_case(name), file_name="감귤_비교기록.json", mime="application/json", key="download_case")
-            except ValueError as exc:
-                st.warning(str(exc))
+        download_slot = st.empty()
         uploaded = st.file_uploader("저장한 비교 JSON", type=["json"], key="case_upload")
         if st.button("비교 파일 확인", disabled=uploaded is None or disabled):
             try:
@@ -126,6 +122,15 @@ def _render_cases(ws, disabled):
                     st.success(result["message"])
                 else:
                     st.error(result["message"])
+    return download_slot, name
+
+
+def _render_case_download(ws, name, disabled):
+    if not disabled and name.strip():
+        try:
+            st.download_button("비교 JSON 내려받기", ws.export_case(name), file_name="감귤_비교기록.json", mime="application/json", key="download_case")
+        except ValueError as exc:
+            st.warning(str(exc))
 
 
 def _discovery_changed(source, index, fields):
@@ -526,7 +531,7 @@ def main():
         if notice := st.session_state.pop("csv_applied_notice", None):
             st.success(notice)
         _render_csv_manager()
-        _render_cases(ws, _card_dirty())
+        case_download_slot, case_name = _render_cases(ws, _card_dirty())
     dirty_before = _card_dirty()
     chat, card = st.columns([3, 2], gap="large")
     with chat:
@@ -578,6 +583,9 @@ def main():
         _render_report(ws.current_entries())
     from agents.juneok.settlement_ui import render_shipments
     render_shipments(ws, dirty)
+    # 직접 조회·손익 계산 이후 확정된 결과로 사이드바 JSON 다운로드를 생성합니다.
+    with case_download_slot.container():
+        _render_case_download(ws, case_name, dirty)
     with st.expander("사용 안내와 자료의 한계"):
         st.markdown("모르는 값은 빈칸으로 두세요. 실제 무료라고 확인한 경우에만 0을 입력합니다. 기간 전체 감모와 하루 비용을 구분하고, 가격에 포함한 비용을 다시 차감하지 않습니다. 손익분기는 필요한 가격 조건이며 예측·자동 출하 권고가 아닙니다. 저장시설·계약·납기 조건을 별도로 확인하세요. 입력됨·실제 조건 표시는 외부 사실 검증을 뜻하지 않습니다.")
         st.caption("가격 관측과 농가 제시가격은 다릅니다. 출하량과 경매시장 반입량도 다릅니다. 자료 관리자 기능은 일반 사용자의 필수 단계가 아닙니다.")

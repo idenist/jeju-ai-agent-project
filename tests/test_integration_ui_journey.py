@@ -175,6 +175,38 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         self.assertEqual(app.session_state.workspace.store.snapshot(), before)
         self.assertNotIn("3,109원/kg", render_report(entries))
 
+    def test_직접조회와_계산을_번갈아_실행해도_화면_pdf_json이_일치(self):
+        import streamlit as st
+        from pypdf import PdfReader
+        from agents.juneok.casefiles import parse_case
+
+        app = self._app()
+        self._run(app, "가상 예시 조건 불러오기")
+        self._fill(app)
+        actions = [("과거 경락가격 직접 조회", "get_price_history"),
+                   ("출하 조건 비교", "compare_shipment_options")] * 2
+        with patch("streamlit.download_button", wraps=st.download_button) as download:
+            for label, tool in actions:
+                with self.subTest(action=label):
+                    download.reset_mock()
+                    self._run(app, label)
+                    ws = app.session_state.workspace
+                    entries = ws.current_entries()
+                    self.assertEqual([entry["tool"] for entry in entries], [tool])
+                    outputs = {call.args[0]: call.args[1] for call in download.call_args_list}
+                    saved = parse_case(outputs["비교 JSON 내려받기"])
+                    self.assertEqual(saved["archived_results"], entries)
+                    self.assertEqual(saved["snapshot"], ws.store.snapshot())
+                    self.assertTrue(any(item.value.strip() == render_report(entries).strip() for item in app.markdown))
+                    pdf = outputs["PDF 보고서 내려받기"]
+                    text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(pdf)).pages)
+                    if tool == "get_price_history":
+                        price = Decimal(entries[0]["result"]["examples"][0]["target_price_kg"])
+                        self.assertIn(f"{price:,.2f}", text)
+                        self.assertNotIn("3,109원/kg", text)
+                    else:
+                        self.assertIn("3,109원/kg", text)
+
     def test_미저장_손익카드_수정중에는_가격조회와_pdf_차단(self):
         app = self._app()
         self._run(app, "가상 예시 조건 불러오기")

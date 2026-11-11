@@ -151,6 +151,69 @@ class 가격조회후속조건검수(unittest.TestCase):
         self.assertEqual(seen[1]["variety"], "조생귤")
         self.assertEqual(seen[1]["interval_days"], 7)
 
+    def test_통칭_품종만_재질문하고_명시한_규격은_승계(self):
+        session, _ = self._session({**기준조건, "variety": "감귤"},
+                                   {"follow_up": True, "variety": "조생귤"})
+        first = session.run("감귤 특 소 상자 5kg의 과거 7일 가격을 알려줘")
+        result = first["visible_results"][0]["result"]
+        self.assertEqual(result["missing_fields"], ["variety"])
+        self.assertEqual(session.price_history_query["grade"], "특")
+        self.assertEqual(session.price_history_query["size"], "소")
+        second = session.run("조생귤이에요.")
+        self.assertEqual(second["visible_results"][0]["result"]["clean_pairs"], 20)
+
+    def test_포장중량_충돌시_조회_보류와_정정_후_재개(self):
+        session, _ = self._session(
+            기준조건,
+            {"follow_up": True, "package_kg": 10, "conflicting_package_kg": [10, 5]},
+            {"follow_up": True, "interval_days": 14},
+            {"follow_up": True, "package_kg": 5},
+        )
+        scenario = session.store.snapshot()
+        with patch("agents.common.price_history_service.get_integrated_price_history",
+                   side_effect=검증용_조회) as lookup:
+            session.run("조생귤 특 소 상자 5kg의 과거 7일 가격을 알려줘")
+            conflict = session.run("포장 표기는 10kg인데 한 상자가 5kg라고 들었어요.")
+            result = conflict["visible_results"][0]["result"]
+            self.assertEqual(result["source_status"], "PACKAGE_WEIGHT_CONFLICT")
+            self.assertEqual(result["missing_fields"], ["package_kg"])
+            self.assertIn("10kg / 5kg", conflict["text"])
+            self.assertIn("10kg / 5kg", conflict["report"])
+            self.assertNotIn("package_kg", session.price_history_query)
+            self.assertEqual(lookup.call_count, 1)
+
+            pending = session.run("조회 간격만 14일로 바꿔줘")
+            self.assertEqual(pending["visible_results"][0]["result"]["missing_fields"], ["package_kg"])
+            resolved = session.run("한 상자 5kg이 맞아요.")
+            self.assertEqual(resolved["visible_results"][0]["result"]["status"], "OK")
+            self.assertEqual(lookup.call_args.args[0]["package_kg"], 5)
+            self.assertEqual(lookup.call_args.args[0]["interval_days"], 14)
+        self.assertEqual(session.store.snapshot(), scenario)
+
+    def test_포장명_중량과_별도입력_충돌을_파이썬에서도_차단(self):
+        from agents.common.price_history_followup import resolve_price_history_request
+        args = {**기준조건, "package": "10kg 박스", "package_kg": 5}
+        pending, clarification = resolve_price_history_request(args, None)
+        self.assertEqual(clarification["source_status"], "PACKAGE_WEIGHT_CONFLICT")
+        self.assertEqual(clarification["missing_fields"], ["package_kg"])
+        self.assertEqual(pending["package"], "박스")
+        self.assertNotIn("package_kg", pending)
+        # 확인된 중량만 보충하면 과거 문구의 10kg 때문에 재차 충돌하면 안 됩니다.
+        corrected, next_clarification = resolve_price_history_request(
+            {"follow_up": True, "package_kg": 5}, pending)
+        self.assertIsNone(next_clarification)
+        self.assertEqual(corrected["package"], "박스")
+        self.assertEqual(corrected["package_kg"], 5)
+        self.assertEqual(corrected["interval_days"], 7)
+
+    def test_포장명에_중량만_있으면_포장종류는_자동추측하지_않음(self):
+        from agents.common.price_history_followup import resolve_price_history_request
+        pending, clarification = resolve_price_history_request(
+            {**기준조건, "package": "10kg", "package_kg": 5}, None)
+        self.assertEqual(clarification["source_status"], "PACKAGE_WEIGHT_CONFLICT")
+        self.assertNotIn("package", pending)
+        self.assertNotIn("package_kg", pending)
+
     def test_유일한_시장과_거래방식_자동값은_기억하지_않음(self):
         session, _ = self._session(기준조건)
         with patch("agents.common.price_history_service.get_integrated_price_history", side_effect=검증용_조회):
