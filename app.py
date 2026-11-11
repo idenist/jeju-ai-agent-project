@@ -583,6 +583,8 @@ def main():
         _render_report(ws.current_entries())
     from agents.juneok.settlement_ui import render_shipments
     render_shipments(ws, dirty)
+    from agents.juneok.future_pair_ui import render_future_pair
+    render_future_pair()
     # 직접 조회·손익 계산 이후 확정된 결과로 사이드바 JSON 다운로드를 생성합니다.
     with case_download_slot.container():
         _render_case_download(ws, case_name, dirty)

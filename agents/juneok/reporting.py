@@ -21,6 +21,7 @@ TOOL_LABELS = {"compare_shipment_options": "출하 대안 비교", "compare_sens
                "build_review_brief": "출하 검토 브리핑", "explain_decision_conditions": "판단이 바뀌는 조건"}
 TOOL_LABELS.update(explore_data="확보 자료 탐색", solve_offer_limits="제안단가의 허용 조건", review_case_changes="저장 비교의 변경 검토")
 TOOL_LABELS.update(reconcile_settlement="출하 기록·정산 검산", get_price_history="과거 동일규격 경락가격 비교")
+TOOL_LABELS["compare_future_pair"] = "두 미래 출하안 비교"
 FIELD_NAMES.update(quoted_price_per_kg="제안 단가 또는 미래 단가 가정(원/kg)", option_id="검토할 보관 대안")
 FIELD_NAMES.update(comparison_reference="변경 검토 기준으로 선택한 저장 JSON")
 
@@ -99,11 +100,51 @@ def _warnings(result: dict) -> list[str]:
     return output
 
 
+def _render_future_pair(result: dict) -> str:
+    a = result["option_a"]
+    b = result["options_b"][0]
+    basis = "수수료 차감 전" if result["price_basis"] == "gross" else "수수료 차감 후"
+    lines = [
+        f"물량 {_number(result['quantity_kg'])}kg · 보관 시작 {result['start_date']} · 단가 {basis}",
+        f"A안 {a['sale_date']} 출하 · B안 {b['sale_date']} 출하 · 두 출하일 간격 {result['interval_days']}일",
+        "", "| 조건 | A안 | B안 |", "| --- | --- | --- |",
+        f"| 보관일 | {a['delay_days']}일 | {b['delay_days']}일 |",
+        f"| 기간 전체 감모 | {_number(a['loss_percent'])}% | {_number(b['loss_percent'])}% |",
+        f"| 판매 가능 물량 | {_number(a['remaining_kg'])}kg | {_number(b['remaining_kg'])}kg |",
+        f"| 하루 보관비 | {_number(a['daily_storage_cost'])}원 | {_number(b['daily_storage_cost'])}원 |",
+        f"| 별도 비용 | {_number(a['other_cost_krw'])}원 | {_number(b['other_cost_krw'])}원 |",
+    ]
+    if result["price_basis"] == "gross":
+        lines.append(f"| 수수료율 | {_number(a['fee_percent'])}% | {_number(b['fee_percent'])}% |")
+    lines += [
+        "", "| 대안 | 가정 단가 | 비교금액 | A안 대비 차액 |", "| --- | --- | --- | --- |",
+        f"| A안 | {_number(a['price_per_kg'])}원/kg | {_number(a['proceeds_krw'])}원 | 기준 |",
+    ]
+    for row in result["options_b"]:
+        label = result["evidence"][row["id"]].get("label")
+        title = f"B안 {_text(label)}" if label else "B안"
+        lines.append(f"| {title} | {_number(row['price_per_kg'])}원/kg | {_number(row['proceeds_krw'])}원 | "
+                     f"{_number(row['difference_vs_a_krw'])}원 |")
+    lines += ["", f"**A안 대비 B안 손익분기 최소 단가: {_number(result['minimum_whole_krw_per_kg'], 0)}원/kg**",
+              "", "**가정 단가 근거**", ""]
+    lines += [f"- {_text(item['summary'])}" for item in result["evidence"].values()]
+    sample = result["evidence"][b["id"]]
+    if sample.get("base_date_range"):
+        start, end = sample["base_date_range"]
+        source = sample["source"].get("comparison_file")
+        conditions = " / ".join(f"{FIELD_NAMES.get(k, k)} {_text(v)}" for k, v in sample["conditions"].items())
+        lines += [f"- 과거가격 조회 조건: {conditions}", f"- 관측 기준일 범위: {start} ~ {end}",
+                  f"- 비교 자료: {_text(source)}"]
+    return "\n".join([*lines, *_warnings(result)])
+
+
 def _render_result_body(result: dict) -> str:
     """Return canonical Korean Markdown from a Python tool result only."""
     if not isinstance(result, dict):
         return "결과 형식을 확인할 수 없습니다."
     status = result.get("status", "UNKNOWN")
+    if result.get("analysis_type") == "future_pair":
+        return _render_future_pair(result)
     if result.get("analysis_type") == "price_history":
         from agents.common.price_history_reporting import render_price_history
         return render_price_history(result)
