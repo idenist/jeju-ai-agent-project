@@ -1,6 +1,8 @@
 """B안 가정 단가를 팀 손익 비교 함수(compare_shipment_options)의 입력으로 바꾼다.
 
-첫 버전은 '지금 출하(A) vs 보관 후 출하(B)'만 다룬다. 손익분기 단가와 차액은 팀 함수가 계산한다.
+- build_comparison_input: '지금 출하(A) vs 보관 후 출하(B)'. 손익분기 단가와 차액은 팀 함수가 계산한다.
+- build_future_pair_input: A·B 모두 미래(P2 합의). A 1개와 B 3개를 팀 함수의 대안 형식으로 만든다.
+  A·B 비교(차액, B안 손익분기 단가)는 통합 쪽 비교 기능이 계산한다.
 """
 from __future__ import annotations
 
@@ -75,5 +77,55 @@ def build_comparison_input(args: dict, *, delay_days, loss_percent=None, daily_s
         scenario = execute_scenario_tool(args, **paths)
         return to_comparison_input(scenario, delay_days=delay_days, loss_percent=loss_percent,
                                    daily_storage_cost=daily_storage_cost)
+    except InputError as exc:
+        return {"status": "ERROR", "error_kind": "INVALID_INPUT", "error": str(exc)}
+
+
+PAIR_NOTE = ("current_price_per_kg는 A안 가정 단가를 넣은 내부 기준값이다. 팀 함수의 '오늘 대비' 결과"
+             "(difference_krw, break_even_price_per_kg)는 이 값에 따라 달라지므로 화면에 보여주지 않는다.")
+
+
+def _option_costs(costs, label: str) -> tuple[int, str | None, str | None]:
+    if not isinstance(costs, dict) or set(costs) - {"delay_days", "loss_percent", "daily_storage_cost"}:
+        raise InputError(f"{label} 비용은 delay_days, loss_percent, daily_storage_cost만 받을 수 있습니다.")
+    days = costs.get("delay_days")
+    if type(days) is not int or not 1 <= days <= 365:
+        raise InputError(f"{label} 보관일은 1~365 사이 정수로 입력해 주세요.")
+    return (days, _optional_number(costs.get("loss_percent"), f"{label} 감량률(%)", upper=Decimal(100)),
+            _optional_number(costs.get("daily_storage_cost"), f"{label} 하루 보관비(원)"))
+
+
+def to_future_pair_input(scenario: dict, *, option_a: dict, option_b: dict) -> dict:
+    """A·B 모두 미래일 때 A 1개 + B 3개를 팀 함수 대안 형식으로 나누고, 근거는 id별로 둔다."""
+    a_days, a_loss, a_storage = _option_costs(option_a, "A안")
+    b_days, b_loss, b_storage = _option_costs(option_b, "B안")
+    # 판매일 간격(가격 조회용)과 각 안의 보관일(손익 계산용)은 따로 받는다. B가 A보다 오래 보관하는지만 확인한다.
+    if b_days <= a_days:
+        raise InputError("B안 보관일은 A안보다 길어야 합니다.")
+    base = to_comparison_input(scenario, delay_days=b_days, loss_percent=b_loss, daily_storage_cost=b_storage)
+    if base.get("status") != "OK":
+        return base
+    a_price = base["comparison_input"]["current_price_per_kg"]
+    a_key = "option_a"
+    evidence = {k: v for k, v in base["evidence"].items() if k != "current"}
+    evidence[a_key] = {"price_type": "assumption", "price_source": "사용자 입력", "delay_days": a_days,
+                       "sale_date": scenario["option_a"]["sale_date"],
+                       "summary": f"A안 {a_price}원/kg · 사용자 입력 가정"}
+    return {"status": "OK", "mode": "future_pair",
+            "comparison_input": {
+                "current_price_per_kg": a_price,
+                # 팀 함수는 대안을 최대 3개 받으므로 A와 B를 나눠 두 번 호출한다. 공통 입력은 같게 둔다.
+                "option_a": dict(zip(OPTION_KEYS, (a_key, a_days, a_loss, a_storage, a_price))),
+                "options_b": base["comparison_input"]["options"]},
+            "evidence": evidence, "cautions": base["cautions"],
+            "hidden_engine_fields": ["difference_krw", "break_even_price_per_kg",
+                                     "minimum_whole_krw_per_kg", "current_proceeds_krw"],
+            "message": PAIR_NOTE}
+
+
+def build_future_pair_input(args: dict, *, option_a: dict, option_b: dict, **paths) -> dict:
+    try:
+        scenario = execute_scenario_tool(args, **paths)
+        return to_future_pair_input(scenario, option_a=option_a, option_b=option_b)
     except InputError as exc:
         return {"status": "ERROR", "error_kind": "INVALID_INPUT", "error": str(exc)}
