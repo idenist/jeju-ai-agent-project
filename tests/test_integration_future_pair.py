@@ -90,7 +90,8 @@ class FuturePairTests(unittest.TestCase):
         self.assertFalse(any(button.label.startswith("미래 A/B") for button in app.get("download_button")))
         app.number_input(key="future_pair_B_loss_8").set_value(4.0)
         app.button(key="future_pair_calculate").click().run()
-        self.assertTrue(any("5일" in item.value for item in app.warning))
+        warning = next(item.value for item in app.warning if "5일" in item.value)
+        self.assertEqual(warning.count("B안 단가를 직접 입력"), 1)
 
         app.radio(key="future_pair_price_mode").set_value("직접 입력").run()
         app.number_input(key="future_pair_price_b").set_value(2750.0)

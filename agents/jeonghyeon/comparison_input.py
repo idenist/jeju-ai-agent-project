@@ -9,7 +9,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from .price_history import InputError, number
-from .price_scenario import execute_scenario_tool
+from .price_scenario import MANUAL_PRICE, execute_scenario_tool
 
 # integration/agents의 agents/juneok/comparison.py OPTION_FIELDS 중 이 변환이 채우는 필드
 OPTION_KEYS = ("id", "delay_days", "loss_percent", "daily_storage_cost", "future_price_per_kg")
@@ -46,9 +46,12 @@ def to_comparison_input(scenario: dict, *, delay_days, loss_percent=None, daily_
     if status != "OK":
         # 간격이 바뀌어 과거 사례를 못 찾으면 이전 가정 단가를 재사용하지 않는다.
         manual = status in {"INTERVAL_NOT_AVAILABLE", "NO_DATA", "NO_CLEAN_COMPARISON", "AMBIGUOUS_CODES"}
+        message = scenario.get("message")
+        if manual and MANUAL_PRICE not in (message or ""):
+            message = f"{message or ''} {MANUAL}".strip()
         result = {"status": status, "comparison_input": None, "evidence": {},
                   "manual_price_required": manual,
-                  "message": f"{scenario.get('message', '')} {MANUAL}".strip() if manual else scenario.get("message")}
+                  "message": message}
         if status == "NEEDS_CLARIFICATION":
             result.update(missing_fields=scenario["missing_fields"], choices=scenario.get("choices", {}))
         return result
