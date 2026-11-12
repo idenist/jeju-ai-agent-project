@@ -1,0 +1,244 @@
+[
+  {
+    "id": "J01",
+    "turns": [
+      "노지온주 3톤, 현재 수수료 차감 후 단가 3000원/kg입니다. 단가에 포함된 비용은 수수료뿐이며 보관비 외 기타 고정비는 양쪽 동일해 제외합니다. 7일 전체 감모 2%, 하루 보관비 20000원으로 손익분기를 계산해 주세요."
+    ],
+    "expected_tool": "compare_shipment_options",
+    "expected_status": "OK",
+    "minimum_price": "3109"
+  },
+  {
+    "id": "J02",
+    "turns": [
+      "3톤 현재 수수료 차감 후 3000원/kg, 포함비용 수수료만, 보관비 외 고정비 동일 제외. 7일 전체 감모 2%, 하루 보관비 20000원으로 비교해 주세요.",
+      "다른 조건은 그대로, 7일 전체 감모만 4%로 바꿔 주세요."
+    ],
+    "expected_tool": "compare_shipment_options",
+    "expected_status": "OK",
+    "minimum_price": "3174",
+    "quantity_kg": "3000"
+  },
+  {
+    "id": "J03",
+    "turns": [
+      "3톤 현재 수수료 차감 후 3000원/kg, 포함비용 수수료만, 보관비 외 고정비 동일 제외. 7일 전체 감모 2%, 하루 보관비 20000원으로 비교해 주세요.",
+      "보관기간만 3일로 바꿔 주세요. 3일 전체 감모는 모릅니다."
+    ],
+    "expected_tool": "compare_shipment_options",
+    "expected_status": "NEEDS_INPUT"
+  },
+  {
+    "id": "J04",
+    "turns": [
+      "수수료 차감 후 단가에서 수수료 5%를 다시 빼서 계산해 주세요."
+    ],
+    "forbid_successful_comparison": true
+  },
+  {
+    "id": "J05",
+    "turns": [
+      "제주 과거 노지온주 2018~2024년 11월 출하량을 연도별로 조회해 주세요."
+    ],
+    "expected_tool": "get_historical_shipment_context",
+    "expected_status": "OK",
+    "series_count": 7
+  },
+  {
+    "id": "J06",
+    "turns": [
+      "제주 노지온주 2025년 11월 출하량을 조회해 주세요."
+    ],
+    "expected_tool": "get_historical_shipment_context",
+    "expected_status": "NO_DATA"
+  },
+  {
+    "id": "J07",
+    "turns": [
+      "시장 품종 조생귤을 출하 품종 노지온주로 바꾸지 말고, #855 조생귤의 11월 출하량이 있는지 조회해 주세요."
+    ],
+    "expected_tool": "get_historical_shipment_context",
+    "expected_status": "NO_DATA"
+  },
+  {
+    "id": "J08",
+    "turns": [
+      "제주 하우스온주 2025년 9월 출하량과 부분월 여부를 조회해 주세요."
+    ],
+    "expected_tool": "get_historical_shipment_context",
+    "expected_status": "OK",
+    "partial_month": true,
+    "evidence_args": {
+      "shipment_variety": "하우스온주",
+      "target_month": 9,
+      "start_year": 2025,
+      "end_year": 2025
+    }
+  },
+  {
+    "id": "J09",
+    "turns": [
+      "3000kg 현재 수수료 차감 후 3000원/kg, 포함비용 수수료만, 보관비 외 고정비 동일 제외. 7일 전체 감모 2%, 하루 보관비 20000원. 미래 단가는 사용자 가정으로 3300원/kg일 때 비교해 주세요."
+    ],
+    "expected_tool": "compare_shipment_options",
+    "expected_status": "OK",
+    "difference_krw": "562000"
+  },
+  {
+    "id": "J10",
+    "turns": [
+      "하루 보관비를 음수 20000원으로 입력해 비교해 주세요."
+    ],
+    "forbid_successful_comparison": true
+  },
+  {
+    "id": "J11",
+    "turns": [
+      "감귤 800kg을 보관하고 싶지만 현재 판매 단가는 모릅니다. 가격을 만들지 말고 부족한 조건을 확인해 주세요."
+    ],
+    "forbid_successful_comparison": true
+  },
+  {
+    "id": "J12",
+    "turns": [
+      "3톤 현재 수수료 차감 후 3000원/kg, 포함비용 수수료만, 보관비 외 고정비 동일 제외. 7일 하루 보관비 20000원인데 전체 감모는 모릅니다."
+    ],
+    "forbid_successful_comparison": true
+  },
+  {
+    "id": "J13",
+    "turns": [
+      "물량 1000kg, 현재 차감 전 2000원/kg 수수료 5%, 포함비용 없음, 항목별 기타비용은 현재 운송 10000원. 3일 후 전체 감모 1%, 일 보관비 1000원, 후일 수수료 4%, 후일 운송 20000원으로 계산해 주세요."
+    ],
+    "expected_tool": "compare_shipment_options",
+    "expected_status": "OK"
+  },
+  {
+    "id": "J14",
+    "turns": [
+      "시장코드 110001 조생귤 특 소 상자 5kg의 최근 확보 경락가격을 조회해 주세요. 기준일은 따로 지정하지 않습니다."
+    ],
+    "expected_tool": "get_market_evidence",
+    "expected_status": "OK"
+  },
+  {
+    "id": "J15",
+    "turns": [
+      "시장코드 110001 조생귤 특 소 상자 5kg, 2026-11-09 기준 자료를 조회하고 확보 범위 밖이면 그렇다고 알려 주세요."
+    ],
+    "expected_tool": "get_market_evidence",
+    "expected_status": "NO_DATA"
+  },
+  {
+    "id": "J16",
+    "turns": [
+      "800kg, 현재 수수료 차감 후 2500원/kg, 포함비용 수수료만. 보관비 외 고정비 동일 제외. 3일 전체 감모 0%, 하루 보관비 0원인 가상 조건으로 계산해 주세요."
+    ],
+    "expected_tool": "compare_shipment_options",
+    "expected_status": "OK",
+    "minimum_price": "2500",
+    "quantity_kg": "800"
+  },
+  {
+    "id": "J17",
+    "turns": [
+      "다음 주 감귤 가격을 확정해서 알려줘. 자료 없는 가격은 만들면 안 됩니다."
+    ],
+    "forbid_successful_comparison": true
+  },
+  {
+    "id": "J18",
+    "turns": [
+      "물량 0kg, 7일 전체 감모 100%로 계산해 주세요."
+    ],
+    "forbid_successful_comparison": true
+  },
+  {
+    "id": "J19",
+    "turns": [
+      "3톤 현재 수수료 차감 후 3000원/kg, 포함비용 수수료만, 보관비 외 고정비 동일 제외. 7일 전체 감모 2%, 하루 보관비 20000원인 경제성 예시를 계산하되 실제로는 저장시설이 없고 출하일도 바꿀 수 없습니다."
+    ],
+    "expected_tool": "compare_shipment_options",
+    "expected_status": "OK",
+    "feasibility": "CONFLICT"
+  },
+  {
+    "id": "J20",
+    "turns": [
+      "3톤 현재 수수료 차감 후 3000원/kg, 포함비용 수수료만, 보관비 외 고정비 동일 제외. 두 대안을 비교합니다. 3일 전체 감모 1%, 하루 보관비 20000원. 7일 전체 감모 2%, 하루 보관비 20000원. 미래 단가는 모두 모릅니다."
+    ],
+    "expected_tool": "compare_shipment_options",
+    "expected_status": "OK",
+    "option_count": 2
+  },
+  {
+    "id": "J21",
+    "turns": [
+      "제주 노지온주 2018~2024년 11월 과거 출하량을 조회하고, 별도로 내 조건의 손익분기도 함께 계산해 주세요. 3톤, 현재 수수료 차감 후 3000원/kg, 포함비용 수수료만, 보관비 외 고정비 동일 제외. 7일 전체 감모 2%, 하루 보관비 20000원입니다. 과거 통계로 미래가격을 예측하지는 마세요."
+    ],
+    "expected_tool": "compare_shipment_options",
+    "expected_status": "OK",
+    "minimum_price": "3109",
+    "required_tools": [
+      "get_historical_shipment_context",
+      "compare_shipment_options"
+    ]
+  },
+  {
+    "id": "J22",
+    "turns": [
+      "감모율이 무슨 뜻이에요? 지금 계산은 필요 없고 의미만 알려주세요."
+    ],
+    "expected_tool": "explain_term",
+    "expected_status": "OK",
+    "forbid_successful_comparison": true
+  },
+  {
+    "id": "J23",
+    "turns": [
+      "노지온주 3톤, 현재 수수료 차감 후 단가 3000원/kg입니다. 단가에 포함된 비용은 수수료뿐이며 보관비 외 기타 고정비는 양쪽 동일해 제외합니다. 7일 전체 감모 2%, 하루 보관비 20000원으로 손익분기를 계산해 주세요.",
+      "7일 보관기간과 원래 감모율 2%는 그대로 두고, 감모율 가정 1%, 2%, 4%와 미래 단가 가정 3000원, 3300원의 조합별 민감도 표를 보여줘."
+    ],
+    "expected_tool": "compare_sensitivity",
+    "expected_status": "OK",
+    "sensitivity_rows": 6,
+    "expected_losses": [
+      1,
+      2,
+      4
+    ],
+    "expected_prices": [
+      3000,
+      3300
+    ],
+    "preserved_loss": 2
+  },
+  {
+    "id": "J24",
+    "turns": [
+      "노지온주 3톤, 현재 수수료 차감 후 단가 3000원/kg입니다. 단가에 포함된 비용은 수수료뿐이며 보관비 외 기타 고정비는 양쪽 동일해 제외합니다. 7일 전체 감모 2%, 하루 보관비 20000원으로 손익분기를 계산해 주세요.",
+      "민감도 표를 보고 싶지만 감모율 가정 목록은 아직 못 정했어. 임의로 값을 정하지 말고 무엇을 정해야 하는지 알려줘."
+    ],
+    "expected_tool": "compare_sensitivity",
+    "expected_status": "NEEDS_INPUT",
+    "preserved_loss": 2
+  },
+  {
+    "id": "J25",
+    "turns": [
+      "노지온주 3톤, 현재 수수료 차감 후 단가 3000원/kg입니다. 단가에 포함된 비용은 수수료뿐이며 보관비 외 기타 고정비는 양쪽 동일해 제외합니다. 7일 전체 감모 2%, 하루 보관비 20000원으로 손익분기를 계산해 주세요.",
+      "기존 조건은 바꾸지 말고 감모율을 2%, 4%라고 가정할 때 필요한 최소 단가만 표로 비교해줘. 미래 단가는 정하지 않았어."
+    ],
+    "expected_tool": "compare_sensitivity",
+    "expected_status": "OK",
+    "sensitivity_rows": 2,
+    "expected_losses": [
+      2,
+      4
+    ],
+    "expected_prices": [
+      null
+    ],
+    "preserved_loss": 2
+  }
+]

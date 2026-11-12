@@ -1,0 +1,12 @@
+# These existing data snapshots were byte-hashed with CRLF line endings.
+# Keep the common Git blobs unchanged and reproduce their original checkout bytes.
+data/**/*.csv text eol=crlf
+data/reports/*.json text eol=crlf
+requirements-juneok.lock text eol=crlf
+
+# Preserve exact upstream font and notice bytes, including mixed license endings.
+assets/fonts/** -text
+assets/licenses/** -text
+
+# Keep the reviewed presentation PDFs byte-identical in Git checkouts.
+docs/**/*.pdf -text

@@ -25,6 +25,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterable
 
+# 제주데이터허브 제공 원본의 5개 컬럼명. 경매가격 표와는 분류체계·단위가 다르다.
 SOURCE_COLS = ["출하일자", "품종대분류", "품종소분류", "신고소", "출하량"]
 DAILY_COLS = [
     "date", "category", "variety", "shipment_tons", "reporting_offices",
@@ -38,6 +39,7 @@ UNASSIGNED_COLS = ["exclusion_reason"] + SOURCE_COLS
 TON_SCALE = Decimal("0.01")
 
 
+# 사용자 환경에 따라 CP949·UTF-8로 저장될 수 있으므로 인코딩을 순서대로 시도한다.
 def read_source(path: Path) -> tuple[list[dict[str, str]], str]:
     if not path.is_file():
         raise FileNotFoundError(f"입력 파일이 없습니다: {path}")
@@ -54,6 +56,7 @@ def read_source(path: Path) -> tuple[list[dict[str, str]], str]:
     if decoded is None or selected_encoding is None:
         raise ValueError(f"UTF-8 / CP949로 읽을 수 없습니다: {path}")
 
+    # 컬럼 수가 어긋난 행을 조용히 건너뛰면 집계가 틀어지므로 오류로 중단한다.
     reader = csv.DictReader(io.StringIO(decoded, newline=""))
     if reader.fieldnames is None or not set(SOURCE_COLS).issubset(reader.fieldnames):
         raise ValueError(f"필수 컬럼 누락: {path}; 필요한 컬럼={SOURCE_COLS}")
@@ -65,10 +68,12 @@ def read_source(path: Path) -> tuple[list[dict[str, str]], str]:
     return rows, selected_encoding
 
 
+# 출하량의 기본 단위는 톤이며, 사용자에게 보이는 합계는 소수 둘째 자리로 나타낸다.
 def ton_str(value: Decimal) -> str:
     return format(value.quantize(TON_SCALE), "f")
 
 
+# 음수·비정상 숫자를 유효 출하량으로 합치지 않는다. 원본의 명시적 0톤은 허용한다.
 def parse_tons(value: str) -> Decimal | None:
     try:
         amount = Decimal(value.replace(",", "").strip())
@@ -88,7 +93,9 @@ def save_csv(path: Path, fields: list[str], records: Iterable[dict]) -> None:
         writer.writerows(records)
 
 
+# 전체 파이프라인: 인코딩 확인 → 날짜·중량 검증 → 중복 확인 → 일·월별 집계 → 보고서.
 def preprocess(inputs: list[Path], out_dir: Path, report_dir: Path | None = None) -> dict:
+    # 여러 원본에서 읽은 행과 해당 파일의 인코딩을 추적할 수 있게 따로 보관한다.
     all_rows: list[tuple[str, dict[str, str]]] = []
     encodings: dict[str, str] = {}
     for path in inputs:
@@ -107,6 +114,7 @@ def preprocess(inputs: list[Path], out_dir: Path, report_dir: Path | None = None
     seen_keys: dict[tuple, str] = {}
     collisions: list[str] = []
 
+    # 원본 누락을 임의로 채우지 않고 제외 사유와 물량을 별도로 누적한다.
     for filename, row in all_rows:
         category, variety, office = row["품종대분류"], row["품종소분류"], row["신고소"]
         if not category or not variety or not office:
@@ -123,6 +131,7 @@ def preprocess(inputs: list[Path], out_dir: Path, report_dir: Path | None = None
         total_numeric_volume += value
 
         date_text = row["출하일자"]
+        # 날짜 없는 한라봉 기록은 어느 월에 해당하는지 알 수 없어 절대 월별로 배분하지 않는다.
         if not date_text:
             reason = "missing_date"
             invalid_reasons[reason] += 1
@@ -145,6 +154,7 @@ def preprocess(inputs: list[Path], out_dir: Path, report_dir: Path | None = None
             invalid.append({"exclusion_reason": reason, **row})
             continue
 
+        # 일자·품종·신고소가 중복되면 두 번 합산할 위험이 있어 나중에 일괄 중단한다.
         key = (day, category, variety, office)
         if key in seen_keys:
             if len(collisions) < 10:
@@ -154,6 +164,7 @@ def preprocess(inputs: list[Path], out_dir: Path, report_dir: Path | None = None
         valid.append((day, category, variety, office, value))
 
     # 특정 날짜+품종+신고소가 두 번 잡히면 합계가 중복계상될 수 있으므로 중단
+    # 자동 중복 제거는 실제 서로 다른 출하를 잃게 할 수 있어 수동 확인을 요청한다.
     if collisions:
         raise ValueError(
             "동일 날짜·품종·신고소의 중복 키가 발견됐습니다. 임의 합산/제거하지 않고 중단합니다.\n"
@@ -165,11 +176,13 @@ def preprocess(inputs: list[Path], out_dir: Path, report_dir: Path | None = None
     date_min = min(row[0] for row in valid)
     date_max = max(row[0] for row in valid)
     last_month = date_max.strftime("%Y-%m")
+    # 자료 종료일이 월말 이전이라면 마지막 달의 총량이 완전하지 않음을 표시한다.
     partial_last_month = date_max.day < calendar.monthrange(date_max.year, date_max.month)[1]
 
     daily_data: dict[tuple, dict] = {}
     monthly_data: dict[tuple, dict] = {}
 
+    # 신고소를 합쳐 날짜×품종, 월×품종 단위로 집계하되 원본 단위(톤)를 유지한다.
     for day, category, variety, office, volume in valid:
         d_key = (day.isoformat(), category, variety)
         m_key = (day.strftime("%Y-%m"), category, variety)
@@ -186,6 +199,7 @@ def preprocess(inputs: list[Path], out_dir: Path, report_dir: Path | None = None
         monthly_data[m_key]["days"].add(day.isoformat())
         monthly_data[m_key]["rows"] += 1
 
+    # 특정 품종의 날짜 미배정 기록 또는 마지막 부분월이면 데이터 품질 경고를 부여한다.
     def warnings(ym: str, variety: str) -> str:
         flags = []
         if missing_date_by_variety[variety]:
@@ -194,6 +208,7 @@ def preprocess(inputs: list[Path], out_dir: Path, report_dir: Path | None = None
             flags.append("source_ends_mid_month")
         return "|".join(flags) if flags else "ok"
 
+    # 산출 파일에서 신고소 수와 실제 양의 출하량 신고소 수를 별도로 제공한다.
     daily_rows = []
     for (day_str, category, variety), record in sorted(daily_data.items()):
         daily_rows.append({
@@ -205,6 +220,7 @@ def preprocess(inputs: list[Path], out_dir: Path, report_dir: Path | None = None
             "data_warning": warnings(day_str[:7], variety),
         })
 
+    # observed_days는 달력의 전체 날짜 수가 아니라 원본에 기록된 날짜의 개수다.
     monthly_rows = []
     for (ym, category, variety), record in sorted(monthly_data.items()):
         monthly_rows.append({
@@ -218,9 +234,11 @@ def preprocess(inputs: list[Path], out_dir: Path, report_dir: Path | None = None
     valid_volume = sum((row[4] for row in valid), Decimal(0))
     daily_volume = sum((rec["tons"] for rec in daily_data.values()), Decimal(0))
     monthly_volume = sum((rec["tons"] for rec in monthly_data.values()), Decimal(0))
+    # 원본 유효 행과 일·월간 합산값이 정확히 일치하는지 마지막에 검산한다.
     if not (valid_volume == daily_volume == monthly_volume):
         raise AssertionError("일별·월별 출하량 합계가 원본 유효 기록과 일치하지 않습니다.")
 
+    # 날짜 미배정 물량을 별도로 보고하므로 누락 자료가 총합에서 사라진 것처럼 숨기지 않는다.
     report = {
         "source": "제주데이터허브 #855 신고소별 감귤류 및 만감류 출하량 통계",
         "source_files": encodings,
@@ -262,6 +280,7 @@ def preprocess(inputs: list[Path], out_dir: Path, report_dir: Path | None = None
         ],
     }
 
+    # 집계 CSV와 미배정 행·품질 보고서는 별도 위치에 보관한다.
     if report_dir is None:
         report_dir = out_dir.parent / "reports"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -275,6 +294,7 @@ def preprocess(inputs: list[Path], out_dir: Path, report_dir: Path | None = None
     return report
 
 
+# 사용자가 제공한 원본 경로를 읽고 처리 결과와 주의사항을 CMD에 출력한다.
 def main() -> int:
     parser = argparse.ArgumentParser(description="제주데이터허브 #855 출하량 전처리")
     parser.add_argument(
