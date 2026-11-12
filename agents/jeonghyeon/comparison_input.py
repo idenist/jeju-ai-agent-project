@@ -17,6 +17,12 @@ MANUAL = "B안 단가를 직접 입력해 손익 비교를 이어가 주세요."
 SHORT = {"min": "가장 크게 내린 사례", "median": "중앙값", "max": "가장 크게 오른 사례"}
 
 
+def _won(value) -> str:
+    # 화면·PDF 근거 문장용 표시. 계산 입력값은 바꾸지 않는다 (2500.0 → 2,500, 1519.72 → 1,519.72).
+    text = f"{Decimal(str(value)):,.2f}"
+    return text[:-3] if text.endswith(".00") else text
+
+
 def _optional_number(value, name: str, *, upper: Decimal | None = None) -> str | None:
     # 모르는 값은 0으로 바꾸지 않고 비워 두어 팀 함수가 다시 묻게 한다.
     if value is None:
@@ -65,7 +71,7 @@ def to_comparison_input(scenario: dict, *, delay_days, loss_percent=None, daily_
                          "price_interval_days": interval, "delay_days": delay_days,
                          "clean_pairs": scenario["clean_pairs"], "base_date_range": scenario["base_date_range"],
                          "conditions": scenario["conditions"], "source": scenario["source"],
-                         "summary": f"B안 {item['option_b_price_per_kg']}원/kg · 동일 규격 {interval}일 과거 "
+                         "summary": f"B안 {_won(item['option_b_price_per_kg'])}원/kg · 동일 규격 {interval}일 과거 "
                                     f"{scenario['clean_pairs']}쌍의 {SHORT[item['basis']]} 적용 · 가정"}
     evidence["current"] = {"price_type": "assumption", "price_source": "사용자 입력",
                            "sale_date": scenario["option_a"]["sale_date"]}
@@ -113,7 +119,7 @@ def to_future_pair_input(scenario: dict, *, option_a: dict, option_b: dict) -> d
     evidence = {k: v for k, v in base["evidence"].items() if k != "current"}
     evidence[a_key] = {"price_type": "assumption", "price_source": "사용자 입력", "delay_days": a_days,
                        "sale_date": scenario["option_a"]["sale_date"],
-                       "summary": f"A안 {a_price}원/kg · 사용자 입력 가정"}
+                       "summary": f"A안 {_won(a_price)}원/kg · 사용자 입력 가정"}
     return {"status": "OK", "mode": "future_pair",
             "comparison_input": {
                 "current_price_per_kg": a_price,

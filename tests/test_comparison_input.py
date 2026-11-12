@@ -39,7 +39,7 @@ class ComparisonInputTest(unittest.TestCase):
         evidence = result["evidence"]["past_median_7d"]
         self.assertNotIn("price_type", option(result, "past_median_7d"))
         self.assertEqual((evidence["price_type"], evidence["clean_pairs"]), ("assumption", 20))
-        self.assertEqual(evidence["summary"], "B안 2409.37원/kg · 동일 규격 7일 과거 20쌍의 중앙값 적용 · 가정")
+        self.assertEqual(evidence["summary"], "B안 2,409.37원/kg · 동일 규격 7일 과거 20쌍의 중앙값 적용 · 가정")
         self.assertEqual(evidence["source"]["comparison_file"], "data/processed/price_comparison_availability.csv")
         self.assertEqual(result["evidence"]["current"]["price_type"], "assumption")
 

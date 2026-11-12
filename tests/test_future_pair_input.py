@@ -45,7 +45,7 @@ class FuturePairInputTest(unittest.TestCase):
     def test_evidence_per_id(self):
         evidence = build()["evidence"]
         self.assertEqual(set(evidence), {"option_a", "past_min_7d", "past_median_7d", "past_max_7d"})
-        self.assertEqual(evidence["option_a"]["summary"], "A안 2500원/kg · 사용자 입력 가정")
+        self.assertEqual(evidence["option_a"]["summary"], "A안 2,500원/kg · 사용자 입력 가정")
         self.assertTrue(all(v["price_type"] == "assumption" for v in evidence.values()))
 
     def test_missing_a_price_and_unsupported_gap_give_no_input(self):
@@ -61,6 +61,11 @@ class FuturePairInputTest(unittest.TestCase):
         self.assertIn("A안보다 길어야", build(option_b={**B, "delay_days": 3})["error"])
         self.assertIn("감량률", build(option_b={**B, "loss_percent": 100})["error"])
         self.assertIn("받을 수 있습니다", build(option_a={**A, "price": 1})["error"])
+
+    def test_summary_uses_thousands_separator_without_trailing_zero(self):
+        evidence = build({**ARGS, "option_a_price_per_kg": 2500.0})["evidence"]
+        self.assertEqual(evidence["option_a"]["summary"], "A안 2,500원/kg · 사용자 입력 가정")
+        self.assertTrue(evidence["past_min_7d"]["summary"].startswith("B안 1,661.44원/kg"))
 
     def test_unknown_costs_stay_none(self):
         data = build(option_a={"delay_days": 3})["comparison_input"]
