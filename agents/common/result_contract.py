@@ -13,7 +13,7 @@ from typing import Any
 JUNEOK_TOOLS = frozenset({
     "reconcile_settlement", "review_case_changes", "explore_data",
     "solve_offer_limits", "build_review_brief", "explain_decision_conditions",
-    "update_scenario", "compare_shipment_options", "compare_sensitivity",
+    "update_scenario", "compare_shipment_options", "compare_sensitivity", "compare_future_pair",
     "get_historical_shipment_context", "get_market_evidence", "get_price_history", "explain_term",
 })
 SEUNGHYUK_TOOLS = frozenset({"get_market_price", "compare_shipping"})

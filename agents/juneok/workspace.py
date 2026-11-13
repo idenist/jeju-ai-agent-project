@@ -130,7 +130,7 @@ class SharedWorkspace:
         current = data_revision()
         if current == self.data_revision:
             return False
-        self.clear_conversation(preserve_conditions=True)
+        self.clear_conversation(preserve_conditions=True, preserve_manual_pair=True)
         self.session.task_context = TaskContext()
         if hasattr(self, "restored_archive"):
             del self.restored_archive
@@ -319,16 +319,22 @@ class SharedWorkspace:
         revision = data_revision()
         self.session.comparison_input_context = self.input_context
         reply = self.session.run(question)
-        self._freeze(reply.get("visible_results", []), "대화와 공유 조건", execution_status=reply.get("status", "ERROR"), expected_data_revision=revision)
+        visible = reply.get("visible_results", [])
+        entries = [entry for entry in visible if entry["tool"] != "compare_future_pair"]
+        if entries or not visible or reply["status"] != "OK":
+            self._freeze(entries, "대화와 공유 조건", execution_status=reply.get("status", "ERROR"), expected_data_revision=revision)
         return reply
 
-    def clear_conversation(self, preserve_conditions=True):
+    def clear_conversation(self, preserve_conditions=True, preserve_manual_pair=False):
         self.session.messages = []
         self.session.price_history_query = None
         self.session.price_history_revision = None
+        if not preserve_manual_pair or self.session.future_pair.inputs["history_filters"] is not None:
+            self.session.future_pair.clear_result()
         self.entries = []
         self.result_version = None
         if not preserve_conditions:
+            self.session.future_pair.reset()
             self.shipment.clear()
             self.session.comparison_reference = None
             from .state import ScenarioStore

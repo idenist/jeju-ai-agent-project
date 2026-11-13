@@ -107,16 +107,6 @@ def _render_future_pair(result: dict) -> str:
     lines = [
         f"물량 {_number(result['quantity_kg'])}kg · 보관 시작 {result['start_date']} · 단가 {basis}",
         f"A안 {a['sale_date']} 출하 · B안 {b['sale_date']} 출하 · 두 출하일 간격 {result['interval_days']}일",
-        "", "| 조건 | A안 | B안 |", "| --- | --- | --- |",
-        f"| 보관일 | {a['delay_days']}일 | {b['delay_days']}일 |",
-        f"| 기간 전체 감모 | {_number(a['loss_percent'])}% | {_number(b['loss_percent'])}% |",
-        f"| 판매 가능 물량 | {_number(a['remaining_kg'])}kg | {_number(b['remaining_kg'])}kg |",
-        f"| 하루 보관비 | {_number(a['daily_storage_cost'])}원 | {_number(b['daily_storage_cost'])}원 |",
-        f"| 별도 비용 | {_number(a['other_cost_krw'])}원 | {_number(b['other_cost_krw'])}원 |",
-    ]
-    if result["price_basis"] == "gross":
-        lines.append(f"| 수수료율 | {_number(a['fee_percent'])}% | {_number(b['fee_percent'])}% |")
-    lines += [
         "", "| 대안 | 가정 단가 | 비교금액 | A안 대비 차액 |", "| --- | --- | --- | --- |",
         f"| A안 | {_number(a['price_per_kg'])}원/kg | {_number(a['proceeds_krw'])}원 | 기준 |",
     ]
@@ -125,16 +115,27 @@ def _render_future_pair(result: dict) -> str:
         title = f"B안 {_text(label)}" if label else "B안"
         lines.append(f"| {title} | {_number(row['price_per_kg'])}원/kg | {_number(row['proceeds_krw'])}원 | "
                      f"{_number(row['difference_vs_a_krw'])}원 |")
-    lines += ["", f"**A안 대비 B안 손익분기 최소 단가: {_number(result['minimum_whole_krw_per_kg'], 0)}원/kg**",
-              "", "**가정 단가 근거**", ""]
+    lines += [
+        "", f"**A 이상을 위한 B안 최소 단가: {_number(result['minimum_whole_krw_per_kg'], 0)}원/kg**",
+        "B안 비교금액이 A안 이상이 되는 최소 원 단위 가격입니다. 두 안의 비교금액이 같을 수 있습니다.",
+        "", "| 조건 | A안 | B안 |", "| --- | --- | --- |",
+        f"| 보관일 | {a['delay_days']}일 | {b['delay_days']}일 |",
+        f"| 기간 전체 감모 | {_number(a['loss_percent'])}% | {_number(b['loss_percent'])}% |",
+        f"| 판매 가능 물량 | {_number(a['remaining_kg'])}kg | {_number(b['remaining_kg'])}kg |",
+        f"| 전체 물량 하루 보관비 | {_number(a['daily_storage_cost'])}원 | {_number(b['daily_storage_cost'])}원 |",
+        f"| 별도 비용 | {_number(a['other_cost_krw'])}원 | {_number(b['other_cost_krw'])}원 |",
+    ]
+    if result["price_basis"] == "gross":
+        lines.append(f"| 수수료율 | {_number(a['fee_percent'])}% | {_number(b['fee_percent'])}% |")
+    lines += ["", "**가정 단가 근거**", ""]
     lines += [f"- {_text(item['summary'])}" for item in result["evidence"].values()]
     sample = result["evidence"][b["id"]]
     if sample.get("base_date_range"):
         start, end = sample["base_date_range"]
-        source = sample["source"].get("comparison_file")
-        conditions = " / ".join(f"{FIELD_NAMES.get(k, k)} {_text(v)}" for k, v in sample["conditions"].items())
+        labels = {**FIELD_NAMES, "trade_type": "거래방식"}
+        conditions = " / ".join(f"{labels.get(k, k)} {_text(v)}" for k, v in sample["conditions"].items())
         lines += [f"- 과거가격 조회 조건: {conditions}", f"- 관측 기준일 범위: {start} ~ {end}",
-                  f"- 비교 자료: {_text(source)}"]
+                  "- 비교 자료: 과거 동일 규격 경락가격쌍"]
     return "\n".join([*lines, *_warnings(result)])
 
 
@@ -144,7 +145,10 @@ def _render_result_body(result: dict) -> str:
         return "결과 형식을 확인할 수 없습니다."
     status = result.get("status", "UNKNOWN")
     if result.get("analysis_type") == "future_pair":
-        return _render_future_pair(result)
+        if status == "OK":
+            return _render_future_pair(result)
+        from .future_pair_state import future_pair_feedback
+        return future_pair_feedback(result)
     if result.get("analysis_type") == "price_history":
         from agents.common.price_history_reporting import render_price_history
         return render_price_history(result)

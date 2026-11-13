@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from agents.common.calculation_service import compare_shipment_options
+from .future_pair_state import HISTORY_FIELDS, MAX_RATE_PERCENT
 from .state import ScenarioStore
 
 
@@ -22,6 +23,11 @@ OPTION = object_schema({"id": {"type": "string"}, "delay_days": nullable("intege
                         "fee_percent": nullable("number", minimum=0, exclusiveMaximum=100), "future_price_per_kg": nullable("number", minimum=0),
                         "costs": nullable("array", items=COST),
                         "loss_confirmed_for_period": {"type": "boolean"}})
+FUTURE_OPTION = object_schema({"delay_days": nullable("integer", minimum=1, maximum=365),
+    "loss_percent": nullable("number", minimum=0, maximum=MAX_RATE_PERCENT),
+    "daily_storage_cost": nullable("number", minimum=0), "other_cost_krw": nullable("number", minimum=0),
+    "fee_percent": nullable("number", minimum=0, maximum=MAX_RATE_PERCENT),
+    "loss_confirmed_for_period": {"type": "boolean"}})
 PATCH = object_schema({"quantity_kg": nullable("number"), "current_price_per_kg": nullable("number"),
                        "price_basis": nullable("string", enum=["commission_net", "gross", None]),
                        "current_fee_percent": nullable("number"),
@@ -40,6 +46,18 @@ def tool(name: str, description: str, properties: dict) -> dict:
 
 
 TOOLS = [
+    tool("compare_future_pair", "두 미래 출하일을 비교합니다. 새 비교는 new, 기존 P2 조건 수정은 edit. B안 단가는 직접 입력(manual) 또는 과거 동일규격 변동 가정(history). 사용자가 말한 값만 보내고 변경 없는 값은 null. 날짜 변경 시 새 기간 전체 감모를 확인한 경우에만 같이 전달합니다.",
+         {"action": {"type": "string", "enum": ["new", "edit"]}, "expected_version": {"type": "integer"},
+          "patch": object_schema({"quantity": nullable("number"), "price_basis": nullable("string", enum=["gross", "commission_net", None]),
+                                  "start_date": nullable("string"), "price_a": nullable("number"), "price_b": nullable("number"),
+                                  "price_mode": nullable("string", enum=["manual", "history", None]),
+                                  "history_filters": {"anyOf": [object_schema({
+                                      field: nullable("string", description=label if field != "package_kg" else "포장 한 개 중량(kg)을 단위 없이 문자열로 입력. 예: 5")
+                                      for field, label in HISTORY_FIELDS.items()
+                                  }), {"type": "null"}]},
+                                  "option_a": {"anyOf": [FUTURE_OPTION, {"type": "null"}]},
+                                  "option_b": {"anyOf": [FUTURE_OPTION, {"type": "null"}]}}),
+          "clear_fields": {"type": "array", "items": {"type": "string"}}}),
     tool("reconcile_settlement", "정산 카드에서 확인한 출하 기록을 로컬 Python에서 읽기 전용 검산하고 금액·근거는 앱에 직접 표시. 모델에는 상세 금액 없는 처리 상태만 반환. 기록이 없으면 카드 연결/입력 안내. 자연어 금액의 자동 저장·원래 가정 대조·보관 효과/수익 예측 없음.",
          {"expected_record_revision": nullable("integer", minimum=0)}),
     tool("review_case_changes", "사용자가 앱에서 명시적으로 선택한 저장 비교와 현재 조건의 변경·재계산 결과를 읽기 전용 검토. 기준 파일이 없으면 업로드/선택 질문. 복원/현재 조건 변경 없음. 당시 보관 숫자는 사실로 재사용하지 않음.",
@@ -115,7 +133,7 @@ def explain_term(topic: str) -> dict:
     return {"status": "OK", "topic": topic, "explanation": HELP[topic]}
 
 
-def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=None, task_context=None, input_context=None, shipment=None) -> dict:
+def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=None, task_context=None, input_context=None, shipment=None, future_pair=None) -> dict:
     if not isinstance(args, dict):
         return {"status": "INVALID_INPUT", "message": "도구 입력은 객체여야 합니다."}
     schemas = {t["name"]: t["parameters"] for t in TOOLS}
@@ -128,6 +146,10 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
     if type(finish) is not bool:
         return {"status": "INVALID_INPUT", "message": "완료 표시는 true 또는 false여야 합니다."}
     try:
+        if name == "compare_future_pair":
+            if future_pair is None:
+                return {"status": "INVALID_INPUT", "message": "미래 출하 비교 조건을 확인할 수 없습니다."}
+            return future_pair.apply(args.get("action"), args.get("expected_version"), args.get("patch"), args.get("clear_fields"))
         if name == "reconcile_settlement":
             from .settlement import reconcile
             if shipment is not None and args.get("expected_record_revision") is not None and (type(args["expected_record_revision"]) is not int or args["expected_record_revision"] != shipment.revision):
