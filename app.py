@@ -8,7 +8,7 @@ import streamlit as st
 
 from agents.juneok.agent import AgentSession
 from agents.juneok.config import PROJECT_ROOT, Settings
-from agents.juneok.reporting import render_report, render_result, FIELD_NAMES
+from agents.juneok.reporting import render_report, render_result, future_pair_summary, FIELD_NAMES
 from agents.juneok.presentation import connection_label
 from agents.juneok.ui_workflow import COST_LABELS, INPUT_CONTEXTS, form_snapshot, condition_rows
 from agents.juneok.workspace import SharedWorkspace, card_values
@@ -67,6 +67,14 @@ def _reset_all():
     st.session_state.pop("sensitivity_result", None)
     for key in ['pdf_cache', 'settlement_pdf', 'settlement_transfer']:
         st.session_state.pop(key, None)
+    st.session_state.pop("future_pair_shared_costs", None)
+    st.session_state.pop("future_pair_separate_costs", None)
+    st.session_state.pop("future_pair_price_drafts", None)
+    for key in ("future_pair_missing", "future_pair_history_open", "future_pair_costs_open"):
+        st.session_state.pop(key, None)
+    for key in list(st.session_state):
+        if key == "future_pair_price_b" or key.startswith("future_pair_filter_"):
+            del st.session_state[key]
     # 새 비교는 직접 입력한 과거 경락가격의 화면 조건도 초기화합니다.
     for key in ("price_history_variety", "price_history_grade", "price_history_size",
                 "price_history_package", "price_history_package_kg", "price_history_market_code",
@@ -513,7 +521,7 @@ def main():
     from agents.juneok.settlement_ui import hide_pending_settlement
     settlement_dirty = hide_pending_settlement(ws)
     st.title("제주 감귤 출하 대안 비교")
-    st.caption("대화로 시작하고 조건 카드에서 확인·수정하세요. 필요한 가격 조건을 비교하며 미래가격을 예측하지 않습니다.")
+    st.caption("출하 시점에 따른 비교금액과 필요한 단가를 확인하세요.")
     with st.sidebar:
         st.subheader("실행과 자료")
         st.write(connection_label(bool(settings.api_key), st.session_state.get("last_agent_reply")))
@@ -532,26 +540,37 @@ def main():
             st.success(notice)
         _render_csv_manager()
         case_download_slot, case_name = _render_cases(ws, _card_dirty())
+    comparison_tab, data_tab, tools_tab = st.tabs(["출하 비교", "자료 조회", "추가 도구"])
     dirty_before = _card_dirty()
-    chat, card = st.columns([3, 2], gap="large")
-    with chat:
+    with comparison_tab:
+        current_tab, future_tab = st.tabs(["오늘과 나중", "두 미래 출하안 비교"])
+        with current_tab:
+            _render_card_summary(ws)
+            if st.button("출하 조건 비교", disabled=dirty_before):
+                ws.calculate()
+            dirty = _render_cards(ws)
+            comparison_report = st.empty()
+        with future_tab:
+            from agents.juneok.future_pair_ui import render_future_pair
+            future_result = render_future_pair(ws.session.future_pair)
         st.subheader("대화로 조건 확인")
-        start = st.columns(4)
-        if start[0].button("출하 조건 비교", disabled=dirty_before):
-            ws.calculate()
-        if start[1].button("과거 경락가격", disabled=dirty_before):
-            st.session_state.show_price_history = True
-        if start[2].button("과거 출하자료", disabled=dirty_before):
-            st.session_state.show_history = True
-        if start[3].button("용어 이해", disabled=dirty_before):
-            from agents.juneok.tools import explain_term
-            ws._freeze([{"tool": "explain_term", "result": explain_term("loss_rate")}], "용어 이해")
-        st.caption("예: ‘3톤을 지금 팔지 7일 보관할지 비교하고 싶어요’ · ‘감모율이 무슨 뜻인가요?’")
+        messages = st.session_state.get("agent_messages", [])
+        last_reply = messages[-1].get("reply", {}) if messages else {}
+        if future_result and any(
+            entry["tool"] == "compare_future_pair"
+            and entry["result"]["status"] == "OK"
+            and entry["result"].get("future_pair_version") == ws.session.future_pair.version
+            for entry in last_reply.get("visible_results", [])
+        ):
+            conclusion, minimum = future_pair_summary(future_result)
+            st.info(f"**현재 미래 A/B 비교**\n\n{conclusion}\n\n{minimum}")
+            st.caption("상세 조건과 PDF·JSON은 위의 ‘두 미래 출하안 비교’ 탭에서 확인하세요.")
+        st.caption("예: ‘3톤을 3일 뒤와 10일 뒤에 파는 경우를 비교하고 싶어요.’")
         if not settings.api_key:
             st.info("자연어 대화는 모델 키가 필요합니다. 조건 카드·과거 자료 조회·PDF는 키 없이 사용할 수 있습니다.")
         if dirty_before:
             st.warning("카드에 저장하지 않은 수정이 있습니다. 먼저 적용하거나 편집을 취소하세요.")
-        for message in st.session_state.get("agent_messages", []):
+        for message in messages:
             with st.chat_message(message["role"]):
                 if message.get("reply"):
                     _show_agent_reply(message["reply"], ws.store.version, dirty_before)
@@ -566,31 +585,49 @@ def main():
             st.session_state.last_agent_reply = {"status": reply.get("status"), "metrics": reply.get("metrics", {})}
             st.session_state._force_card_sync = True
             st.rerun()
-    with card:
-        _render_card_summary(ws)
-    dirty = _render_cards(ws)
     if dirty:
         st.warning("입력 조건이 바뀌었습니다. ‘입력 조건 비교’를 눌러 적용하세요. 이전 결과·보고서·가정 범위 표는 숨겼습니다.")
         st.session_state.pop("sensitivity_result", None)
-    _render_sensitivity(ws, dirty)
-    _render_price_history(ws, dirty)
-    _render_history(ws, dirty)
-    _render_discovery(ws, dirty)
-    _render_offer_limits(ws, dirty)
-    _render_review(ws, dirty)
+    with data_tab:
+        if st.button("과거 경락가격", disabled=dirty):
+            st.session_state.show_price_history = True
+        if st.button("과거 출하자료", disabled=dirty):
+            st.session_state.show_history = True
+        _render_price_history(ws, dirty)
+        _render_history(ws, dirty)
+        _render_discovery(ws, dirty)
+        data_report = st.empty()
+    with tools_tab:
+        if st.button("용어 이해", disabled=dirty):
+            from agents.juneok.tools import explain_term
+            ws._freeze([{"tool": "explain_term", "result": explain_term("loss_rate")}], "용어 이해")
+        _render_sensitivity(ws, dirty)
+        _render_offer_limits(ws, dirty)
+        _render_review(ws, dirty)
+        from agents.juneok.settlement_ui import render_shipments
+        render_shipments(ws, dirty)
+        tools_report = st.empty()
+        if not dirty:
+            _render_task_context(ws)
+        with st.expander("사용 안내와 자료의 한계"):
+            st.markdown("모르는 값은 빈칸으로 두고, 비용이 없다고 확인한 경우에만 0을 입력하세요. 기간 전체 감모와 하루 비용을 구분하고, 단가에 포함된 비용은 한 번만 반영합니다. 실제 출하 전에 저장시설·계약·납기 조건을 확인하세요.")
+            st.caption("경매 관측가격, 농가 제시가격, 출하량, 시장 반입량은 각각 다른 자료입니다.")
     if not dirty:
-        _render_task_context(ws)
-        _render_report(ws.current_entries())
-    from agents.juneok.settlement_ui import render_shipments
-    render_shipments(ws, dirty)
-    from agents.juneok.future_pair_ui import render_future_pair
-    render_future_pair(ws.session.future_pair)
+        entries = ws.current_entries()
+        tool_names = {entry["tool"] for entry in entries}
+        report_slot = comparison_report
+        if tool_names & {"compare_sensitivity", "solve_offer_limits", "build_review_brief",
+                         "review_case_changes", "explain_decision_conditions", "explain_term"}:
+            report_slot = tools_report
+        elif not tool_names & {"compare_shipment_options"} and tool_names & {
+            "get_price_history", "get_historical_shipment_context", "get_market_evidence", "explore_data"
+        }:
+            report_slot = data_report
+        with report_slot.container():
+            _render_report(entries)
     # 직접 조회·손익 계산 이후 확정된 결과로 사이드바 JSON 다운로드를 생성합니다.
     with case_download_slot.container():
         _render_case_download(ws, case_name, dirty)
-    with st.expander("사용 안내와 자료의 한계"):
-        st.markdown("모르는 값은 빈칸으로 두세요. 실제 무료라고 확인한 경우에만 0을 입력합니다. 기간 전체 감모와 하루 비용을 구분하고, 가격에 포함한 비용을 다시 차감하지 않습니다. 손익분기는 필요한 가격 조건이며 예측·자동 출하 권고가 아닙니다. 저장시설·계약·납기 조건을 별도로 확인하세요. 입력됨·실제 조건 표시는 외부 사실 검증을 뜻하지 않습니다.")
-        st.caption("가격 관측과 농가 제시가격은 다릅니다. 출하량과 경매시장 반입량도 다릅니다. 자료 관리자 기능은 일반 사용자의 필수 단계가 아닙니다.")
 
 
 if __name__ == "__main__":

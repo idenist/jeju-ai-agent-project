@@ -100,11 +100,37 @@ def _warnings(result: dict) -> list[str]:
     return output
 
 
+def _future_pair_conclusion(options: list[dict]) -> str:
+    differences = [Decimal(row["difference_vs_a_krw"]) for row in options]
+    if len(differences) == 1:
+        difference = differences[0]
+        if difference == 0:
+            return "A안과 B안의 비교금액이 같습니다."
+        higher = "B안" if difference > 0 else "A안"
+        amount = _number(abs(difference))
+        gap = "0.01원 미만" if amount == "0" else f"{amount}원"
+        return f"입력한 조건에서 {higher}의 비교금액이 {gap} 더 높습니다."
+    counts = [(sum(value > 0 for value in differences), "B안이 높음"),
+              (sum(value < 0 for value in differences), "A안이 높음"),
+              (differences.count(0), "동일")]
+    return "과거 변동 가정별 결과 · " + " · ".join(f"{label} {count}개" for count, label in counts if count)
+
+
+def future_pair_summary(result: dict) -> tuple[str, str]:
+    conclusion = _future_pair_conclusion(result["options_b"])
+    minimum = _number(result["minimum_whole_krw_per_kg"], 0)
+    return conclusion, f"A 이상을 위한 B안 최소 단가: {minimum}원/kg"
+
+
 def _render_future_pair(result: dict) -> str:
     a = result["option_a"]
     b = result["options_b"][0]
     basis = "수수료 차감 전" if result["price_basis"] == "gross" else "수수료 차감 후"
+    conclusion, minimum = future_pair_summary(result)
     lines = [
+        f"**비교 결론 · {conclusion}**",
+        f"**{minimum}**",
+        "",
         f"물량 {_number(result['quantity_kg'])}kg · 보관 시작 {result['start_date']} · 단가 {basis}",
         f"A안 {a['sale_date']} 출하 · B안 {b['sale_date']} 출하 · 두 출하일 간격 {result['interval_days']}일",
         "", "| 대안 | 가정 단가 | 비교금액 | A안 대비 차액 |", "| --- | --- | --- | --- |",
@@ -116,7 +142,7 @@ def _render_future_pair(result: dict) -> str:
         lines.append(f"| {title} | {_number(row['price_per_kg'])}원/kg | {_number(row['proceeds_krw'])}원 | "
                      f"{_number(row['difference_vs_a_krw'])}원 |")
     lines += [
-        "", f"**A 이상을 위한 B안 최소 단가: {_number(result['minimum_whole_krw_per_kg'], 0)}원/kg**",
+        "",
         "B안 비교금액이 A안 이상이 되는 최소 원 단위 가격입니다. 두 안의 비교금액이 같을 수 있습니다.",
         "", "| 조건 | A안 | B안 |", "| --- | --- | --- |",
         f"| 보관일 | {a['delay_days']}일 | {b['delay_days']}일 |",

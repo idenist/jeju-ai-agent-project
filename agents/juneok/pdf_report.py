@@ -76,6 +76,8 @@ def _styles():
                 alignment=TA_LEFT, wordWrap="CJK", splitLongWords=True, spaceAfter=3.5)
     return {
         "body": ParagraphStyle("body", **base),
+        "conclusion": ParagraphStyle("conclusion", **{**base, "fontName": BOLD, "fontSize": 12,
+                                                       "leading": 17, "textColor": ACCENT, "keepWithNext": True}),
         "title": ParagraphStyle("title", **{**base, "fontName": BOLD, "fontSize": 20, "leading": 28,
                                               "spaceAfter": 14, "keepWithNext": True}),
         "heading": ParagraphStyle("heading", **{**base, "fontName": BOLD, "fontSize": 13, "leading": 20,
@@ -216,6 +218,8 @@ def render_pdf_report(results: list[dict]) -> bytes:
             last_section_start = len(story)
         elif line.startswith("- "):
             line, style = "- " + line[2:], styles["bullet"]
+        elif line.startswith("**비교 결론 · "):
+            style = styles["conclusion"]
         elif line.endswith(":"):
             style = styles["caption"]
         elif re.fullmatch(r"\*\*.+\*\*", line):
