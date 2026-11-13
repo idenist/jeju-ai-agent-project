@@ -56,7 +56,7 @@ def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b
         from agents.jeonghyeon.comparison_input import build_future_pair_input
 
         before = verify_integrated_price_sources(PROJECT_ROOT)
-        if before["status"] != "OK":
+        if before["status"] != "OK" or before.get("full_content_verified") is not True:
             return {"status": "DATA_ERROR", "message": "과거 가격 자료의 원천을 확인하지 못했습니다. B안 단가를 직접 입력할 수 있습니다."}
         cost_fields = ("delay_days", "loss_percent", "daily_storage_cost")
         converted = build_future_pair_input(
@@ -65,11 +65,13 @@ def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b
             option_a={key: option_a.get(key) for key in cost_fields},
             option_b={key: option_b.get(key) for key in cost_fields},
         )
+        after = verify_integrated_price_sources(PROJECT_ROOT)
+        if (after["status"] != "OK" or after.get("full_content_verified") is not True
+                or before["selected_market_sha256"] != after["selected_market_sha256"]
+                or before["comparison_source_sha256"] != after["comparison_source_sha256"]):
+            return {"status": "DATA_ERROR", "message": "조회 중 자료가 바뀌었습니다. B안 단가를 직접 입력할 수 있습니다."}
         if converted["status"] != "OK":
             return converted
-        after = verify_integrated_price_sources(PROJECT_ROOT)
-        if after["status"] != "OK" or before["selected_market_sha256"] != after["selected_market_sha256"]:
-            return {"status": "DATA_ERROR", "message": "조회 중 자료가 바뀌었습니다. 다시 시도해 주세요."}
         converted_input = converted["comparison_input"]
         a_template = converted_input["option_a"]
         b_templates = converted_input["options_b"]

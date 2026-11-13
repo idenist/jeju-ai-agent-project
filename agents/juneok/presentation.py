@@ -28,6 +28,9 @@ def select_results(results: list[dict], version: int) -> list[dict]:
     comparisons = [x for x in visible if x["tool"] == "compare_shipment_options"]
     if comparisons:
         visible = [x for x in visible if x["tool"] != "compare_shipment_options"] + [comparisons[-1]]
+    future_pairs = [x for x in visible if x["tool"] == "compare_future_pair"]
+    if future_pairs:
+        visible = [x for x in visible if x["tool"] != "compare_future_pair"] + [future_pairs[-1]]
     return deepcopy(visible or [x for x in results if x["result"].get("status") != "OK"])
 
 
@@ -36,7 +39,9 @@ def render_dialogue(results: list[dict]) -> str:
     sections = []
     for entry in results:
         result = entry["result"]
-        if result.get("analysis_type") == "price_history":
+        if result.get("analysis_type") == "future_pair" and result.get("status") == "OK":
+            sections.append("미래 A/B 비교를 계산했습니다. ‘두 미래 출하안 비교’에서 현재 결과와 다운로드를 확인할 수 있습니다.")
+        elif result.get("analysis_type") in {"price_history", "future_pair"}:
             sections.append(render_result(result))
         elif result.get("status") == "NEEDS_INPUT" and result.get("missing_fields"):
             fields = result["missing_fields"]

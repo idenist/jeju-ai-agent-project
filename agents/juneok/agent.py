@@ -33,7 +33,8 @@ included_costs는 사용자가 단가에 포함됐다고 알려준 항목만 저
 기간 변경 시 기존 감모율을 자동 재사용하지 말고 새 기간의 감모를 다시 확인하세요.
 update의 patch에서 변경하지 않을 항목은 null. options를 바꾸면 기존 대안 ID·나머지 조건을 유지한 전체 배열을 전송합니다.
 이미 알던 조건을 모름으로 철회하면 update_scenario의 clear_fields에 해당 이름을 넣으세요. patch null은 철회가 아닙니다.
-사용자가 준 조건은 계산 전에 update_scenario에 저장하세요. 용어·자료 해석 질문에는 explain_term 도구를 사용하세요.
+오늘과 미래를 비교할 조건은 계산 전에 update_scenario에 저장하세요. 두 날짜가 모두 미래인 비교에는 compare_future_pair를 사용하세요. expected_version은 현재 P2 조건의 version입니다. 시작일과 각 보관일은 사용자 표현으로 확정 가능한 값만 전달하세요. B안만 수정하거나 누락 답변을 보완할 때는 edit로 지정하고 확인한 값만 보내세요. 보관일을 바꿀 때 새 기간 전체 감모율을 사용자가 함께 확인한 경우에만 그 값과 loss_confirmed_for_period=true를 전달하세요. 값 철회는 clear_fields에 넣고(거래규격 예: history_filters.grade), 확인 질문이나 계산 결과를 받으면 finish_turn=true로 종료하세요. 용어·자료 해석 질문에는 explain_term 도구를 사용하세요.
+사용자가 B안에 과거 변동을 반영해 달라고 하면 price_mode=history로 선택하고 명시한 동일 거래규격만 history_filters에 넣으세요. 과거 모드의 날짜 수정은 모드와 규격을 유지합니다. 과거자료가 없거나 검증에 실패하면 도구 안내를 표시하고 사용자가 B 단가를 직접 제공한 경우에만 manual로 전환합니다. A 단가는 사용자가 정합니다. 과거 가격 가정과 직접 단가를 같은 요청에서 섞거나 후보를 임의 선택하지 마세요.
 새 기간 감모를 사용자가 명시 확인한 경우에만 loss_confirmed_for_period=true.
 현재 단가가 있으면 손익계산에 시장 등급·크기·포장을 요구하지 않습니다.
 저장·출하 변경 가능성은 사용자가 말하지 않으면 null로 두며, 가상 경제성 비교와 실행 가능성을 구분합니다.
@@ -67,8 +68,11 @@ class AgentSession:
         self.shipment = None
         self.price_history_query = None
         self.price_history_revision = None
+        from .future_pair_state import FuturePairState
+        self.future_pair = FuturePairState()
 
     def run(self, question: str) -> dict:
+        from .data_refresh import kst_today
         from .presentation import select_results, render_dialogue, report_for
         settings = self.settings or Settings.load()
         if not isinstance(question, str) or not question.strip() or len(question) > 6000:
@@ -90,6 +94,7 @@ class AgentSession:
         phase = "context"
         guard = RepeatGuard(self.policy.identical_calls)
         source_revision = data_revision()
+        today = kst_today().isoformat()
         if self.price_history_query is not None and self.price_history_revision != source_revision:
             self.price_history_query = None
             self.price_history_revision = None
@@ -106,6 +111,8 @@ class AgentSession:
                     f"현재 확인된 조건: {json.dumps(self.store.snapshot(), ensure_ascii=False)}\n"
                     f"이번 검토의 과업 맥락(선택 기록·현재 수치 아님): {json.dumps(self.task_context.snapshot(), ensure_ascii=False)}\n"
                     f"이전 과거 경락가격 조회 인수(자동 적용값·후보 제외): {json.dumps(self.price_history_query, ensure_ascii=False)}\n"
+                    f"오늘(KST): {today}\n"
+                    f"두 미래 출하안 비교 조건: {json.dumps(self.future_pair.snapshot(), ensure_ascii=False)}\n"
                     f"정산 기록: {json.dumps({'available': bool(self.shipment and self.shipment.revision), 'revision': self.shipment.revision if self.shipment else None, 'details': 'local_only'}, ensure_ascii=False)}\n"
                     f"사용자: {question.strip()}")
                 metrics["trimmed_history_turns"] += bound_history(self.messages, self.policy.history_turns, self.policy.input_characters)
@@ -180,6 +187,8 @@ class AgentSession:
                     elif call.name == "review_case_changes":
                         result = execute_tool(call.name, arguments, self.store, reference_case=getattr(self, "comparison_reference", None),
                             task_context=self.task_context.snapshot(), input_context=getattr(self, "comparison_input_context", None))
+                    elif call.name == "compare_future_pair":
+                        result = execute_tool(call.name, arguments, self.store, future_pair=self.future_pair)
                     else:
                         result = execute_tool(call.name, arguments, self.store)
                     self.task_context.record(call.name, recorded_arguments or {}, result, scenario=self.store.scenario)
@@ -192,6 +201,11 @@ class AgentSession:
                     if call.name == 'reconcile_settlement':
                         from .settlement import model_receipt
                         model_output = model_receipt(result)
+                    elif call.name == "compare_future_pair":
+                        model_output = {key: result[key] for key in (
+                            "status", "source_status", "message", "missing_fields", "choices",
+                            "manual_price_required", "future_pair_version",
+                        ) if key in result}
                     elif call.name == "get_price_history":
                         from agents.common.price_history_service import price_history_model_receipt
                         model_output = price_history_model_receipt(result)
@@ -203,7 +217,8 @@ class AgentSession:
                         finished = True
                     elif isinstance(arguments, dict) and arguments.get("finish_turn") is True and (
                             result["status"] in {"OK", "NEEDS_INPUT", "NEEDS_CLARIFICATION", "NO_DATA", "PARTIAL", "CHECK_REQUIRED"}
-                            or (call.name == "get_price_history" and result["status"] == "DATA_ERROR")):
+                            or (call.name == "get_price_history" and result["status"] == "DATA_ERROR")
+                            or call.name == "compare_future_pair"):
                         finished = True
                 if finished:
                     break
