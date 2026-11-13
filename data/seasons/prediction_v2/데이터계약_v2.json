@@ -1,0 +1,656 @@
+{
+  "version": "jeju-auction-citrus-season-evaluation-v2",
+  "status": "LABELED_DATA_NOT_TRAINED_MODEL",
+  "script_sha256": "6f0e8b90d43c38d39d4eeb4478e2f62d99855297c310b2547552882eac709779",
+  "selection_only_from_train_season": true,
+  "minimum_train_ok_days": 10,
+  "excluded_provisional_variety_codes": [
+    "00",
+    "07",
+    "08",
+    "09",
+    "99"
+  ],
+  "training_candidate_counts": {
+    "at_least_min_days": 53,
+    "excluded_provisional_code": 25,
+    "selected_specs": 28
+  },
+  "training_spec_list": [
+    {
+      "market_code": "110001",
+      "variety_code": "01",
+      "grade_code": "11",
+      "size_code": "181",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "조생귤",
+      "grade": "특",
+      "size": "특대"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "01",
+      "grade_code": "11",
+      "size_code": "182",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "조생귤",
+      "grade": "특",
+      "size": "대"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "01",
+      "grade_code": "11",
+      "size_code": "183",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "조생귤",
+      "grade": "특",
+      "size": "중"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "01",
+      "grade_code": "11",
+      "size_code": "184",
+      "package": "상자",
+      "package_kg": "3",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "조생귤",
+      "grade": "특",
+      "size": "소"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "01",
+      "grade_code": "11",
+      "size_code": "184",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "조생귤",
+      "grade": "특",
+      "size": "소"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "04",
+      "grade_code": "11",
+      "size_code": "181",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "비가림감귤",
+      "grade": "특",
+      "size": "특대"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "04",
+      "grade_code": "11",
+      "size_code": "182",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "비가림감귤",
+      "grade": "특",
+      "size": "대"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "04",
+      "grade_code": "11",
+      "size_code": "183",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "비가림감귤",
+      "grade": "특",
+      "size": "중"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "04",
+      "grade_code": "11",
+      "size_code": "184",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "비가림감귤",
+      "grade": "특",
+      "size": "소"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "123",
+      "package": "상자",
+      "package_kg": "3",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "30내"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "124",
+      "package": "상자",
+      "package_kg": "3",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "40내"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "125",
+      "package": "상자",
+      "package_kg": "3",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "50내"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "125",
+      "package": "상자",
+      "package_kg": "6",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "50내"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "125",
+      "package": "파렛트",
+      "package_kg": "3",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "50내"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "126",
+      "package": "상자",
+      "package_kg": "3",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "60내"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "164",
+      "package": "상자",
+      "package_kg": "3",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "40내(5단위)"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "165",
+      "package": "상자",
+      "package_kg": "3",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "50내(5단위)"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "181",
+      "package": "상자",
+      "package_kg": "3",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "특대"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "181",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "특대"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "182",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "대"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "183",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "중"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "184",
+      "package": "상자",
+      "package_kg": "3",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "소"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "184",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "소"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "05",
+      "grade_code": "11",
+      "size_code": "184",
+      "package": "상자",
+      "package_kg": "6",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "하우스감귤",
+      "grade": "특",
+      "size": "소"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "06",
+      "grade_code": "11",
+      "size_code": "181",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "극조생감귤",
+      "grade": "특",
+      "size": "특대"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "06",
+      "grade_code": "11",
+      "size_code": "182",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "극조생감귤",
+      "grade": "특",
+      "size": "대"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "06",
+      "grade_code": "11",
+      "size_code": "183",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "극조생감귤",
+      "grade": "특",
+      "size": "중"
+    },
+    {
+      "market_code": "110001",
+      "variety_code": "06",
+      "grade_code": "11",
+      "size_code": "184",
+      "package": "상자",
+      "package_kg": "5",
+      "trade_type": "경매",
+      "market": "서울가락",
+      "variety": "극조생감귤",
+      "grade": "특",
+      "size": "소"
+    }
+  ],
+  "split_coverage": {
+    "train": "2024-10-01 ~ 2025-02-28",
+    "validation": "2025-10-01 ~ 2026-02-28",
+    "evaluation": "2026-10-01 ~ 2026-11-03 (잠정)"
+  },
+  "prediction_cutoff": "예측 기준일 당일 경매 정산정보 확정 후",
+  "target_horizons_calendar_days": [
+    3,
+    7,
+    14
+  ],
+  "model_input_fields": [
+    "market_code",
+    "variety_code",
+    "grade_code",
+    "size_code",
+    "package",
+    "package_kg",
+    "trade_type",
+    "horizon_days",
+    "feature_price_kg",
+    "feature_total_kg",
+    "feature_transaction_count",
+    "feature_weekday",
+    "feature_month",
+    "feature_season_day_index",
+    "feature_lag3_price_kg",
+    "feature_lag7_price_kg",
+    "feature_trailing7_mean_price_kg",
+    "feature_trailing7_total_kg",
+    "feature_trailing7_ok_days"
+  ],
+  "not_model_inputs": [
+    "target_price_kg",
+    "target_date",
+    "base_date",
+    "split",
+    "market",
+    "variety",
+    "grade",
+    "size"
+  ],
+  "missing_values": "미관측 lag/target 은 보간하지 않음. 정답 없는 예측 기회는 opportunities에 계수만 표시",
+  "sources": {
+    "train": {
+      "input_file": "C:\\SKN projects\\jeju\\artifacts\\seunghyuk\\경매_시즌_2024-10_2025-02_통합\\processed\\daily_prices.csv",
+      "input_sha256": "41526aa2287e4bafec412ed28080e5ba60a1088111da5f2fd846e8620c0646a2",
+      "comparison_report": "C:\\SKN projects\\jeju\\artifacts\\seunghyuk\\경매_시즌_2024-10_2025-02_통합\\reports\\price_comparison_report.json",
+      "records": 9246,
+      "source_quality_ok_rows": 2438,
+      "warning_rows": 6808,
+      "market_days": 124,
+      "window_start": "2024-10-01",
+      "window_end": "2025-02-28",
+      "last_observed": "2025-02-28",
+      "warning_codes": {
+        "SIZE_UNKNOWN": 1725,
+        "excluded_rows_with_warning": 6808,
+        "LOW_SAMPLE": 5746,
+        "eligible_rows": 2438,
+        "GRADE_UNKNOWN": 691,
+        "KEY_FIELD_UNKNOWN": 282
+      }
+    },
+    "validation": {
+      "input_file": "C:\\SKN projects\\jeju\\artifacts\\seunghyuk\\경매_시즌_2025-10_2026-02_통합\\processed\\daily_prices.csv",
+      "input_sha256": "ff0a14316380f3887b91f8426b41d29b60308a732a45317bf2f236393cbe8551",
+      "comparison_report": "C:\\SKN projects\\jeju\\artifacts\\seunghyuk\\경매_시즌_2025-10_2026-02_통합\\reports\\price_comparison_report.json",
+      "records": 6023,
+      "source_quality_ok_rows": 1822,
+      "warning_rows": 4201,
+      "market_days": 120,
+      "window_start": "2025-10-01",
+      "window_end": "2026-02-28",
+      "last_observed": "2026-02-28",
+      "warning_codes": {
+        "SIZE_UNKNOWN": 1410,
+        "excluded_rows_with_warning": 4201,
+        "LOW_SAMPLE": 3303,
+        "eligible_rows": 1822,
+        "GRADE_UNKNOWN": 465
+      }
+    },
+    "evaluation": {
+      "input_file": "C:\\SKN projects\\jeju\\data\\processed\\daily_prices.csv",
+      "input_sha256": "d8076c3590a898953e312faf1d0f69237e65a6f0fef7d6616e2c9e42076a4589",
+      "comparison_report": "C:\\SKN projects\\jeju\\data\\reports\\price_comparison_report.json",
+      "records": 1592,
+      "source_quality_ok_rows": 488,
+      "warning_rows": 1104,
+      "market_days": 28,
+      "window_start": "2026-10-01",
+      "window_end": "2027-02-28",
+      "last_observed": "2026-11-03",
+      "warning_codes": {
+        "SIZE_UNKNOWN": 581,
+        "excluded_rows_with_warning": 1104,
+        "LOW_SAMPLE": 792,
+        "eligible_rows": 488,
+        "GRADE_UNKNOWN": 161
+      }
+    }
+  },
+  "outputs": {
+    "train": {
+      "rows": 2612,
+      "distinct_specs_with_labels": 28,
+      "by_horizon": {
+        "3": {
+          "labeled_pairs": 859,
+          "mae_krw_per_kg": "508.76",
+          "bias_actual_minus_baseline_krw_per_kg": "15.60",
+          "target_dates": 94,
+          "base_dates": 94
+        },
+        "7": {
+          "labeled_pairs": 936,
+          "mae_krw_per_kg": "546.55",
+          "bias_actual_minus_baseline_krw_per_kg": "72.66",
+          "target_dates": 106,
+          "base_dates": 106
+        },
+        "14": {
+          "labeled_pairs": 817,
+          "mae_krw_per_kg": "632.72",
+          "bias_actual_minus_baseline_krw_per_kg": "202.14",
+          "target_dates": 99,
+          "base_dates": 99
+        }
+      },
+      "opportunities": {
+        "3": {
+          "all_quality_ok_base_days": 1266,
+          "labeled_pairs": 859,
+          "target_not_observed": 247,
+          "outside_observed_range": 32,
+          "target_quality_warning": 128
+        },
+        "7": {
+          "all_quality_ok_base_days": 1266,
+          "labeled_pairs": 936,
+          "target_not_observed": 94,
+          "outside_observed_range": 65,
+          "target_quality_warning": 171
+        },
+        "14": {
+          "all_quality_ok_base_days": 1266,
+          "labeled_pairs": 817,
+          "target_not_observed": 115,
+          "outside_observed_range": 138,
+          "target_quality_warning": 196
+        }
+      },
+      "filename": "2024-2025_train.csv",
+      "sha256": "17c37c4d0b5dd90cc8fafa48efcae2b46101de74757f3bd4302c11b41164aa74"
+    },
+    "validation": {
+      "rows": 2218,
+      "distinct_specs_with_labels": 22,
+      "by_horizon": {
+        "3": {
+          "labeled_pairs": 698,
+          "mae_krw_per_kg": "427.33",
+          "bias_actual_minus_baseline_krw_per_kg": "-76.01",
+          "target_dates": 90,
+          "base_dates": 90
+        },
+        "7": {
+          "labeled_pairs": 790,
+          "mae_krw_per_kg": "542.03",
+          "bias_actual_minus_baseline_krw_per_kg": "-17.64",
+          "target_dates": 106,
+          "base_dates": 106
+        },
+        "14": {
+          "labeled_pairs": 730,
+          "mae_krw_per_kg": "580.52",
+          "bias_actual_minus_baseline_krw_per_kg": "-52.77",
+          "target_dates": 104,
+          "base_dates": 104
+        }
+      },
+      "opportunities": {
+        "3": {
+          "all_quality_ok_base_days": 1087,
+          "target_not_observed": 269,
+          "labeled_pairs": 698,
+          "outside_observed_range": 36,
+          "target_quality_warning": 84
+        },
+        "7": {
+          "all_quality_ok_base_days": 1087,
+          "labeled_pairs": 790,
+          "target_not_observed": 127,
+          "outside_observed_range": 70,
+          "target_quality_warning": 100
+        },
+        "14": {
+          "all_quality_ok_base_days": 1087,
+          "labeled_pairs": 730,
+          "target_not_observed": 140,
+          "outside_observed_range": 103,
+          "target_quality_warning": 114
+        }
+      },
+      "filename": "2025-2026_validation.csv",
+      "sha256": "db9a33c206829e7c0035679e4fc01f1a3de73d854ce016d07b51554cdccf89d9"
+    },
+    "evaluation": {
+      "rows": 564,
+      "distinct_specs_with_labels": 17,
+      "by_horizon": {
+        "3": {
+          "labeled_pairs": 205,
+          "mae_krw_per_kg": "526.55",
+          "bias_actual_minus_baseline_krw_per_kg": "-100.30",
+          "target_dates": 20,
+          "base_dates": 20
+        },
+        "7": {
+          "labeled_pairs": 208,
+          "mae_krw_per_kg": "653.03",
+          "bias_actual_minus_baseline_krw_per_kg": "-188.03",
+          "target_dates": 21,
+          "base_dates": 21
+        },
+        "14": {
+          "labeled_pairs": 151,
+          "mae_krw_per_kg": "657.32",
+          "bias_actual_minus_baseline_krw_per_kg": "-286.89",
+          "target_dates": 16,
+          "base_dates": 16
+        }
+      },
+      "opportunities": {
+        "3": {
+          "all_quality_ok_base_days": 341,
+          "labeled_pairs": 205,
+          "target_not_observed": 86,
+          "outside_observed_range": 22,
+          "target_quality_warning": 28
+        },
+        "7": {
+          "all_quality_ok_base_days": 341,
+          "labeled_pairs": 208,
+          "target_not_observed": 28,
+          "outside_observed_range": 61,
+          "target_quality_warning": 44
+        },
+        "14": {
+          "all_quality_ok_base_days": 341,
+          "labeled_pairs": 151,
+          "outside_observed_range": 135,
+          "target_not_observed": 18,
+          "target_quality_warning": 37
+        }
+      },
+      "filename": "2026-2027_partial_evaluation.csv",
+      "sha256": "b29ab2a874157d59a1bc5394835a76daa1d8fd98adaec9ceaf9d2d4703106cde"
+    }
+  },
+  "limitations": [
+    "후보 선정은 학습 시즌에 한정하고 검증·잠정평가 시즌의 관측 빈도를 이용해 재선정하지 않음",
+    "학습이 단 한 시즌이므로 기상/수급/거래환경 변화에 대한 일반화 성능을 입증하지 못함",
+    "2026 평가 데이터는 계절 초입의 일부이며 이전 탐색 이력이 있어 완전 미공개 테스트가 아님",
+    "미관측 target을 제외한 선택 표본의 MAE로 실서비스의 모든 출하일 예측 성능을 주장하면 안 됨",
+    "같은 날짜와 규격을 공유하는 가격쌍은 독립 표본이 아니며 예측/평가에는 날짜 그룹이 중요함",
+    "경매 정산일과 농가 출하일, 경락가격과 실제 농가 실수취가를 동일시하면 안 됨",
+    "현재 미래가격 ML 학습이나 예측 성능 개선을 수행하지 않았음",
+    "경매 데이터 원본·기존 모델·Agent·팀 공용 data/ 파일은 변경하지 않음"
+  ]
+}

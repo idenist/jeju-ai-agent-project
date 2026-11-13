@@ -1,0 +1,173 @@
+{
+  "title": "제주 감귤 데이터 인수본 V2",
+  "created_date": "2026-11-13",
+  "input_archive": "seunghyuk.zip",
+  "checks": {
+    "2024-2025": {
+      "daily_prices": 9246,
+      "linked_pairs": 15016,
+      "comparison_attempts": 27738,
+      "source_sha256": "41526aa2287e4bafec412ed28080e5ba60a1088111da5f2fd846e8620c0646a2",
+      "status": "PASS"
+    },
+    "2025-2026": {
+      "daily_prices": 6023,
+      "linked_pairs": 9532,
+      "comparison_attempts": 18069,
+      "source_sha256": "ff0a14316380f3887b91f8426b41d29b60308a732a45317bf2f236393cbe8551",
+      "status": "PASS"
+    },
+    "train": {
+      "records": 2612,
+      "status": "PASS"
+    },
+    "validation": {
+      "records": 2218,
+      "status": "PASS"
+    },
+    "evaluation": {
+      "records": 564,
+      "status": "PASS"
+    }
+  },
+  "no_shared_data_modified": true,
+  "includes_raw_trades": false,
+  "package_layout": "프로젝트 루트에 압축 해제: data/seasons/",
+  "files": {
+    "2024-2025/daily_prices.csv": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2024-10_2025-02_통합/processed/daily_prices.csv",
+      "sha256": "41526aa2287e4bafec412ed28080e5ba60a1088111da5f2fd846e8620c0646a2",
+      "bytes": 1165438
+    },
+    "2024-2025/daily_variety_prices.csv": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2024-10_2025-02_통합/processed/daily_variety_prices.csv",
+      "sha256": "dc76be307c2b67806d2bd222e91140e35486647d00a4a2d8b76f190279b0ab5b",
+      "bytes": 103576
+    },
+    "2024-2025/price_comparison_availability.csv": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2024-10_2025-02_통합/processed/price_comparison_availability.csv",
+      "sha256": "f2cf99ad29042b8c64faa229086ef8b2f06a26e5c263486a59abd609e3a5c1b2",
+      "bytes": 5619280
+    },
+    "2024-2025/price_comparisons.csv": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2024-10_2025-02_통합/processed/price_comparisons.csv",
+      "sha256": "085d6b0018d7742eb1baf48d5b1edc8c5bdc7d6e622106636298181b8fcfeb78",
+      "bytes": 3157869
+    },
+    "2024-2025/보고서/auction_quality_report.json": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2024-10_2025-02_통합/reports/auction_quality_report.json",
+      "sha256": "7825b463a8e9ff97335c637a7389ec72774ac68d1a4399698a3898ce0a2feddf",
+      "bytes": 6856
+    },
+    "2024-2025/보고서/price_comparison_coverage.md": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2024-10_2025-02_통합/reports/price_comparison_coverage.md",
+      "sha256": "93f3ed9b097f8d9603db8cc09a0c9dc09c3a4484a74c4a2bdb17cae5d86abdcc",
+      "bytes": 6595
+    },
+    "2024-2025/보고서/price_comparison_report.json": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2024-10_2025-02_통합/reports/price_comparison_report.json",
+      "sha256": "a8e32e28c5c1bb1b86cc9bda6c1194c2502108c30188f05e7ed1a7919a7503a1",
+      "bytes": 21520
+    },
+    "2024-2025/보고서/시즌통합_검증.json": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2024-10_2025-02_통합/시즌통합_검증.json",
+      "sha256": "aca2e18021d51e504ca1af821079aaf07f9af2ed818351582ff9650dc925e003",
+      "bytes": 6094
+    },
+    "2024-2025/보고서/시즌통합_검증.md": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2024-10_2025-02_통합/시즌통합_검증.md",
+      "sha256": "66ca13453c8729cbedb125c0b21b9a83b47647224bbf47e31ecb89d4018acb8d",
+      "bytes": 1409
+    },
+    "2025-2026/daily_prices.csv": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2025-10_2026-02_통합/processed/daily_prices.csv",
+      "sha256": "ff0a14316380f3887b91f8426b41d29b60308a732a45317bf2f236393cbe8551",
+      "bytes": 757961
+    },
+    "2025-2026/daily_variety_prices.csv": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2025-10_2026-02_통합/processed/daily_variety_prices.csv",
+      "sha256": "435c049df3cd72c2640b9477e40ce425bfa230c4884441c413f56152b42f70ea",
+      "bytes": 85096
+    },
+    "2025-2026/price_comparison_availability.csv": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2025-10_2026-02_통합/processed/price_comparison_availability.csv",
+      "sha256": "f6f219f2035536908469307c86867ec6e0105b8220dd78ffa8fbf0ebd1953ac5",
+      "bytes": 3644664
+    },
+    "2025-2026/price_comparisons.csv": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2025-10_2026-02_통합/processed/price_comparisons.csv",
+      "sha256": "3328c628f6f4a18d46fae674e7b023ac123f79ff155bec8aab712ade2eed543c",
+      "bytes": 2009365
+    },
+    "2025-2026/보고서/auction_quality_report.json": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2025-10_2026-02_통합/reports/auction_quality_report.json",
+      "sha256": "d5e6b45d60e81fec52e4ca4e4d290c12d99a86b2d708f46a61119a4bd5160f18",
+      "bytes": 6734
+    },
+    "2025-2026/보고서/price_comparison_coverage.md": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2025-10_2026-02_통합/reports/price_comparison_coverage.md",
+      "sha256": "705235f6df6f0408886a59f6c3fbe1a7c86f16da2e58752c895cc27d815b364d",
+      "bytes": 6270
+    },
+    "2025-2026/보고서/price_comparison_report.json": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2025-10_2026-02_통합/reports/price_comparison_report.json",
+      "sha256": "6b85327d7d82dbb721a760463876eefc76c7c61e153db7296e9d9d0aecdadcf7",
+      "bytes": 21410
+    },
+    "2025-2026/보고서/시즌통합_검증.json": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2025-10_2026-02_통합/시즌통합_검증.json",
+      "sha256": "d7152a36eb2a0e4b5aad573882eb79e7fb0914403eca94e659f619d54f5264a0",
+      "bytes": 6248
+    },
+    "2025-2026/보고서/시즌통합_검증.md": {
+      "source_in_uploaded_zip": "seunghyuk/경매_시즌_2025-10_2026-02_통합/시즌통합_검증.md",
+      "sha256": "3f69d933a69531990595b70ffe80bb9657b9ef56e6c7ecc7cf12c63604d57433",
+      "bytes": 1441
+    },
+    "prediction_v2/2024-2025_train.csv": {
+      "source_in_uploaded_zip": "seunghyuk/출하시즌_예측평가_데이터계약_v2/2024-2025_train.csv",
+      "sha256": "17c37c4d0b5dd90cc8fafa48efcae2b46101de74757f3bd4302c11b41164aa74",
+      "bytes": 438642
+    },
+    "prediction_v2/2025-2026_validation.csv": {
+      "source_in_uploaded_zip": "seunghyuk/출하시즌_예측평가_데이터계약_v2/2025-2026_validation.csv",
+      "sha256": "db9a33c206829e7c0035679e4fc01f1a3de73d854ce016d07b51554cdccf89d9",
+      "bytes": 383406
+    },
+    "prediction_v2/2026-2027_partial_evaluation.csv": {
+      "source_in_uploaded_zip": "seunghyuk/출하시즌_예측평가_데이터계약_v2/2026-2027_partial_evaluation.csv",
+      "sha256": "b29ab2a874157d59a1bc5394835a76daa1d8fd98adaec9ceaf9d2d4703106cde",
+      "bytes": 97039
+    },
+    "prediction_v2/데이터계약_v2.json": {
+      "source_in_uploaded_zip": "seunghyuk/출하시즌_예측평가_데이터계약_v2/데이터계약_v2.json",
+      "sha256": "127ef4486148b67230f6e436fc8f92cffd0b6408671f26b8a84beb20fb79fe09",
+      "bytes": 19289
+    },
+    "prediction_v2/데이터계약_점검_v2.md": {
+      "source_in_uploaded_zip": "seunghyuk/출하시즌_예측평가_데이터계약_v2/데이터계약_점검_v2.md",
+      "sha256": "755177b4db332f119398b4106faa6b2f2cf104cdad7b18ef122cae4355485412",
+      "bytes": 4422
+    },
+    "analysis/공통규격_관측현황.csv": {
+      "source_in_uploaded_zip": "seunghyuk/두시즌_공통규격_품질분석/공통규격_관측현황.csv",
+      "sha256": "941e41cca11203cb8cea7a7cd9b314651d4b00f48dad6088598eccc8d8acd93f",
+      "bytes": 102544
+    },
+    "analysis/공통규격_품질분석.json": {
+      "source_in_uploaded_zip": "seunghyuk/두시즌_공통규격_품질분석/공통규격_품질분석.json",
+      "sha256": "f357c1ac70ca4f60b8800f62b7fec124168d664c987716962bfebea06e22e6a6",
+      "bytes": 8703
+    },
+    "analysis/공통규격_품질분석.md": {
+      "source_in_uploaded_zip": "seunghyuk/두시즌_공통규격_품질분석/공통규격_품질분석.md",
+      "sha256": "bfd6342c0c950143a1cfcb03f879a82a335db2117b0e3518397de8b6cd39e5de",
+      "bytes": 5194
+    },
+    "README_먼저읽기.md": {
+      "source_in_uploaded_zip": "generated_for_handoff",
+      "sha256": "140f77163e69dba2352a8984442066dfc688107975deb84c2af14a55f24d968f",
+      "bytes": 4240
+    }
+  }
+}

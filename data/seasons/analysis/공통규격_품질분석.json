@@ -1,0 +1,309 @@
+{
+  "version": "jeju-two-season-spec-comparability-v2",
+  "status": "OK",
+  "model_training_performed": false,
+  "model_forecasting_performed": false,
+  "source": {
+    "2024": {
+      "file": "C:\\SKN projects\\jeju\\artifacts\\seunghyuk\\경매_시즌_2024-10_2025-02_통합\\processed\\daily_prices.csv",
+      "sha256": "41526aa2287e4bafec412ed28080e5ba60a1088111da5f2fd846e8620c0646a2",
+      "total": {
+        "all_rows": 9246,
+        "warn_rows": 6808,
+        "ok_rows": 2438,
+        "pair_eligible_rows": 2438,
+        "incomplete_spec_rows": 282,
+        "incomplete_grade_code_rows": 282
+      },
+      "market_days": 124,
+      "monthly": {
+        "01": {
+          "all_rows": 2029,
+          "ok_rows": 467,
+          "pair_eligible_rows": 467,
+          "pairs_7d": 300,
+          "pairs_14d": 270,
+          "pairs_3d": 272
+        },
+        "02": {
+          "all_rows": 1845,
+          "ok_rows": 580,
+          "pair_eligible_rows": 580,
+          "pairs_3d": 345,
+          "pairs_7d": 326,
+          "pairs_14d": 209
+        },
+        "10": {
+          "all_rows": 1670,
+          "ok_rows": 513,
+          "pair_eligible_rows": 513,
+          "pairs_3d": 323,
+          "pairs_7d": 390,
+          "pairs_14d": 367
+        },
+        "11": {
+          "all_rows": 1924,
+          "ok_rows": 478,
+          "pair_eligible_rows": 478,
+          "pairs_3d": 328,
+          "pairs_7d": 375,
+          "pairs_14d": 330
+        },
+        "12": {
+          "all_rows": 1778,
+          "ok_rows": 400,
+          "pair_eligible_rows": 400,
+          "pairs_3d": 263,
+          "pairs_7d": 269,
+          "pairs_14d": 221
+        }
+      }
+    },
+    "2025": {
+      "file": "C:\\SKN projects\\jeju\\artifacts\\seunghyuk\\경매_시즌_2025-10_2026-02_통합\\processed\\daily_prices.csv",
+      "sha256": "ff0a14316380f3887b91f8426b41d29b60308a732a45317bf2f236393cbe8551",
+      "total": {
+        "all_rows": 6023,
+        "warn_rows": 4201,
+        "ok_rows": 1822,
+        "pair_eligible_rows": 1822
+      },
+      "market_days": 120,
+      "monthly": {
+        "01": {
+          "all_rows": 732,
+          "ok_rows": 224,
+          "pair_eligible_rows": 224,
+          "pairs_3d": 169,
+          "pairs_7d": 192,
+          "pairs_14d": 180
+        },
+        "02": {
+          "all_rows": 653,
+          "ok_rows": 270,
+          "pair_eligible_rows": 270,
+          "pairs_3d": 163,
+          "pairs_7d": 132,
+          "pairs_14d": 103
+        },
+        "10": {
+          "all_rows": 1492,
+          "ok_rows": 524,
+          "pair_eligible_rows": 524,
+          "pairs_7d": 357,
+          "pairs_14d": 345,
+          "pairs_3d": 268
+        },
+        "11": {
+          "all_rows": 1580,
+          "ok_rows": 421,
+          "pair_eligible_rows": 421,
+          "pairs_3d": 248,
+          "pairs_7d": 272,
+          "pairs_14d": 213
+        },
+        "12": {
+          "all_rows": 1566,
+          "ok_rows": 383,
+          "pair_eligible_rows": 383,
+          "pairs_3d": 199,
+          "pairs_7d": 227,
+          "pairs_14d": 209
+        }
+      }
+    }
+  },
+  "comparison": {
+    "total_keys": 924,
+    "unique_specs_by_season": {
+      "2024": 766,
+      "2025": 458
+    },
+    "both_present": 300,
+    "both_ok_days": {
+      "1": 59,
+      "5": 39,
+      "10": 27,
+      "20": 17,
+      "40": 12
+    },
+    "train_candidate": {
+      "min_train_ok_days": 10,
+      "candidate_specs": 53,
+      "candidates_without_provisional_codes": 28,
+      "candidates_with_ok_in_validation": 42,
+      "candidates_with_5_ok_days_in_validation": 32,
+      "candidates_with_10_ok_days_in_validation": 27,
+      "candidates_with_7day_pairs_in_validation": 32,
+      "candidate_7day_pairs_train": 1619,
+      "candidate_7day_pairs_validation": 908
+    },
+    "by_variety": {
+      "01": {
+        "2024_specs": 65,
+        "2024_ok_days": 525,
+        "2024_rows": 1599,
+        "2024_3pairs": 395,
+        "2024_7pairs": 437,
+        "2024_14pairs": 413,
+        "2025_specs": 60,
+        "2025_ok_days": 704,
+        "2025_rows": 1729,
+        "2025_3pairs": 484,
+        "2025_7pairs": 565,
+        "2025_14pairs": 550
+      },
+      "04": {
+        "2024_specs": 66,
+        "2024_ok_days": 119,
+        "2024_rows": 516,
+        "2024_3pairs": 77,
+        "2024_7pairs": 79,
+        "2024_14pairs": 66,
+        "2025_specs": 38,
+        "2025_ok_days": 92,
+        "2025_rows": 422,
+        "2025_3pairs": 50,
+        "2025_7pairs": 40,
+        "2025_14pairs": 35
+      },
+      "05": {
+        "2024_specs": 105,
+        "2024_ok_days": 503,
+        "2024_rows": 1919,
+        "2024_3pairs": 272,
+        "2024_7pairs": 285,
+        "2024_14pairs": 223,
+        "2025_specs": 115,
+        "2025_ok_days": 582,
+        "2025_rows": 1685,
+        "2025_3pairs": 282,
+        "2025_7pairs": 314,
+        "2025_14pairs": 264
+      },
+      "06": {
+        "2024_specs": 50,
+        "2024_ok_days": 168,
+        "2024_rows": 435,
+        "2024_3pairs": 124,
+        "2024_7pairs": 141,
+        "2024_14pairs": 117,
+        "2025_specs": 21,
+        "2025_ok_days": 17,
+        "2025_rows": 202,
+        "2025_3pairs": 0,
+        "2025_7pairs": 0,
+        "2025_14pairs": 0
+      },
+      "07": {
+        "2024_specs": 153,
+        "2024_ok_days": 321,
+        "2024_rows": 1258,
+        "2024_3pairs": 186,
+        "2024_7pairs": 187,
+        "2024_14pairs": 127,
+        "2025_specs": 26,
+        "2025_ok_days": 30,
+        "2025_rows": 130,
+        "2025_3pairs": 13,
+        "2025_7pairs": 9,
+        "2025_14pairs": 1
+      },
+      "08": {
+        "2024_specs": 148,
+        "2024_ok_days": 231,
+        "2024_rows": 1588,
+        "2024_3pairs": 126,
+        "2024_7pairs": 149,
+        "2024_14pairs": 120,
+        "2025_specs": 95,
+        "2025_ok_days": 186,
+        "2025_rows": 1078,
+        "2025_3pairs": 83,
+        "2025_7pairs": 100,
+        "2025_14pairs": 77
+      },
+      "09": {
+        "2024_specs": 117,
+        "2024_ok_days": 183,
+        "2024_rows": 1089,
+        "2024_3pairs": 73,
+        "2024_7pairs": 70,
+        "2024_14pairs": 38,
+        "2025_specs": 42,
+        "2025_ok_days": 36,
+        "2025_rows": 200,
+        "2025_3pairs": 18,
+        "2025_7pairs": 13,
+        "2025_14pairs": 5
+      },
+      "13": {
+        "2025_specs": 18,
+        "2025_ok_days": 173,
+        "2025_rows": 306,
+        "2025_3pairs": 117,
+        "2025_7pairs": 139,
+        "2025_14pairs": 118
+      },
+      "15": {
+        "2024_specs": 12,
+        "2024_ok_days": 5,
+        "2024_rows": 74,
+        "2024_3pairs": 0,
+        "2024_7pairs": 1,
+        "2024_14pairs": 0,
+        "2025_specs": 4,
+        "2025_ok_days": 1,
+        "2025_rows": 27,
+        "2025_3pairs": 0,
+        "2025_7pairs": 0,
+        "2025_14pairs": 0
+      },
+      "17": {
+        "2024_specs": 1,
+        "2024_ok_days": 0,
+        "2024_rows": 1,
+        "2024_3pairs": 0,
+        "2024_7pairs": 0,
+        "2024_14pairs": 0
+      },
+      "19": {
+        "2024_specs": 4,
+        "2024_ok_days": 0,
+        "2024_rows": 120,
+        "2024_3pairs": 0,
+        "2024_7pairs": 0,
+        "2024_14pairs": 0,
+        "2025_specs": 3,
+        "2025_ok_days": 0,
+        "2025_rows": 103,
+        "2025_3pairs": 0,
+        "2025_7pairs": 0,
+        "2025_14pairs": 0
+      },
+      "99": {
+        "2024_specs": 45,
+        "2024_ok_days": 383,
+        "2024_rows": 647,
+        "2024_3pairs": 278,
+        "2024_7pairs": 311,
+        "2024_14pairs": 293,
+        "2025_specs": 36,
+        "2025_ok_days": 1,
+        "2025_rows": 141,
+        "2025_3pairs": 0,
+        "2025_7pairs": 0,
+        "2025_14pairs": 0
+      }
+    }
+  },
+  "output_csv_sha256": "941e41cca11203cb8cea7a7cd9b314651d4b00f48dad6088598eccc8d8acd93f",
+  "warnings": [
+    "2024시즌 정보만으로 규격을 선택했고 2025시즌은 관측 가능성 점검용임",
+    "같은 거래규격 코드라도 표시명이 다른 경우 학습 전 별도 대조 필요",
+    "규격코드 08은 잠정, 07/09/99 및 일반 00은 품종 세분화 전 보수적으로 취급",
+    "OK 관측은 거래건수 5건 이상 등 데이터 품질 게이트 통과이지 품질·경락가격 동일성 보장이 아님",
+    "두 시즌 가격쌍은 연도 간 이어붙이지 않았고 예측 정확도 실험도 하지 않음",
+    "2026년 10~11월 잠정 평가셋은 아직 이 분석에 사용하지 않았음"
+  ]
+}
