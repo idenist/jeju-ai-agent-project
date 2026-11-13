@@ -1,0 +1,874 @@
+{
+  "mode": "live",
+  "model": "gpt-5-mini",
+  "turns": 21,
+  "exact_matches": 9,
+  "invalid_calls": 0,
+  "turns_with_invented_fields": 2,
+  "invented_fields": 3,
+  "turns_with_missed_changes": 0,
+  "missed_changes": 0,
+  "turns_with_dropped_fields": 4,
+  "dropped_fields": 7,
+  "results": [
+    {
+      "case": "variety-and-interval",
+      "turn": 1,
+      "question": "조생귤 일주일 가격 보여줘",
+      "expected": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": true,
+      "differences": {},
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "missing-package-type",
+      "turn": 1,
+      "question": "온주 특등급 소과 5키로 조건으로 3일 차이 보고 싶어.",
+      "expected": {
+        "market_code": null,
+        "variety": "온주",
+        "grade": "특",
+        "size": "소",
+        "package": null,
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 3,
+        "base_date": null,
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "온주",
+        "grade": "특등급",
+        "size": "소과",
+        "package": "5kg",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 3,
+        "base_date": null,
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": false,
+      "differences": {
+        "grade": {
+          "expected": "특",
+          "actual": "특등급"
+        },
+        "size": {
+          "expected": "소",
+          "actual": "소과"
+        },
+        "package": {
+          "expected": null,
+          "actual": "5kg"
+        }
+      },
+      "invented_fields": [
+        "package"
+      ],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "alias",
+      "turn": 1,
+      "question": "극조생 감귤의 과거 14일 가격 변화는?",
+      "expected": {
+        "market_code": null,
+        "variety": "극조생감귤",
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": 14,
+        "base_date": null,
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "극조생감귤",
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": 14,
+        "base_date": null,
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": true,
+      "differences": {},
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "missing-interval",
+      "turn": 1,
+      "question": "조생귤 특등급 소과 상자 5kg 과거 가격을 비교해 줘.",
+      "expected": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특",
+        "size": "소",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": null,
+        "base_date": null,
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특등급",
+        "size": "소과",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": null,
+        "base_date": null,
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": false,
+      "differences": {
+        "grade": {
+          "expected": "특",
+          "actual": "특등급"
+        },
+        "size": {
+          "expected": "소",
+          "actual": "소과"
+        }
+      },
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "explicit-market",
+      "turn": 1,
+      "question": "서울가락시장의 조생귤 경매 가격을 과거 7일 간격으로 비교해 줘.",
+      "expected": {
+        "market_code": "110001",
+        "variety": "조생귤",
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": "경매",
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": "110001",
+        "variety": "조생귤",
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": false,
+      "differences": {
+        "trade_type": {
+          "expected": "경매",
+          "actual": null
+        }
+      },
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "exact-date",
+      "turn": 1,
+      "question": "2026년 10월 19일 기준 조생귤 특등급 소과 상자 5kg의 과거 7일 비교를 보여줘.",
+      "expected": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특",
+        "size": "소",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": "2026-10-19",
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특등급",
+        "size": "소과",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": "2026-10-19",
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": false,
+      "differences": {
+        "grade": {
+          "expected": "특",
+          "actual": "특등급"
+        },
+        "size": {
+          "expected": "소",
+          "actual": "소과"
+        }
+      },
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "unsupported-interval",
+      "turn": 1,
+      "question": "과거 온주 가격을 10일 간격으로 비교해 줘.",
+      "expected": {
+        "market_code": null,
+        "variety": "온주",
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": 10,
+        "base_date": null,
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "온주",
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": 10,
+        "base_date": null,
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": true,
+      "differences": {},
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "no-spec-invented",
+      "turn": 1,
+      "question": "제주 감귤 과거 가격이 일주일 사이 얼마나 달라졌어? 품종이나 규격은 아직 못 정했어.",
+      "expected": {
+        "market_code": null,
+        "variety": null,
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": null,
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": true,
+      "differences": {},
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "forecast",
+      "turn": 1,
+      "question": "내일 조생귤 가격 오를까?",
+      "expected": {
+        "market_code": null,
+        "variety": null,
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": null,
+        "base_date": null,
+        "intent": "unsupported"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": null,
+        "base_date": null,
+        "intent": "unsupported"
+      },
+      "valid_call": true,
+      "exact_match": true,
+      "differences": {},
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "profit",
+      "turn": 1,
+      "question": "감귤 3톤을 7일 보관하면 이익인지 계산해 줘.",
+      "expected": {
+        "market_code": null,
+        "variety": null,
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": null,
+        "base_date": null,
+        "intent": "unsupported"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "감귤",
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "unsupported"
+      },
+      "valid_call": true,
+      "exact_match": true,
+      "differences": {},
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "unrelated",
+      "turn": 1,
+      "question": "제주도 관광 일정 추천해 줘.",
+      "expected": {
+        "market_code": null,
+        "variety": null,
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": null,
+        "base_date": null,
+        "intent": "unsupported"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": null,
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": null,
+        "base_date": null,
+        "intent": "unsupported"
+      },
+      "valid_call": true,
+      "exact_match": true,
+      "differences": {},
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "change-weight",
+      "turn": 1,
+      "question": "조생귤 일주일 과거 가격 보여줘.",
+      "expected": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": null,
+        "size": null,
+        "package": null,
+        "package_kg": null,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": true,
+      "differences": {},
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "change-weight",
+      "turn": 2,
+      "question": "특등급 소과 5키로 상자로 비교해 줘.",
+      "expected": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특",
+        "size": "소",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": "110001",
+        "variety": "조생귤",
+        "grade": "특",
+        "size": "소",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": "경매",
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": false,
+      "differences": {
+        "market_code": {
+          "expected": null,
+          "actual": "110001"
+        },
+        "trade_type": {
+          "expected": null,
+          "actual": "경매"
+        }
+      },
+      "invented_fields": [
+        "market_code",
+        "trade_type"
+      ],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "change-weight",
+      "turn": 3,
+      "question": "아 3kg으로 바꿔서 비교해 줘.",
+      "expected": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특",
+        "size": "소",
+        "package": "상자",
+        "package_kg": 3,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특",
+        "size": "소",
+        "package": "상자",
+        "package_kg": 3,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": true,
+      "differences": {},
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "change-interval-and-grade",
+      "turn": 1,
+      "question": "조생귤 특등급 소과 상자 5kg의 과거 7일 가격을 비교해 줘.",
+      "expected": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특",
+        "size": "소",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특등급",
+        "size": "소과",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": false,
+      "differences": {
+        "grade": {
+          "expected": "특",
+          "actual": "특등급"
+        },
+        "size": {
+          "expected": "소",
+          "actual": "소과"
+        }
+      },
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "change-interval-and-grade",
+      "turn": 2,
+      "question": "그 조건에서 간격만 14일로 바꿔 줘.",
+      "expected": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특",
+        "size": "소",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 14,
+        "base_date": null,
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특등급",
+        "size": "소과",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 14,
+        "base_date": null,
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": false,
+      "differences": {
+        "grade": {
+          "expected": "특",
+          "actual": "특등급"
+        },
+        "size": {
+          "expected": "소",
+          "actual": "소과"
+        }
+      },
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": [
+        "grade",
+        "size"
+      ]
+    },
+    {
+      "case": "change-interval-and-grade",
+      "turn": 3,
+      "question": "등급은 특 말고 등외로.",
+      "expected": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "등외",
+        "size": "소",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 14,
+        "base_date": null,
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "등외",
+        "size": "소과",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 14,
+        "base_date": null,
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": false,
+      "differences": {
+        "size": {
+          "expected": "소",
+          "actual": "소과"
+        }
+      },
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": [
+        "size"
+      ]
+    },
+    {
+      "case": "change-date-and-variety",
+      "turn": 1,
+      "question": "2026-10-19 기준 조생귤 특등급 소과 상자 5kg의 7일 과거 가격 비교를 해 줘.",
+      "expected": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특",
+        "size": "소",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": "2026-10-19",
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특등급",
+        "size": "소과",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": "2026-10-19",
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": false,
+      "differences": {
+        "grade": {
+          "expected": "특",
+          "actual": "특등급"
+        },
+        "size": {
+          "expected": "소",
+          "actual": "소과"
+        }
+      },
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    },
+    {
+      "case": "change-date-and-variety",
+      "turn": 2,
+      "question": "기준일만 2026-10-27로 바꿔 줘.",
+      "expected": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특",
+        "size": "소",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": "2026-10-27",
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "조생귤",
+        "grade": "특등급",
+        "size": "소과",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": "2026-10-27",
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": false,
+      "differences": {
+        "grade": {
+          "expected": "특",
+          "actual": "특등급"
+        },
+        "size": {
+          "expected": "소",
+          "actual": "소과"
+        }
+      },
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": [
+        "grade",
+        "size"
+      ]
+    },
+    {
+      "case": "change-date-and-variety",
+      "turn": 3,
+      "question": "나머지는 두고 품종만 온주로 바꿔 줘.",
+      "expected": {
+        "market_code": null,
+        "variety": "온주",
+        "grade": "특",
+        "size": "소",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": "2026-10-27",
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "온주",
+        "grade": "특등급",
+        "size": "소과",
+        "package": "상자",
+        "package_kg": 5,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": "2026-10-27",
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": false,
+      "differences": {
+        "grade": {
+          "expected": "특",
+          "actual": "특등급"
+        },
+        "size": {
+          "expected": "소",
+          "actual": "소과"
+        }
+      },
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": [
+        "grade",
+        "size"
+      ]
+    },
+    {
+      "case": "box-alias",
+      "turn": 1,
+      "question": "온주 특등급 소과 10kg 박스로 과거 7일 가격 차이를 보여 줘.",
+      "expected": {
+        "market_code": null,
+        "variety": "온주",
+        "grade": "특",
+        "size": "소",
+        "package": "상자",
+        "package_kg": 10,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "actual": {
+        "market_code": null,
+        "variety": "온주",
+        "grade": "특등급",
+        "size": "소과",
+        "package": "10kg 박스",
+        "package_kg": 10,
+        "trade_type": null,
+        "interval_days": 7,
+        "base_date": null,
+        "intent": "history"
+      },
+      "valid_call": true,
+      "exact_match": false,
+      "differences": {
+        "grade": {
+          "expected": "특",
+          "actual": "특등급"
+        },
+        "size": {
+          "expected": "소",
+          "actual": "소과"
+        },
+        "package": {
+          "expected": "상자",
+          "actual": "10kg 박스"
+        }
+      },
+      "invented_fields": [],
+      "missed_changes": [],
+      "dropped_fields": []
+    }
+  ]
+}

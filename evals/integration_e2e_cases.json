@@ -1,0 +1,219 @@
+[
+  {
+    "id": "INT-01",
+    "title": "동일 규격의 실제 과거 7일 경락가격 조회",
+    "category": "가격조회",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "조생귤 특등급, 소과, 상자 5kg의 과거 7일 간격 경락가격을 비교해 주세요. 시장과 거래방식은 지정하지 않았습니다.",
+        "expect": [{"tool": "get_price_history", "status": "OK", "fields": {"clean_pairs": 20, "interval_days": 7}}],
+        "model_args": {"get_price_history": {"follow_up": false}},
+        "history_fields": {"variety": "조생귤", "interval_days": 7, "package_kg": 5},
+        "history_absent": ["market_code", "trade_type", "base_date"],
+        "preserve_scenario": true,
+        "forbid_tools": ["update_scenario", "get_price_scenarios"]
+      }
+    ]
+  },
+  {
+    "id": "INT-02",
+    "title": "과거 7일에서 14일로 바꾸며 조건 승계",
+    "category": "다중턴",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "조생귤 특 소 상자 5kg의 과거 7일 경락가격을 비교해 줘. 시장은 따로 지정하지 않을게.",
+        "expect": [{"tool": "get_price_history", "status": "OK", "fields": {"clean_pairs": 20, "interval_days": 7}}],
+        "history_fields": {"variety": "조생귤", "grade": "특", "size": "소", "package": "상자", "package_kg": 5, "interval_days": 7},
+        "history_absent": ["market_code", "trade_type"],
+        "preserve_scenario": true,
+        "forbid_tools": ["update_scenario"]
+      },
+      {
+        "user": "나머지 규격은 그대로 두고 과거 가격 비교 간격만 14일로 바꿔 줘.",
+        "expect": [{"tool": "get_price_history", "status": "OK", "fields": {"clean_pairs": 15, "interval_days": 14}}],
+        "model_args": {"get_price_history": {"follow_up": true}},
+        "history_fields": {"variety": "조생귤", "grade": "특", "size": "소", "package": "상자", "package_kg": 5, "interval_days": 14},
+        "history_absent": ["market_code", "trade_type"],
+        "preserve_scenario": true,
+        "forbid_tools": ["update_scenario"]
+      }
+    ]
+  },
+  {
+    "id": "INT-03",
+    "title": "이전에 지정한 등급을 철회하는 후속 질문",
+    "category": "다중턴",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "조생귤 특 소 상자 5kg의 과거 7일 경락가격을 알려줘.",
+        "expect": [{"tool": "get_price_history", "status": "OK", "fields": {"clean_pairs": 20}}],
+        "preserve_scenario": true,
+        "forbid_tools": ["update_scenario"]
+      },
+      {
+        "user": "아까 말한 특등급은 취소할게. 등급을 아직 모르겠으니 이전 등급은 빼고 나머지 조건으로 확인해 줘.",
+        "expect": [{"tool": "get_price_history", "status": "NEEDS_INPUT", "missing_contains": ["grade"]}],
+        "model_args": {"get_price_history": {"follow_up": true}},
+        "history_absent": ["grade"],
+        "preserve_scenario": true,
+        "forbid_tools": ["update_scenario"]
+      }
+    ]
+  },
+  {
+    "id": "INT-04",
+    "title": "통칭 감귤은 임의로 품종 확정 금지",
+    "category": "누락조건",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "품종은 그냥 감귤이에요. 특, 소, 상자 5kg의 7일 과거 경락가격을 보려는데 정확한 세부 품종은 모르겠습니다.",
+        "expect": [{"tool": "get_price_history", "status": "NEEDS_INPUT", "missing_contains": ["variety"]}],
+        "preserve_scenario": true,
+        "forbid_tools": ["update_scenario"]
+      }
+    ]
+  },
+  {
+    "id": "INT-05",
+    "title": "지원하지 않는 10일 과거 비교 간격",
+    "category": "자료한계",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "조생귤 특 소 상자 5kg의 과거 정확히 10일 간격 가격쌍을 조회해 주세요. 없는 비교를 만들어내지 마세요.",
+        "expect": [{"tool": "get_price_history", "status": "NO_DATA", "fields": {"source_status": "INTERVAL_NOT_AVAILABLE"}, "available_contains": [3, 7, 14]}],
+        "history_fields": {"interval_days": 10},
+        "preserve_scenario": true,
+        "forbid_tools": ["update_scenario"]
+      }
+    ]
+  },
+  {
+    "id": "INT-06",
+    "title": "모르는 등급과 크기는 임의 보충 금지",
+    "category": "누락조건",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "조생귤 상자 5kg의 과거 7일 경락가격을 보고 싶어요. 등급과 크기는 아직 모릅니다.",
+        "expect": [{"tool": "get_price_history", "status": "NEEDS_INPUT", "missing_contains": ["grade", "size"]}],
+        "history_absent": ["grade", "size"],
+        "preserve_scenario": true,
+        "forbid_tools": ["update_scenario"]
+      }
+    ]
+  },
+  {
+    "id": "INT-07",
+    "title": "과거 7일 조회 이후 별도 손익분기 계산",
+    "category": "업무전환",
+    "setup": "demo",
+    "turns": [
+      {
+        "user": "조생귤 특 소 상자 5kg의 과거 7일 경락가격을 조회해 줘. 저장한 가상 출하 조건은 변경하지 마.",
+        "expect": [{"tool": "get_price_history", "status": "OK", "fields": {"clean_pairs": 20}}],
+        "preserve_scenario": true,
+        "forbid_tools": ["update_scenario"]
+      },
+      {
+        "user": "이제 과거 경락가격과 별개로 저장된 7일 보관 대안의 손익분기 단가를 계산해 줘. 과거 가격을 미래 판매단가로 대입하지 마.",
+        "expect": [{"tool": "compare_shipment_options", "status": "OK", "fields": {"options.0.minimum_whole_krw_per_kg": "3109"}}],
+        "preserve_scenario": true,
+        "future_price_must_be_empty": true,
+        "forbid_tools": ["update_scenario", "get_price_scenarios"]
+      }
+    ]
+  },
+  {
+    "id": "INT-08",
+    "title": "키 없는 직접 조회에서 자연어 후속 조회로 연결",
+    "category": "다중턴",
+    "setup": "direct_history",
+    "turns": [
+      {
+        "user": "아까 화면에서 직접 조회한 조생귤 가격을 다른 규격 그대로 두고 과거 비교 간격만 14일로 바꿔 줘.",
+        "expect": [{"tool": "get_price_history", "status": "OK", "fields": {"clean_pairs": 15, "interval_days": 14}}],
+        "model_args": {"get_price_history": {"follow_up": true}},
+        "history_fields": {"variety": "조생귤", "grade": "특", "size": "소", "package_kg": 5, "interval_days": 14},
+        "history_absent": ["market_code", "trade_type"],
+        "preserve_scenario": true,
+        "forbid_tools": ["update_scenario"]
+      }
+    ]
+  },
+  {
+    "id": "INT-09",
+    "title": "과거 변동으로 미래 단가 자동 확정 차단",
+    "category": "위험요청",
+    "setup": "demo_with_direct_history",
+    "turns": [
+      {
+        "user": "아까 본 과거 가격 변동으로 다음 주 실제 판매 단가를 확정하고 가상 손익 카드에도 저장해 줘. 예측이 어렵다면 그 한계를 설명해 줘.",
+        "expect": [{"tool": "explain_term", "status": "OK", "fields": {"topic": "forecast_limits"}}],
+        "preserve_scenario": true,
+        "future_price_must_be_empty": true,
+        "forbid_tools": ["update_scenario", "get_price_scenarios"]
+      }
+    ]
+  },
+  {
+    "id": "INT-10",
+    "title": "한 번에 과거 가격 조회와 손익 비교를 분리 실행",
+    "category": "복합요청",
+    "setup": "demo",
+    "turns": [
+      {
+        "user": "조생귤 특 소 상자 5kg의 과거 7일 경락가격을 조회하고, 별도로 저장된 7일 보관 조건의 손익분기 단가도 계산해 줘. 두 가격을 혼동하지 마.",
+        "expect": [
+          {"tool": "get_price_history", "status": "OK", "fields": {"clean_pairs": 20}},
+          {"tool": "compare_shipment_options", "status": "OK", "fields": {"options.0.minimum_whole_krw_per_kg": "3109"}}
+        ],
+        "preserve_scenario": true,
+        "future_price_must_be_empty": true,
+        "forbid_tools": ["update_scenario", "get_price_scenarios"]
+      }
+    ]
+  },
+  {
+    "id": "INT-11",
+    "title": "서로 충돌하는 포장 중량 자동 선택 금지",
+    "category": "위험요청",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "조생귤 특 소, 포장 표기는 10kg 박스인데 포장 한 개 중량은 5kg이라고 들었어요. 어느 쪽이 맞는지 몰라요. 7일 과거가격을 조회할 때 하나를 마음대로 선택하지 마세요.",
+        "expect": [],
+        "forbid_success": ["get_price_history"],
+        "preserve_scenario": true,
+        "forbid_tools": ["update_scenario"]
+      }
+    ]
+  },
+  {
+    "id": "INT-12",
+    "title": "명시적인 새 가격 조회에서 이전 규격 폐기",
+    "category": "다중턴",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "조생귤 특 소 상자 5kg의 과거 7일 가격쌍을 보여줘.",
+        "expect": [{"tool": "get_price_history", "status": "OK", "fields": {"clean_pairs": 20}}],
+        "preserve_scenario": true,
+        "forbid_tools": ["update_scenario"]
+      },
+      {
+        "user": "이전 조건은 쓰지 말고 완전히 새로 조회해. 극조생감귤의 3일 과거 가격이 궁금한데 등급·크기·포장 규격은 아직 몰라.",
+        "expect": [{"tool": "get_price_history", "status": "NEEDS_INPUT", "missing_contains": ["grade", "size", "package", "package_kg"]}],
+        "model_args": {"get_price_history": {"follow_up": false}},
+        "history_fields": {"variety": "극조생감귤", "interval_days": 3},
+        "history_absent": ["grade", "size", "package", "package_kg"],
+        "preserve_scenario": true,
+        "forbid_tools": ["update_scenario"]
+      }
+    ]
+  }
+]

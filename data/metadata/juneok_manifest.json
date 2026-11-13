@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "source_snapshot_main_sha": "28e8af97223fd1d54ee0655fc724c414ae28e726",
+  "files": [
+    {
+      "file": "data/raw/auction_trades.csv",
+      "size_bytes": 10409421,
+      "sha256": "e3f704e3d91f5d9d3ce6eca6220940727225d02aa745093b43066518a2b77de6"
+    },
+    {
+      "file": "data/raw/jeju_shipments.csv",
+      "size_bytes": 1852224,
+      "sha256": "8016d2c1791048686ac922cc7c9afe27594438071f5e3bb4c90c918596a15c0c"
+    },
+    {
+      "file": "data/processed/daily_prices.csv",
+      "size_bytes": 205679,
+      "sha256": "d8076c3590a898953e312faf1d0f69237e65a6f0fef7d6616e2c9e42076a4589",
+      "columns": [
+        "date",
+        "market_code",
+        "market",
+        "variety_code",
+        "variety",
+        "grade_code",
+        "grade",
+        "size_code",
+        "size",
+        "package",
+        "package_kg",
+        "trade_type",
+        "avg_price_kg",
+        "total_kg",
+        "total_amount_krw",
+        "transaction_count",
+        "quality_flag"
+      ],
+      "rows": 1592
+    },
+    {
+      "file": "data/processed/daily_variety_prices.csv",
+      "size_bytes": 23082,
+      "sha256": "537da2eb0b961fa9c6336f9e3c64853a120fe0d254141db7a6ab94013563c37e",
+      "columns": [
+        "date",
+        "market_code",
+        "market",
+        "variety_code",
+        "variety",
+        "trade_type",
+        "avg_price_kg",
+        "total_kg",
+        "total_amount_krw",
+        "transaction_count",
+        "unknown_grade_pct",
+        "unknown_size_pct",
+        "quality_flag"
+      ],
+      "rows": 184
+    },
+    {
+      "file": "data/processed/daily_shipments.csv",
+      "size_bytes": 418609,
+      "sha256": "626ca53d44cae3f07025a667bd8a0a2e0ad50232abd904f3a2ded7954e63d71c",
+      "columns": [
+        "date",
+        "category",
+        "variety",
+        "shipment_tons",
+        "reporting_offices",
+        "positive_offices",
+        "source_rows",
+        "data_warning"
+      ],
+      "rows": 7481
+    },
+    {
+      "file": "data/processed/monthly_shipments.csv",
+      "size_bytes": 16667,
+      "sha256": "99c13bb3011e1d09f99a4d30b948271ddc7d6821e202ca693a065e6c76a99827",
+      "columns": [
+        "year_month",
+        "category",
+        "variety",
+        "shipment_tons",
+        "observed_days",
+        "source_rows",
+        "data_warning"
+      ],
+      "rows": 304
+    },
+    {
+      "file": "data/reports/auction_quality_report.json",
+      "size_bytes": 2945,
+      "sha256": "ec4cfc5ffd5f00c1d6f21cdb6beaa02e8bb6c59cf83152f0bf40a0716132f2b2"
+    },
+    {
+      "file": "data/reports/shipment_quality_report.json",
+      "size_bytes": 2061,
+      "sha256": "aabd9f3630f70033c3fe69a7f8841ff6bc46184aa93a32adf942965cb7cc5450"
+    },
+    {
+      "file": "data/reports/shipment_unassigned_rows.csv",
+      "size_bytes": 98647,
+      "sha256": "85492027fba7600610e48d27df0b486e2b1b54937f1a3843efe5f04502a7e4ad"
+    }
+  ],
+  "datasets": [
+    {
+      "id": "jeju-hub-855",
+      "name": "제주데이터허브 #855 신고소별 감귤류 및 만감류 출하량 통계",
+      "url": "https://www.jejudatahub.net/data/view/data/855",
+      "unit": "ton",
+      "observed_first_date": "2018-01-01",
+      "observed_last_date": "2025-09-17",
+      "last_month_partial": true,
+      "missing_date_rows_excluded": 1950,
+      "license_status": "Individual source conditions need confirmation; no CC0 claim.",
+      "preprocessing": "scripts/preprocess_shipments.py"
+    },
+    {
+      "id": "auction-source",
+      "name": "전국 공영도매시장 경매원천정보 API (사용자가 수집한 CSV)",
+      "url": "https://www.data.go.kr/data/15141810/openapi.do",
+      "unit": "원/kg",
+      "observed_first_date": "2026-10-01",
+      "observed_last_date": "2026-11-03",
+      "market_scope": "Collected Seoul Garak market observations only; not nationwide current prices.",
+      "license_status": "Record and follow original API conditions; source attribution required.",
+      "preprocessing": "scripts/preprocess_auction.py"
+    }
+  ],
+  "interpretation": [
+    "Historical data; not a live supply or price feed.",
+    "Shipment and auction category labels are not automatically mapped.",
+    "Non-overlapping source periods do not establish contemporaneous price/supply effects."
+  ]
+}

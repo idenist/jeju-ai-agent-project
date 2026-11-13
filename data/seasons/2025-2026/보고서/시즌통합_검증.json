@@ -1,0 +1,191 @@
+{
+  "status": "OK",
+  "season": "2025-10 ~ 2026-02",
+  "market_code": "110001",
+  "source_periods": [
+    {
+      "start": "2025-10-01",
+      "end": "2025-11-03",
+      "source_file": "artifacts\\seunghyuk\\경매시험_2025-10-01_2025-11-03_110001\\raw\\auction_trades.csv",
+      "source_sha256": "b12aef7557ef664d7782fb7bcb44f267a2a718f34be5898b058cab34d55c18b8",
+      "raw_rows": 27991,
+      "raw_observed_dates": 26,
+      "collection_report_verified": true
+    },
+    {
+      "start": "2025-11-04",
+      "end": "2025-11-30",
+      "source_file": "artifacts\\seunghyuk\\경매시험_2025-11-04_2025-11-30_110001\\raw\\auction_trades.csv",
+      "source_sha256": "40f2d845fd8e3113123d539a737f2892b28f57aa5f5b75273fa13a3ed7060cf5",
+      "raw_rows": 40533,
+      "raw_observed_dates": 23,
+      "collection_report_verified": true
+    },
+    {
+      "start": "2025-12-01",
+      "end": "2025-12-31",
+      "source_file": "artifacts\\seunghyuk\\경매시험_2025-12-01_2025-12-31_110001\\raw\\auction_trades.csv",
+      "source_sha256": "03cec0d28db7bac5d8b8bcad5cea797ff2f75922ee9f856d76ab1313fcd9cd18",
+      "raw_rows": 57544,
+      "raw_observed_dates": 27,
+      "collection_report_verified": true
+    },
+    {
+      "start": "2026-01-01",
+      "end": "2026-01-31",
+      "source_file": "artifacts\\seunghyuk\\경매시험_2026-01-01_2026-01-31_110001\\raw\\auction_trades.csv",
+      "source_sha256": "64116e50cc5c32bcf0735831d06030dffe6af53333fc291021b847ec611bab2a",
+      "raw_rows": 52653,
+      "raw_observed_dates": 25,
+      "collection_report_verified": true
+    },
+    {
+      "start": "2026-02-01",
+      "end": "2026-02-28",
+      "source_file": "artifacts\\seunghyuk\\경매시험_2026-02-01_2026-02-28_110001\\raw\\auction_trades.csv",
+      "source_sha256": "06c9ed450be9d17a444fa143f11d8ba7da00572aa32c31c2a70f95fe98bcb8e0",
+      "raw_rows": 28805,
+      "raw_observed_dates": 21,
+      "collection_report_verified": true
+    }
+  ],
+  "input_rows": 207526,
+  "accepted_rows": 198138,
+  "rejected_rows": 9388,
+  "rejected_by_reason": {
+    "amount_mismatch": 134,
+    "exact_duplicate": 19,
+    "nonpositive_qty_or_price": 2230,
+    "not_auction": 6367,
+    "not_jeju_origin": 638
+  },
+  "observed_date_count": 120,
+  "dates_without_accepted_auction": [
+    "2025-11-01",
+    "2025-12-13"
+  ],
+  "daily_prices_rows": 6023,
+  "accepted_by_variety": {
+    "극조생감귤": 10021,
+    "기타": 294,
+    "미분류(07)": 593,
+    "미분류(09)": 710,
+    "비가림감귤": 4305,
+    "성전": 54,
+    "온주": 7437,
+    "조생귤": 150905,
+    "타이벡감귤": 9381,
+    "하우스감귤": 10546,
+    "황금향": 3892
+  },
+  "unmapped_variety_code_count": 1357,
+  "price_pairs": {
+    "by_horizon": {
+      "3": {
+        "all_matched": 3048,
+        "without_warnings": 1047,
+        "cross_month_ok": 73
+      },
+      "7": {
+        "all_matched": 3443,
+        "without_warnings": 1180,
+        "cross_month_ok": 222
+      },
+      "14": {
+        "all_matched": 3041,
+        "without_warnings": 1050,
+        "cross_month_ok": 408
+      }
+    },
+    "cross_month_detail": [
+      {
+        "interval_days": 14,
+        "from_month": "2025-10",
+        "to_month": "2025-11",
+        "without_warnings": 163
+      },
+      {
+        "interval_days": 14,
+        "from_month": "2025-11",
+        "to_month": "2025-12",
+        "without_warnings": 84
+      },
+      {
+        "interval_days": 14,
+        "from_month": "2025-12",
+        "to_month": "2026-01",
+        "without_warnings": 74
+      },
+      {
+        "interval_days": 14,
+        "from_month": "2026-01",
+        "to_month": "2026-02",
+        "without_warnings": 87
+      },
+      {
+        "interval_days": 3,
+        "from_month": "2025-10",
+        "to_month": "2025-11",
+        "without_warnings": 16
+      },
+      {
+        "interval_days": 3,
+        "from_month": "2025-11",
+        "to_month": "2025-12",
+        "without_warnings": 23
+      },
+      {
+        "interval_days": 3,
+        "from_month": "2025-12",
+        "to_month": "2026-01",
+        "without_warnings": 8
+      },
+      {
+        "interval_days": 3,
+        "from_month": "2026-01",
+        "to_month": "2026-02",
+        "without_warnings": 26
+      },
+      {
+        "interval_days": 7,
+        "from_month": "2025-10",
+        "to_month": "2025-11",
+        "without_warnings": 80
+      },
+      {
+        "interval_days": 7,
+        "from_month": "2025-11",
+        "to_month": "2025-12",
+        "without_warnings": 49
+      },
+      {
+        "interval_days": 7,
+        "from_month": "2025-12",
+        "to_month": "2026-01",
+        "without_warnings": 33
+      },
+      {
+        "interval_days": 7,
+        "from_month": "2026-01",
+        "to_month": "2026-02",
+        "without_warnings": 60
+      }
+    ]
+  },
+  "source_files_sha256": {
+    "processed/daily_prices.csv": "ff0a14316380f3887b91f8426b41d29b60308a732a45317bf2f236393cbe8551",
+    "processed/daily_variety_prices.csv": "435c049df3cd72c2640b9477e40ce425bfa230c4884441c413f56152b42f70ea",
+    "processed/price_comparisons.csv": "3328c628f6f4a18d46fae674e7b023ac123f79ff155bec8aab712ade2eed543c",
+    "processed/price_comparison_availability.csv": "f6f219f2035536908469307c86867ec6e0105b8220dd78ffa8fbf0ebd1953ac5",
+    "reports/auction_quality_report.json": "d5e6b45d60e81fec52e4ca4e4d290c12d99a86b2d708f46a61119a4bd5160f18",
+    "reports/price_comparison_report.json": "6b85327d7d82dbb721a760463876eefc76c7c61e153db7296e9d9d0aecdadcf7",
+    "reports/price_comparison_coverage.md": "705235f6df6f0408886a59f6c3fbe1a7c86f16da2e58752c895cc27d815b364d"
+  },
+  "limitations": [
+    "시장 경매 정산가격이며 농가 실수취가나 실제 출하일이 아님",
+    "미분류 코드 07/09와 기타 99는 공식 분류 확정 전 임의로 품종명을 붙이지 않음",
+    "월 경계를 넘는 실제 관측 날짜쌍만 계산; 결측 보간 없음",
+    "이 산출물은 예측 모델의 정확도를 입증하지 않음",
+    "팀 공용 data/와 Agent 입력은 변경하지 않음"
+  ]
+}
