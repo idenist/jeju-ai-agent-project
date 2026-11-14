@@ -19,6 +19,87 @@ COMMON = {"quantity": 3000, "price_basis": "gross", "start_date": "2026-11-12", 
 
 
 class FuturePairTests(unittest.TestCase):
+    def test_box_quote_waits_for_the_missing_weight_and_confirmation(self):
+        from agents.juneok.agent import AgentSession
+        from agents.juneok.box_price import mentions_box_price
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        self.assertFalse(mentions_box_price("상자당 5kg이고 먼저 팔 때 kg당 2,500원이에요."))
+        for weight, expected in ((" 상자는 5kg이에요.", "2,500원/kg"), ("", "정확히 몇 kg"),
+                                 (" 5kg 상자 또는 10kg 상자일지 몰라요.", "정확히 몇 kg")):
+            with self.subTest(weight=weight):
+                client = 모의_대화_클라이언트("compare_future_pair", {
+                    "action": "new", "expected_version": 0,
+                    "patch": {**COMMON, "option_b": OPTION_B, "price_mode": "history", "history_filters": FILTERS},
+                    "box_price": {"side": "A", "phrase": "상자당 12,500원"},
+                })
+                agent = AgentSession(client=client)
+                first = agent.run("감귤 3톤을 사흘 뒤와 열흘 뒤에 출하할 때 비교해 주세요. A안은 상자당 12,500원이에요." + weight)
+                self.assertIn(expected, first["text"])
+                self.assertIsNone(agent.future_pair.inputs["price_a"])
+                self.assertIsNone(agent.future_pair.current_result())
+                corrected = agent.run("상자 한 개에 5kg이에요.")
+                self.assertIn("12,500원 ÷ 5kg", corrected["text"])
+                confirmed = agent.run("네, 맞아요.")
+                self.assertEqual(len(client.requests), 1)
+                self.assertEqual(agent.future_pair.inputs["quantity"], 3000)
+                self.assertEqual(agent.future_pair.current_result()["option_a"]["price_per_kg"], "2500")
+                self.assertIn("2,500원/kg", confirmed["text"])
+
+    def test_box_price_confirmation_preserves_the_separate_history_package(self):
+        from agents.juneok.box_price import proposed_box_price
+        from agents.juneok.future_pair_state import FuturePairState
+
+        pair = FuturePairState()
+        quote = proposed_box_price("A안 상자당 12,500원, 상자는 5kg이에요.",
+                                   {"side": "A", "phrase": "상자당 12,500원"})
+        filters = {**FILTERS, "package_kg": "10"}
+        pair.apply("new", pair.version, {**COMMON, "option_b": OPTION_B,
+                   "price_mode": "history", "history_filters": filters}, box_price=quote)
+        confirmed = pair.follow_up_box_price("네, 맞아요.")
+        self.assertEqual(Decimal(confirmed["confirmed_box_price"]), 2500)
+        self.assertEqual(pair.inputs["history_filters"], filters)
+
+    def test_clear_future_shipment_choice_keeps_the_reported_quantity(self):
+        from agents.juneok.agent import AgentSession
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        client = 모의_대화_클라이언트("compare_future_pair", {
+            "action": "new", "expected_version": 0,
+            "patch": {"option_a": {"delay_days": 3}, "option_b": {"delay_days": 10},
+                      "start_date": "2026-11-15", "quantity": None, "price_mode": "manual"},
+        })
+        agent = AgentSession(client=client)
+        reply = agent.run("감귤 3톤인데 사흘 뒤에 팔지 열흘 뒤에 팔지 고민이에요.")
+        self.assertEqual(client.requests[0]["tool_choice"], {"type": "function", "name": "compare_future_pair"})
+        self.assertEqual(agent.future_pair.inputs["quantity"], 3000)
+        self.assertIsNotNone(agent.future_pair.inputs["history_filters"])
+        self.assertEqual(reply["visible_results"][0]["tool"], "compare_future_pair")
+        self.assertNotIn("비교 물량(kg)", reply["visible_results"][0]["result"]["missing_fields"])
+
+    def test_future_pair_routing_distinguishes_sales_from_other_requests(self):
+        from datetime import date
+        from agents.juneok.future_pair_intent import explicit_shipment_quantity, is_future_pair_request
+
+        today = date(2026, 11, 15)
+        for question in ("3,000kg을 3일 후랑 10일 후 중 언제 출하할까요?",
+                         "11월 18일에 팔까, 11월 25일에 팔까?", "3일 뒤와 11월 25일 출하를 비교해줘"):
+            self.assertTrue(is_future_pair_request(question, today), question)
+        for question in ("오늘 팔지 10일 뒤 팔지 고민이에요", "출하량 지난 3일과 10일 비교해줘",
+                         "일주일 뒤(7일 후) 출하를 비교해줘", "사흘 뒤(3일 후)에 팔면 얼마나 나을까요?",
+                         "11월 15일부터 보관해서 11월 25일에 출하할 때 가격 비교해줘",
+                         "3일 후와 10일 후 판매 수수료의 뜻을 설명해줘",
+                         "노지온주 11월 18일과 11월 25일 출하의 과거 공급 집중도를 비교해 주세요.",
+                         "#855 자료로 노지온주 11월 18일과 11월 25일 출하 시기를 비교해 주세요.",
+                         "3일 후, 10일 후, 17일 후 각각 출하하면 언제 유리한지 비교해 주세요."):
+            self.assertFalse(is_future_pair_request(question, today), question)
+        self.assertEqual(explicit_shipment_quantity("감귤 3톤, 상자에 5kg씩 포장"), 3000)
+        self.assertEqual(explicit_shipment_quantity("5kg 상자로 포장한 3,000 kg"), 3000)
+        self.assertEqual(explicit_shipment_quantity("감귤 3톤, A안 상자당 12,500원, 상자는 5kg이에요."), 3000)
+        self.assertIsNone(explicit_shipment_quantity("포장 한 개 5kg"))
+        self.assertIsNone(explicit_shipment_quantity("감귤 2~3톤"))
+        self.assertIsNone(explicit_shipment_quantity("감귤 2톤인지 3톤인지 몰라요"))
+
     def test_regulation_help_without_a_model_tool_keeps_the_pending_future_comparison(self):
         from types import SimpleNamespace
         from agents.juneok.agent import AgentSession

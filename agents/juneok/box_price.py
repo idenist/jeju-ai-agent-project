@@ -1,0 +1,124 @@
+"""User confirmation of a P2 box quote before it becomes a unit price."""
+
+import re
+from dataclasses import dataclass, replace
+from decimal import Decimal, ROUND_HALF_UP
+
+
+_NUMBER = r"[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?"
+_AMOUNT = re.compile(rf"(?<![\d,.])({_NUMBER})\s*(만\s*)?원")
+_MASS = re.compile(rf"(?<![\d,.])({_NUMBER})\s*(?:kg|킬로그램)", re.I)
+_PACK = r"(?:상자|박스|포장)"
+_BOX_PRICE = re.compile(
+    rf"(?:{_PACK}\s*(?:한\s*개\s*)?(?:당|에)|한\s*{_PACK}에)\s*(?:가격\s*(?:은|이)?\s*)?"
+    rf"(?<![\d,.]){_NUMBER}\s*(?:만\s*)?원|{_NUMBER}\s*원\s*/\s*{_PACK}"
+)
+_SIDE_A = re.compile(r"(?:a\s*안|먼저\s*(?:출하|팔))", re.I)
+_SIDE_B = re.compile(r"(?:b\s*안|나중\s*(?:출하|팔))", re.I)
+_PACK_WEIGHT = (
+    re.compile(rf"{_PACK}\s*(?:(?:한\s*개|하나|1\s*개)\s*)?(?:무게\s*(?:는|가)?\s*|당\s*|에\s*|는\s*|가\s*|\s*)({_NUMBER})\s*(?:kg|킬로그램)", re.I),
+    re.compile(rf"({_NUMBER})\s*(?:kg|킬로그램)\s*(?:짜리\s*)?{_PACK}", re.I),
+)
+_WEIGHT_REPLY = re.compile(rf"{_PACK}|^(?:아니요[, ]*)?\s*{_NUMBER}\s*(?:kg|킬로그램)", re.I)
+_ALTERNATE_WEIGHT = re.compile(rf"(?:kg|킬로그램)\s*(?:인지|이나|또는|아니면|혹은|[~/～–-])\s*({_NUMBER})\s*(?:kg|킬로그램)", re.I)
+_WEIGHT_RANGE = re.compile(rf"{_NUMBER}\s*[-~～–]\s*{_NUMBER}\s*(?:kg|킬로그램)", re.I)
+_UNCERTAIN = re.compile(r"모르|몰라|인지|일지|애매|정도|가량|쯤|아마|듯|[~～–]")
+_YES = re.compile(r"(?:(?:네|예|응)[, ]*)?(?:맞(?:아(?:요)?|습니다)|그대로(?:\s*(?:계산|비교)(?:해\s*(?:줘|주세요))?)?|확인(?:했어요|했습니다)?|적용해\s*(?:줘|주세요))|네|예|응")
+_NO = re.compile(r"아니(?:요|에요)?|아니에요|아닙니다|취소(?:해\s*(?:줘|주세요))?")
+
+
+def mentions_box_price(text):
+    return bool(_BOX_PRICE.search(text))
+
+
+def _weight(text, *, reply=False):
+    matches = [found for pattern in _PACK_WEIGHT for found in pattern.findall(text)]
+    if reply and not matches:
+        matches = _MASS.findall(text)
+    distinct = {Decimal(value.replace(",", "")) for value in [*matches, *_ALTERNATE_WEIGHT.findall(text)]}
+    if len(distinct) != 1 or _UNCERTAIN.search(text) or _WEIGHT_RANGE.search(text):
+        return None
+    value = distinct.pop()
+    return value if Decimal("0.001") <= value <= 1000 else None
+
+
+def proposed_box_price(text, model_quote):
+    """Use the model only to locate the quote and identify its side."""
+    if not mentions_box_price(text):
+        return None
+    # The model points to the literal quote, so other prices or storage fees do not become box prices.
+    quote = model_quote if isinstance(model_quote, dict) else {}
+    quotes = list(_BOX_PRICE.finditer(text))
+    if len(quotes) != 1:
+        return None
+    match = quotes[0]
+    phrase = quote.get("phrase")
+    matches_phrase = isinstance(phrase, str) and phrase in text and match.group() in phrase
+    value, ten_thousand = _AMOUNT.findall(match.group())[0]
+    amount = Decimal(value.replace(",", "")) * (10000 if ten_thousand else 1)
+    if not 0 < amount <= 10**12:
+        return None
+    side = quote.get("side") if matches_phrase else None
+    clause = re.split(r"[.!?。\n]", text[:match.start()])[-1]
+    explicit_sides = [label for label, pattern in (("A", _SIDE_A), ("B", _SIDE_B)) if pattern.search(clause)]
+    if len(explicit_sides) == 1:
+        side = explicit_sides[0]
+    return BoxPrice(amount, side if side in {"A", "B"} else None, _weight(text))
+
+
+def pending_box_arguments(question, arguments):
+    """Separate the quote from numeric tool inputs until the user confirms it."""
+    args = dict(arguments)
+    quote = proposed_box_price(question, args.pop("box_price", None))
+    patch = dict(args["patch"])
+    for field, side in (("price_a", "A"), ("price_b", "B")):
+        if quote is None or quote.side in {None, side}:
+            patch[field] = None
+    if quote is not None and quote.side == "B" and patch.get("price_mode") is None:
+        patch["price_mode"] = "manual"
+    if patch.get("price_mode") == "manual":
+        patch["history_filters"] = None
+    args.update(patch=patch, finish_turn=True)
+    return args, quote
+
+
+def _number(value):
+    return f"{value.normalize():,f}"
+
+
+@dataclass(frozen=True)
+class BoxPrice:
+    amount: Decimal
+    side: str | None
+    weight: Decimal | None
+
+    @property
+    def unit_price(self):
+        return (self.amount / self.weight).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    def follow_up(self, text):
+        clean = text.strip().rstrip(".!?。！？」").strip()
+        if _NO.fullmatch(clean):
+            return "cancel", self
+        if self.side is None and re.fullmatch(r"(?:a안|b안|먼저(?:\s*출하)?|나중(?:\s*출하)?)(?:이에요|예요|입니다)?", clean.casefold()):
+            side = "B" if clean.casefold().startswith(("b", "나중")) else "A"
+            return "clarify", replace(self, side=side)
+        if _WEIGHT_REPLY.search(clean) and len(clean) <= 55 and not _AMOUNT.search(clean):
+            weight = _weight(clean, reply=True)
+            return "clarify", replace(self, weight=weight)
+        if _YES.fullmatch(clean):
+            return ("confirm" if self.side and self.weight and self.unit_price > 0 else "clarify"), self
+        return None, self
+
+    def question(self):
+        amount = _number(self.amount)
+        if not self.side:
+            return f"상자당 {amount}원은 먼저 출하하는 A안 가격인가요, 나중 출하하는 B안 가격인가요?"
+        if self.weight is None:
+            return f"{self.side}안 상자당 {amount}원에서 상자 한 개에 담긴 감귤은 정확히 몇 kg인가요?"
+        if self.unit_price == 0:
+            return f"{self.side}안 환산 단가가 0.01원/kg 미만입니다. 상자 가격과 무게를 다시 알려주세요."
+        weight = _number(self.weight)
+        unit = _number(self.unit_price)
+        return (f"{self.side}안 상자당 {amount}원 ÷ {weight}kg = **{unit}원/kg**입니다. "
+                f"{self.side}안 단가로 적용할까요? 맞으면 ‘네’, 무게가 다르면 정확한 kg을 알려주세요.")

@@ -29,7 +29,9 @@ PRICE_QUERY = {
 SOURCE_PATHS = (
     "app.py", "agents/juneok/agent.py", "agents/juneok/tools.py",
     "agents/juneok/workspace.py", "agents/juneok/state.py",
-    "agents/juneok/future_pair_state.py", "agents/juneok/presentation.py", "agents/juneok/reporting.py",
+    "agents/juneok/future_pair_state.py", "agents/juneok/future_pair_intent.py",
+    "agents/juneok/box_price.py",
+    "agents/juneok/presentation.py", "agents/juneok/reporting.py",
     "agents/common/future_pair.py", "agents/common/data_contract.py",
     "agents/common/calculation_service.py", "agents/common/price_history_service.py",
     "agents/common/price_history_followup.py", "agents/jeonghyeon/price_history.py",

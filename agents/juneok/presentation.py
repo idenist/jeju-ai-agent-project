@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from .reporting import future_pair_summary, manual_price_warning, render_report, render_result, FIELD_NAMES, _field
+from .reporting import future_pair_summary, manual_price_warning, render_report, render_result, FIELD_NAMES, _field, _number
 
 
 def select_results(results: list[dict], version: int) -> list[dict]:
@@ -39,6 +39,8 @@ def render_dialogue(results: list[dict], *, question: str = "") -> str:
     sections = []
     for entry in results:
         result = entry["result"]
+        if "confirmed_box_price" in result:
+            sections.append(f"{result['confirmed_box_side']}안에 **{_number(result['confirmed_box_price'])}원/kg**을 적용했어요.")
         if result.get("analysis_type") == "future_pair" and result.get("status") == "OK":
             conclusion, minimum, favorable = future_pair_summary(result)
             a, b = result["option_a"], result["options_b"][0]

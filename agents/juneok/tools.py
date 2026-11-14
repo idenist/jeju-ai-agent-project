@@ -45,6 +45,15 @@ def tool(name: str, description: str, properties: dict) -> dict:
             "strict": True, "parameters": object_schema(properties)}
 
 
+def with_box_price(tool_definition):
+    params = tool_definition["parameters"]["properties"]
+    quote = object_schema({
+        "side": nullable("string", enum=["A", "B", None], description="먼저 출하 A, 나중 출하 B, 불분명하면 null"),
+        "phrase": {"type": "string", "description": "상자당 가격과 단위를 포함하는 사용자 원문을 그대로 복사"},
+    })
+    return {**tool_definition, "parameters": object_schema({**params, "box_price": {"anyOf": [quote, {"type": "null"}]}})}
+
+
 TOOLS = [
     tool("compare_future_pair", "두 미래 출하일을 비교합니다. 새 비교는 new, 기존 P2 조건 수정은 edit. B안 단가는 직접 입력(manual) 또는 과거 동일규격 변동 가정(history). history는 감모율·보관비가 없어도 과거 근거를 먼저 조회합니다. 사용자가 말한 값만 보내고 변경 없는 값은 null. 날짜 변경 시 새 기간 전체 감모를 확인한 경우에만 같이 전달합니다.",
          {"action": {"type": "string", "enum": ["new", "edit"]}, "expected_version": {"type": "integer"},
@@ -139,7 +148,7 @@ def explain_term(topic: str) -> dict:
     return {"status": "OK", "topic": topic, "explanation": HELP[topic]}
 
 
-def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=None, task_context=None, input_context=None, shipment=None, future_pair=None, *, on_progress=None) -> dict:
+def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=None, task_context=None, input_context=None, shipment=None, future_pair=None, *, on_progress=None, box_price=None, unresolved_box_price=False) -> dict:
     if not isinstance(args, dict):
         return {"status": "INVALID_INPUT", "message": "도구 입력은 객체여야 합니다."}
     schemas = {t["name"]: t["parameters"] for t in (*TOOLS, TIMING_TOOL)}
@@ -156,7 +165,8 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
             if future_pair is None:
                 return {"status": "INVALID_INPUT", "message": "미래 출하 비교 조건을 확인할 수 없습니다."}
             return future_pair.apply(args.get("action"), args.get("expected_version"), args.get("patch"),
-                                     args.get("clear_fields"), on_progress=on_progress)
+                                     args.get("clear_fields"), on_progress=on_progress, box_price=box_price,
+                                     unresolved_box_price=unresolved_box_price)
         if name == "reconcile_settlement":
             from .settlement import reconcile
             if shipment is not None and args.get("expected_record_revision") is not None and (type(args["expected_record_revision"]) is not int or args["expected_record_revision"] != shipment.revision):

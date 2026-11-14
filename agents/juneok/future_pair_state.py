@@ -136,6 +136,7 @@ class FuturePairState:
         self.result = None
         self.source_revision = None
         self.pending = None
+        self.box_price = None
 
     @staticmethod
     def _empty():
@@ -149,6 +150,7 @@ class FuturePairState:
         self.result = None
         self.source_revision = None
         self.pending = None
+        self.box_price = None
 
     def current_result(self):
         if self.source_revision is not None and self.source_revision != _price_revision():
@@ -242,7 +244,8 @@ class FuturePairState:
                         if inputs[key][field] is None and (field != "fee_percent" or inputs["price_basis"] == "gross")]
         return missing
 
-    def apply(self, action, expected_version, patch, clear_fields=None, *, on_progress=None):
+    def apply(self, action, expected_version, patch, clear_fields=None, *, on_progress=None,
+              box_price=None, unresolved_box_price=False):
         if type(expected_version) is not int or expected_version != self.version:
             return self._response("INVALID_INPUT", "비교 조건 버전이 바뀌었습니다. 최신 조건을 확인해 주세요.")
         if action not in ("new", "edit") or not isinstance(patch, dict):
@@ -254,10 +257,41 @@ class FuturePairState:
         except ValueError as exc:
             return self._response("INVALID_INPUT", str(exc))
         self.replace(candidate)
+        if box_price is not None or unresolved_box_price:
+            self.clear_result()
+            self.box_price = box_price
+            message = box_price.question() if box_price else "어느 출하안의 가격인지와 상자당 금액을 알려주세요."
+            result = self._response("NEEDS_INPUT", message, source_status="BOX_PRICE_CONFIRMATION")
+            self.pending = deepcopy(result)
+            return result
         result = self.calculate(preview_history=True, on_progress=on_progress)
         if result["status"] in {"NEEDS_INPUT", "NO_DATA"}:
             self.pending = deepcopy(result)
         return result
+
+    def follow_up_box_price(self, question, *, on_progress=None):
+        if self.box_price is None:
+            return None
+        action, quote = self.box_price.follow_up(question)
+        if action == "confirm":
+            field = "price_a" if quote.side == "A" else "price_b"
+            price = quote.unit_price
+            patch = {field: str(price)}
+            if quote.side == "B":
+                patch["price_mode"] = "manual"
+            result = self.apply("edit", self.version, patch, on_progress=on_progress)
+            if result["status"] == "INVALID_INPUT":
+                return result
+            return {**result, "confirmed_box_price": str(price), "confirmed_box_side": quote.side}
+        if action == "cancel":
+            self.clear_result()
+            self.pending = self._response("NEEDS_INPUT", f"상자 단가 적용을 취소했어요. {quote.side or '비교에'} 사용할 kg당 단가를 알려주세요.")
+            return deepcopy(self.pending)
+        if action == "clarify":
+            self.box_price = quote
+            self.pending = self._response("NEEDS_INPUT", quote.question(), source_status="BOX_PRICE_CONFIRMATION")
+            return deepcopy(self.pending)
+        return None
 
     @staticmethod
     def _apply_patch(candidate, patch, clear_fields):

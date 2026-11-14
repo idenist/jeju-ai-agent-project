@@ -6,9 +6,11 @@ import time
 from copy import deepcopy
 from uuid import uuid4
 from .config import Settings
+from .box_price import mentions_box_price, pending_box_arguments
+from .future_pair_intent import explicit_shipment_quantity, is_future_pair_request, requests_manual_price
 from .latency import log_latency
 from .state import ScenarioStore
-from .tools import TOOLS, TIMING_TOOL, execute_tool, explain_term
+from .tools import TOOLS, TIMING_TOOL, execute_tool, explain_term, with_box_price
 from .task_context import TaskContext, data_revision
 from .harness import ExecutionPolicy, RunStopped, RepeatGuard, bound_history, encoded_size, user_starts, classify_failure, FAILURE_GUIDANCE
 
@@ -102,6 +104,11 @@ class AgentSession:
         if self.client is None and not settings.api_key:
             return {"status": "KEY_REQUIRED", "text": "프로젝트 .env에 OPENAI_API_KEY를 입력하세요. 직접 조건 비교와 과거 출하통계는 키 없이 사용할 수 있습니다.",
                     "tool_results": [], "events": [], "state": self.store.snapshot()}
+        if (box_result := self.future_pair.follow_up_box_price(question, on_progress=on_progress)) is not None:
+            entry = {"tool": "compare_future_pair", "result": box_result}
+            return {"status": "OK", "text": render_dialogue([entry], question=question),
+                    "report": report_for([entry]), "tool_results": [entry], "visible_results": [entry],
+                    "events": [], "state": self.store.snapshot(), "metrics": {"model_requests": 0}}
         if self.client is None:
             import_started = time.monotonic()
             OpenAI = load_model_sdk()
@@ -120,7 +127,7 @@ class AgentSession:
         phase = "context"
         guard = RepeatGuard(self.policy.identical_calls)
         source_revision = data_revision()
-        today = kst_today().isoformat()
+        today = kst_today()
         if self.price_history_query is not None and self.price_history_revision != source_revision:
             self.price_history_query = None
             self.price_history_revision = None
@@ -153,6 +160,29 @@ class AgentSession:
                 experimental_tools = ([EXPERIMENTAL_TOOL] if forced_forecast
                                       else [*TOOLS, TIMING_TOOL, EXPERIMENTAL_TOOL])
                 experimental_prompt = SYSTEM_PROMPT + EXPERIMENTAL_PROMPT
+        future_pair_route = not forced_forecast and is_future_pair_request(question, today)
+        has_box_price = not forced_forecast and mentions_box_price(question)
+        quantity = explicit_shipment_quantity(question) if future_pair_route else None
+        allow_price_history = future_pair_route and not requests_manual_price(question)
+        forced_tool = "compare_experimental_forecast" if forced_forecast else None
+        if future_pair_route:
+            forced_tool = "compare_future_pair"
+            experimental_prompt += (
+                "\n이번 요청은 서로 다른 두 미래 출하일의 단일 비교입니다. 총 물량은 kg으로 반영하세요. "
+                "'며칠 뒤'의 기준일이 따로 없으면 위 오늘 날짜를 사용하고, 달력 날짜는 보관 시작일과 구분하세요. "
+                "명시된 날짜·기간·단가를 사용하고 불분명한 값만 확인하세요. "
+                "나중 단가와 직접 입력 의사가 없으면 price_mode=history로 과거 근거부터 확인하세요."
+            )
+        if has_box_price:
+            experimental_tools = [with_box_price(tool) if tool["name"] == "compare_future_pair" else tool
+                                  for tool in experimental_tools]
+            experimental_prompt += (
+                "\n두 미래 출하일의 상자당 단가에는 box_price를 사용하세요. phrase에 상자당 가격 부분의 원문을 그대로 복사하고 "
+                "side에는 해당하는 A 또는 B를 넣으세요. 어느 안인지 불분명하면 null입니다. "
+                "상자 가격을 kg 단가로 넣지 마세요. 환산용 무게와 과거 조회 규격을 사용자가 따로 지정하면 "
+                "history_filters에는 조회 규격만 넣으세요. 나머지 명시한 조건은 함께 저장하세요."
+            )
+        tool_choice = {"type": "function", "name": forced_tool} if forced_tool else "auto"
         start_context_version = self.task_context.snapshot()["version"]
         try:
             for _ in range(self.policy.model_requests):
@@ -171,7 +201,7 @@ class AgentSession:
                     f"현재 확인된 조건: {json.dumps(self.store.snapshot(), ensure_ascii=False)}\n"
                     f"이번 검토의 과업 맥락(선택 기록·현재 수치 아님): {json.dumps(self.task_context.snapshot(), ensure_ascii=False)}\n"
                     f"이전 과거 경락가격 조회 인수(자동 적용값·후보 제외): {json.dumps(self.price_history_query, ensure_ascii=False)}\n"
-                    f"오늘(KST): {today}\n"
+                    f"오늘(KST): {today.isoformat()}\n"
                     f"두 미래 출하안 비교 조건: {json.dumps(self.future_pair.snapshot(), ensure_ascii=False)}\n"
                     f"두 미래 출하안에서 확인 중인 항목: {json.dumps((self.future_pair.pending or {}).get('missing_fields', []), ensure_ascii=False)}\n"
                     f"{experimental_context}"
@@ -189,7 +219,7 @@ class AgentSession:
                     response = client.responses.create(
                         model=settings.model, instructions=experimental_prompt, input=deepcopy(self.messages),
                         tools=experimental_tools,
-                        tool_choice={"type": "function", "name": "compare_experimental_forecast"} if forced_forecast else "auto",
+                        tool_choice=tool_choice,
                         parallel_tool_calls=False,
                         store=False, max_output_tokens=4000,
                     )
@@ -259,8 +289,20 @@ class AgentSession:
                         result = execute_tool(call.name, arguments, self.store, reference_case=getattr(self, "comparison_reference", None),
                             task_context=self.task_context.snapshot(), input_context=getattr(self, "comparison_input_context", None))
                     elif call.name == "compare_future_pair":
+                        box_price = None
+                        if future_pair_route and isinstance(arguments, dict) and isinstance(arguments.get("patch"), dict):
+                            patch = dict(arguments["patch"])
+                            if quantity is not None:
+                                patch["quantity"] = quantity
+                            if allow_price_history and arguments.get("action") == "new" and patch.get("price_b") is None:
+                                patch["price_mode"] = "history"
+                            arguments = {**arguments, "patch": patch, "finish_turn": True}
+                            recorded_arguments = arguments
+                        if has_box_price and isinstance(arguments, dict) and isinstance(arguments.get("patch"), dict):
+                            arguments, box_price = pending_box_arguments(question, arguments)
                         result = execute_tool(call.name, arguments, self.store, future_pair=self.future_pair,
-                                              on_progress=on_progress)
+                                              on_progress=on_progress, box_price=box_price,
+                                              unresolved_box_price=has_box_price and box_price is None)
                     elif call.name == "analyze_shipment_timing":
                         result = execute_tool(call.name, arguments, self.store, future_pair=self.future_pair,
                                               on_progress=on_progress)
