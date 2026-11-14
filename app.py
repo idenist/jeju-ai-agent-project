@@ -11,7 +11,7 @@ import streamlit as st
 
 from agents.juneok.agent import AgentSession
 from agents.juneok.config import PROJECT_ROOT, Settings
-from agents.juneok.reporting import render_report, render_result, FIELD_NAMES
+from agents.juneok.reporting import manual_price_warning, render_report, render_result, FIELD_NAMES
 from agents.juneok.presentation import connection_label, render_dialogue
 from agents.juneok.ui_workflow import COST_LABELS, INPUT_CONTEXTS, form_snapshot, condition_rows
 from agents.juneok.workspace import SharedWorkspace, card_values
@@ -509,10 +509,11 @@ def _render_chat_pair_actions(ws, messages, pair, current_pair, latest_message):
     if pair["status"] == "OK" and current_pair is not None:
         _render_later_shipment_edit(ws, messages, current_pair, pair["future_pair_version"])
     elif pair.get("manual_price_required") and latest_message:
-        with st.form(f"future_pair_chat_manual_{pair['future_pair_version']}"):
-            price = st.number_input("나중 출하의 가정 단가 (원/kg)", min_value=0.01, value=None)
-            submitted = st.form_submit_button("이 단가로 비교")
-        if submitted:
+        key = f"future_pair_chat_manual_{pair['future_pair_version']}"
+        price = st.number_input("나중 출하의 가정 단가 (원/kg)", min_value=0.01, value=None, key=key)
+        if warning := manual_price_warning(ws.session.future_pair.inputs["price_a"], price):
+            st.warning(warning)
+        if st.button("이 단가로 비교", key=f"{key}_submit"):
             if price is None:
                 st.warning("나중 출하의 가정 단가를 입력해 주세요.")
             else:

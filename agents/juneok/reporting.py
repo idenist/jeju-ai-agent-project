@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import json
 import hashlib
-from decimal import Decimal, InvalidOperation
+from datetime import date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 FIELD_NAMES = {
     "shipment_variety": "출하통계 품종", "target_month": "조회 월", "start_year": "시작 연도", "end_year": "마지막 연도",
@@ -100,53 +101,91 @@ def _warnings(result: dict) -> list[str]:
     return output
 
 
-def _future_pair_conclusion(options: list[dict], earlier: str, later: str) -> str:
-    differences = [Decimal(row["difference_vs_a_krw"]) for row in options]
-    if len(differences) == 1:
-        difference = differences[0]
-        if difference == 0:
-            return f"{earlier}와 {later}의 출하 비교금액이 같습니다."
-        higher = later if difference > 0 else earlier
-        amount = _number(abs(difference))
-        gap = "0.01원 미만" if amount == "0" else f"{amount}원"
-        return f"입력한 조건에서 {higher} 출하의 비교금액이 {gap} 더 높습니다."
-    counts = [(sum(value > 0 for value in differences), f"{later} 출하가 높음"),
-              (sum(value < 0 for value in differences), f"{earlier} 출하가 높음"),
-              (differences.count(0), "동일")]
-    return "과거 변동 가정별 결과 · " + " · ".join(f"{label} {count}개" for count, label in counts if count)
+def _shipment_label(side, sale_date):
+    day = date.fromisoformat(sale_date)
+    return f"{side}안({day.month}/{day.day})"
 
 
-def future_pair_summary(result: dict) -> tuple[str, str]:
-    earlier = result["option_a"]["sale_date"]
-    later = result["options_b"][0]["sale_date"]
-    conclusion = _future_pair_conclusion(result["options_b"], earlier, later)
+def _price_assumption(row):
+    prefix, _, basis = row["id"].partition("_")
+    if prefix == "past":
+        return {"min": "최저", "median": "중앙값", "max": "최고"}.get(basis.split("_", 1)[0], "과거 변동")
+    return "직접 입력"
+
+
+def _whole_won(value):
+    return f"{Decimal(value).to_integral_value(rounding=ROUND_HALF_UP):,.0f}원"
+
+
+def _won_difference(value):
+    value = Decimal(value)
+    if 0 < abs(value) < Decimal("0.5"):
+        return ("−" if value < 0 else "") + "1원 미만"
+    return _whole_won(value)
+
+
+def manual_price_warning(price_a, price_b):
+    if price_a is None or price_b is None:
+        return None
+    try:
+        a, b = Decimal(str(price_a)), Decimal(str(price_b))
+    except (InvalidOperation, ValueError):
+        return None
+    if a.is_finite() and b.is_finite() and a > 0 and b > a * 2:
+        return (f"B안 직접 입력 단가({_number(b)}원/kg)가 A안({_number(a)}원/kg)의 2배를 넘습니다. "
+                "kg당 단가인지, 상자 가격이나 입력 자릿수가 섞이지 않았는지 확인해 주세요.")
+    return None
+
+
+def future_pair_summary(result: dict) -> tuple[str, str, str]:
+    a, options = result["option_a"], result["options_b"]
+    earlier = _shipment_label("A", a["sale_date"])
+    later = _shipment_label("B", options[0]["sale_date"])
+    central = next((row for row in options if _price_assumption(row) == "중앙값"), options[0])
+    difference = Decimal(central["difference_vs_a_krw"])
+    heading = f"중앙값 가정({_number(central['price_per_kg'])}원/kg)" if len(options) > 1 else "직접 입력한 단가"
+    if difference == 0:
+        comparison = f"{earlier}와 {later}의 비교금액이 같습니다."
+    else:
+        higher, lower = (later, earlier) if difference > 0 else (earlier, later)
+        comparison = f"{higher}의 비교금액이 {lower}보다 {_won_difference(abs(difference))}만큼 높습니다."
     minimum = _number(result["minimum_whole_krw_per_kg"], 0)
-    return conclusion, f"{later} 출하가 {earlier} 출하와 같거나 높아지는 최소 단가는 {minimum}원/kg입니다."
+    threshold = f"{later}이 {earlier}과 같거나 높아지는 최소 단가는 {minimum}원/kg입니다."
+    favorable = ""
+    if len(options) > 1:
+        higher = [f"{_price_assumption(row)} {_number(row['price_per_kg'])}원/kg"
+                  for row in options if Decimal(row["difference_vs_a_krw"]) > 0]
+        favorable = (f"{later}이 유리한 가격 가정은 {', '.join(higher)}입니다." if higher
+                     else f"과거 가격 가정 중 {later}의 비교금액이 더 높은 경우는 없습니다.")
+    return f"{heading}에서 {comparison}", threshold, favorable
 
 
 def _render_future_pair(result: dict) -> str:
     a = result["option_a"]
     b = result["options_b"][0]
     basis = "수수료 차감 전" if result["price_basis"] == "gross" else "수수료 차감 후"
-    conclusion, minimum = future_pair_summary(result)
+    conclusion, minimum, favorable = future_pair_summary(result)
+    earlier = _shipment_label("A", a["sale_date"])
+    later = _shipment_label("B", b["sale_date"])
+    warning = manual_price_warning(a["price_per_kg"], b["price_per_kg"]) if b["id"] == "manual_b" else None
     lines = [
         f"**비교 결론 · {conclusion}**",
         f"**{minimum}**",
+        *([favorable] if favorable else []),
+        *([warning] if warning else []),
         "",
         f"물량 {_number(result['quantity_kg'])}kg · 보관 시작 {result['start_date']} · 단가 {basis}",
         f"A안 {a['sale_date']} 출하 · B안 {b['sale_date']} 출하 · 두 출하일 간격 {result['interval_days']}일",
-        "", "| 대안 | 가정 단가 | 비교금액 | A안 대비 차액 |", "| --- | --- | --- | --- |",
-        f"| A안 | {_number(a['price_per_kg'])}원/kg | {_number(a['proceeds_krw'])}원 | 기준 |",
+        "", "| 대안 | 가정 | 가정 단가 | 비교금액 | A안 대비 차액 |", "| --- | --- | --- | --- | --- |",
+        f"| {earlier} | 기준 | {_number(a['price_per_kg'])}원/kg | {_whole_won(a['proceeds_krw'])} | 기준 |",
     ]
     for row in result["options_b"]:
-        label = result["evidence"][row["id"]].get("label")
-        title = f"B안 {_text(label)}" if label else "B안"
-        lines.append(f"| {title} | {_number(row['price_per_kg'])}원/kg | {_number(row['proceeds_krw'])}원 | "
-                     f"{_number(row['difference_vs_a_krw'])}원 |")
+        lines.append(f"| {later} | {_price_assumption(row)} | {_number(row['price_per_kg'])}원/kg | "
+                     f"{_whole_won(row['proceeds_krw'])} | {_won_difference(row['difference_vs_a_krw'])} |")
     lines += [
         "",
-        "B안 비교금액이 A안 이상이 되는 최소 원 단위 가격입니다. 두 안의 비교금액이 같을 수 있습니다.",
-        "", "| 조건 | A안 | B안 |", "| --- | --- | --- |",
+        "비교금액과 차액은 각각 원 단위로 반올림해 표시합니다.",
+        "", f"| 조건 | {earlier} | {later} |", "| --- | --- | --- |",
         f"| 보관일 | {a['delay_days']}일 | {b['delay_days']}일 |",
         f"| 기간 전체 감모 | {_number(a['loss_percent'])}% | {_number(b['loss_percent'])}% |",
         f"| 판매 가능 물량 | {_number(a['remaining_kg'])}kg | {_number(b['remaining_kg'])}kg |",
