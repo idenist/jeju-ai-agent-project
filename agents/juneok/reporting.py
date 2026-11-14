@@ -100,26 +100,28 @@ def _warnings(result: dict) -> list[str]:
     return output
 
 
-def _future_pair_conclusion(options: list[dict]) -> str:
+def _future_pair_conclusion(options: list[dict], earlier: str, later: str) -> str:
     differences = [Decimal(row["difference_vs_a_krw"]) for row in options]
     if len(differences) == 1:
         difference = differences[0]
         if difference == 0:
-            return "A안과 B안의 비교금액이 같습니다."
-        higher = "B안" if difference > 0 else "A안"
+            return f"{earlier}와 {later}의 출하 비교금액이 같습니다."
+        higher = later if difference > 0 else earlier
         amount = _number(abs(difference))
         gap = "0.01원 미만" if amount == "0" else f"{amount}원"
-        return f"입력한 조건에서 {higher}의 비교금액이 {gap} 더 높습니다."
-    counts = [(sum(value > 0 for value in differences), "B안이 높음"),
-              (sum(value < 0 for value in differences), "A안이 높음"),
+        return f"입력한 조건에서 {higher} 출하의 비교금액이 {gap} 더 높습니다."
+    counts = [(sum(value > 0 for value in differences), f"{later} 출하가 높음"),
+              (sum(value < 0 for value in differences), f"{earlier} 출하가 높음"),
               (differences.count(0), "동일")]
     return "과거 변동 가정별 결과 · " + " · ".join(f"{label} {count}개" for count, label in counts if count)
 
 
 def future_pair_summary(result: dict) -> tuple[str, str]:
-    conclusion = _future_pair_conclusion(result["options_b"])
+    earlier = result["option_a"]["sale_date"]
+    later = result["options_b"][0]["sale_date"]
+    conclusion = _future_pair_conclusion(result["options_b"], earlier, later)
     minimum = _number(result["minimum_whole_krw_per_kg"], 0)
-    return conclusion, f"A 이상을 위한 B안 최소 단가: {minimum}원/kg"
+    return conclusion, f"{later} 출하가 {earlier} 출하와 같거나 높아지는 최소 단가는 {minimum}원/kg입니다."
 
 
 def _render_future_pair(result: dict) -> str:

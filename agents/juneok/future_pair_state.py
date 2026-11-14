@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 from agents.common.data_contract import PAIR_FILES, PRICE_FILE, REPORT_FILE
-from agents.common.future_pair import compare_future_pair
+from agents.common.future_pair import compare_future_pair, preview_future_pair_history
 from .comparison import decimal
 from .config import PROJECT_ROOT
 from .data_refresh import digest, resolve_market_root
@@ -19,10 +19,33 @@ LABELS = {"quantity": "비교 물량(kg)", "price_basis": "수수료 차감 전�
 OPTION_LABELS = {"delay_days": "보관일", "loss_percent": "기간 전체 감모율(%)",
                  "daily_storage_cost": "전체 물량 하루 보관비(원)", "other_cost_krw": "별도 비용(원)",
                  "fee_percent": "수수료율(%)"}
+COST_QUESTIONS = {
+    OPTION_LABELS["daily_storage_cost"]: "감귤 전체의 하루 보관비는 얼마인가요?",
+    OPTION_LABELS["other_cost_krw"]: "그 밖에 드는 비용은 얼마인가요?",
+    OPTION_LABELS["fee_percent"]: "판매 수수료는 몇 %인가요?",
+}
 HISTORY_FIELDS = {"variety": "품종", "grade": "등급", "size": "크기", "package": "포장 종류",
                   "package_kg": "포장 중량(kg)", "market_code": "시장코드", "trade_type": "거래방식"}
 HISTORY_STATUSES = {"NEEDS_CLARIFICATION": "NEEDS_INPUT", "INTERVAL_NOT_AVAILABLE": "NO_DATA",
                     "NO_CLEAN_COMPARISON": "NO_DATA", "AMBIGUOUS_CODES": "DATA_ERROR"}
+HISTORY_QUESTIONS = {
+    "variety": "어떤 품종의 감귤인가요?",
+    "grade": "출하할 감귤의 등급은 어떻게 되나요?",
+    "size": "출하할 감귤의 크기 표기는 어떻게 되나요?",
+    "package": "어떤 포장으로 출하하나요?",
+    "package_kg": "포장 한 개에 감귤이 몇 kg 들어가나요?",
+    "market_code": "어느 도매시장 자료로 비교할까요?",
+    "trade_type": "어떤 거래방식으로 출하하나요?",
+}
+HISTORY_HELP = {
+    "variety": "품종은 출하처에 등록한 품종명이나 포장 라벨에서 확인할 수 있어요.",
+    "grade": "등급은 포장 라벨이나 선별·출하 명세에서 확인해 보세요.",
+    "size": "크기 표기는 포장 라벨이나 선별·출하 명세에서 확인해 보세요.",
+    "package": "출하처에 전달할 때 쓰는 포장 종류를 확인해 보세요.",
+    "package_kg": "상자 라벨이나 출하 명세에서 상자 한 개에 담긴 감귤 무게를 확인해 보세요.",
+    "market_code": "출하처나 경락 내역에서 도매시장 이름을 확인해 보세요.",
+    "trade_type": "출하처에 경매 등 어떤 방식으로 거래하는지 확인해 보세요.",
+}
 
 
 def _price_revision():
@@ -36,14 +59,74 @@ def _price_revision():
 
 def future_pair_feedback(result):
     message = result.get("message") or "비교 조건을 확인해 주세요."
+    if preview := result.get("history_preview"):
+        start, end = preview["base_date_range"]
+        lines = [f"**같은 규격의 과거 {preview['interval_days']}일 가격쌍 {preview['clean_pairs']}개를 찾았습니다.**",
+                 f"관측 기준일 {start} ~ {end}",
+                 " · ".join(f"{label} {Decimal(row['change_pct']):+,.2f}%"
+                            for label, row in zip(("최저", "중앙", "최고"), preview["scenarios"]))]
+        if preview["scenarios"][0]["option_b_price_per_kg"] is not None:
+            prices = [f"{Decimal(row['option_b_price_per_kg']):,.2f}".rstrip("0").rstrip(".")
+                      for row in preview["scenarios"]]
+            lines.append(f"나중 출하 가정 단가(원/kg) · 최저 {prices[0]} · 중앙 {prices[1]} · 최고 {prices[2]}")
+        lines.append("과거 가격 변동을 참고한 가정입니다.")
+        return "\n\n".join([*lines, _missing_questions(result["missing_fields"], result.get("storage_days", {}))])
     fields = result.get("missing_fields", [])
     if not fields:
         return message
+    if result.get("comparison_inputs_pending"):
+        return _missing_questions(fields, result.get("storage_days", {}))
     lines = [message, "", "확인할 항목: " + ", ".join(HISTORY_FIELDS.get(field, field) for field in fields)]
     for field, choices in result.get("choices", {}).items():
         if field in HISTORY_FIELDS and choices:
             lines.append(f"- {HISTORY_FIELDS[field]} 후보: " + ", ".join(str(choice) for choice in choices))
     return "\n".join(lines)
+
+
+def history_clarification(result, question=""):
+    fields = [field for field in result.get("missing_fields", ()) if field in HISTORY_QUESTIONS]
+    if not fields:
+        return None
+    first = fields[0]
+    mentioned = [field for field in fields if HISTORY_FIELDS[field] in question]
+    if "package_kg" in fields and "package_kg" not in mentioned and ("상자 무게" in question or "상자 중량" in question):
+        mentioned.append("package_kg")
+    asks_for_help = any(word in question for word in ("어디", "어떻게", "확인하면"))
+    unknown_field = mentioned and any(word in question for word in ("모르", "몰라"))
+    if asks_for_help or unknown_field:
+        guidance = " ".join(HISTORY_HELP[field] for field in (mentioned or [first]))
+        if next_field := next((field for field in fields if field not in (mentioned or [first])), None):
+            return f"{guidance}\n\n{HISTORY_QUESTIONS[next_field]}"
+        return f"{guidance}\n\n두 출하일의 가정 단가를 알고 있다면 그 가격으로 비교할 수 있어요."
+    choices = [choice for choice in result.get("choices", {}).get(first, [])
+               if choice not in {"미상", ".", "-"}][:3]
+    examples = f"\n\n자료에 있는 예시 · {', '.join(choices)}" if choices else ""
+    return HISTORY_QUESTIONS[first] + examples
+
+
+def _missing_questions(fields, storage_days):
+    labels = {"A안": "먼저 출하", "B안": "나중 출하"}
+    common_costs = {label for label in COST_QUESTIONS
+                    if f"A안 {label}" in fields and f"B안 {label}" in fields}
+    questions = []
+    for field in fields:
+        side, _, label = field.partition(" ")
+        if label in common_costs:
+            if side == "A안":
+                questions.append(COST_QUESTIONS[label])
+        elif label == OPTION_LABELS["loss_percent"] and (days := storage_days.get(side)):
+            questions.append(f"{labels[side]} · {days}일 보관하는 동안 판매 가능한 양이 몇 % 줄어드나요?")
+        elif label in COST_QUESTIONS and side in labels:
+            questions.append(f"{labels[side]} · {COST_QUESTIONS[label]}")
+        else:
+            questions.append(f"{labels[side]} · {label}" if side in labels else field)
+    if len(questions) == 1 and questions[0].endswith("?"):
+        text = questions[0]
+    else:
+        text = "\n".join(["**아직 확인할 조건**", "", *(f"- {question}" for question in questions)])
+    if common_costs:
+        text += "\n\n두 안의 비용이 같으면 한 번만 알려주세요."
+    return text
 
 
 class FuturePairState:
@@ -52,6 +135,7 @@ class FuturePairState:
         self.inputs = self._empty()
         self.result = None
         self.source_revision = None
+        self.pending = None
 
     @staticmethod
     def _empty():
@@ -64,6 +148,7 @@ class FuturePairState:
     def clear_result(self):
         self.result = None
         self.source_revision = None
+        self.pending = None
 
     def current_result(self):
         if self.source_revision is not None and self.source_revision != _price_revision():
@@ -84,11 +169,17 @@ class FuturePairState:
         return {"analysis_type": "future_pair", "status": status, "message": message,
                 "future_pair_version": self.version, **details}
 
-    def calculate(self):
+    def _storage_days(self):
+        return {f"{side}안": self.inputs[f"option_{side.lower()}"]["delay_days"] for side in ("A", "B")}
+
+    def calculate(self, *, preview_history=False):
         self.clear_result()
-        if missing := self._missing(self.inputs):
-            return self._response("NEEDS_INPUT", "비교 조건을 확인해 주세요.", missing_fields=missing)
         historical = self.inputs["history_filters"] is not None
+        if missing := self._missing(self.inputs):
+            if preview_history and historical:
+                return self._preview_history(missing)
+            return self._response("NEEDS_INPUT", "비교 조건을 확인해 주세요.", missing_fields=missing,
+                                  comparison_inputs_pending=preview_history, storage_days=self._storage_days())
         revision = _price_revision() if historical else None
         result = compare_future_pair(**self.inputs)
         if historical and ((revision is None and result["status"] == "OK")
@@ -98,6 +189,25 @@ class FuturePairState:
         if result["status"] == "OK":
             self.result = deepcopy(result)
             self.source_revision = revision
+        return self._agent_result({**result, "analysis_type": "future_pair", "future_pair_version": self.version})
+
+    def _preview_history(self, missing):
+        start = self.inputs["start_date"]
+        a, b = (self.inputs[side]["delay_days"] for side in ("option_a", "option_b"))
+        date_labels = {LABELS["start_date"], "A안 보관일", "B안 보관일"}
+        if date_fields := [field for field in missing if field in date_labels]:
+            return self._response("NEEDS_INPUT", "과거 가격을 조회할 날짜부터 알려주세요.", missing_fields=date_fields)
+        revision = _price_revision()
+        result = preview_future_pair_history(start, a, b, self.inputs["price_a"], self.inputs["history_filters"])
+        if result.get("scenarios"):
+            if revision is None or revision != _price_revision():
+                return self._response("DATA_ERROR", "조회 중 가격 자료가 바뀌었습니다. B안 단가를 직접 입력할 수 있습니다.",
+                                      manual_price_required=True)
+            preview = {key: result[key] for key in ("interval_days", "clean_pairs", "base_date_range",
+                                                    "scenarios", "conditions", "source")}
+            return self._response("NEEDS_INPUT", "과거 가격 근거를 확인했습니다. 손익 계산 조건을 이어서 확인해 주세요.",
+                                  source_status="HISTORY_READY", missing_fields=missing, history_preview=preview,
+                                  storage_days=self._storage_days())
         return self._agent_result({**result, "analysis_type": "future_pair", "future_pair_version": self.version})
 
     @staticmethod
@@ -142,7 +252,10 @@ class FuturePairState:
         except ValueError as exc:
             return self._response("INVALID_INPUT", str(exc))
         self.replace(candidate)
-        return self.calculate()
+        result = self.calculate(preview_history=True)
+        if result["status"] in {"NEEDS_INPUT", "NO_DATA"}:
+            self.pending = deepcopy(result)
+        return result
 
     @staticmethod
     def _apply_patch(candidate, patch, clear_fields):

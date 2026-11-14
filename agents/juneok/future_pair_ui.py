@@ -212,14 +212,24 @@ def render_future_pair(state):
             if result["status"] == "NEEDS_INPUT":
                 _show_missing_inputs(result)
             return None
-        entries = [{"tool": "compare_future_pair", "result": result}]
-        st.markdown(render_report(entries))
-        try:
-            pdf = render_pdf_report(entries)
-        except Exception:
-            st.warning("미래 A/B PDF를 생성하지 못했습니다. 화면과 JSON으로 결과를 확인할 수 있습니다.")
-        else:
-            st.download_button("미래 A/B PDF 내려받기", pdf, "미래출하비교.pdf", "application/pdf", on_click="ignore")
-        content = json.dumps({"format": "jeju-future-pair", "version": 1, "result": result}, ensure_ascii=False, indent=2)
-        st.download_button("미래 A/B 결과 JSON 내려받기", content, "미래출하비교.json", "application/json", on_click="ignore")
+        render_future_pair_result(result, "card")
         return result
+
+
+def render_future_pair_result(result, location):
+    entries = [{"tool": "compare_future_pair", "result": result}]
+    if location == "card":
+        st.markdown(render_report(entries))
+    try:
+        pdf = render_pdf_report(entries)
+    except Exception:
+        st.warning("미래 A/B PDF를 생성하지 못했습니다. 화면과 JSON으로 결과를 확인할 수 있습니다.")
+    else:
+        st.download_button("미래 A/B PDF 내려받기", pdf, "미래출하비교.pdf", "application/pdf",
+                           key=f"future_pair_pdf_{location}", on_click="ignore")
+    content = json.dumps({"format": "jeju-future-pair", "version": 1, "result": result}, ensure_ascii=False, indent=2)
+    st.download_button("미래 A/B 결과 JSON 내려받기", content, "미래출하비교.json", "application/json",
+                       key=f"future_pair_json_{location}", on_click="ignore")
+    if location == "chat":
+        with st.expander("가격 근거와 상세 조건 보기"):
+            st.markdown(render_report(entries))

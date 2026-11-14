@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from .reporting import render_report, render_result, FIELD_NAMES, _field
+from .reporting import future_pair_summary, render_report, render_result, FIELD_NAMES, _field
 
 
 def select_results(results: list[dict], version: int) -> list[dict]:
@@ -34,14 +34,18 @@ def select_results(results: list[dict], version: int) -> list[dict]:
     return deepcopy(visible or [x for x in results if x["result"].get("status") != "OK"])
 
 
-def render_dialogue(results: list[dict]) -> str:
+def render_dialogue(results: list[dict], *, question: str = "") -> str:
     """Concise questions; canonical Python numbers and evidence remain unchanged."""
     sections = []
     for entry in results:
         result = entry["result"]
         if result.get("analysis_type") == "future_pair" and result.get("status") == "OK":
-            sections.append("미래 A/B 비교를 계산했습니다. ‘두 미래 출하안 비교’에서 현재 결과와 다운로드를 확인할 수 있습니다.")
-        elif result.get("analysis_type") in {"price_history", "future_pair"}:
+            conclusion, minimum = future_pair_summary(result)
+            sections.insert(0, f"**{conclusion}**\n\n{minimum}")
+        elif result.get("analysis_type") == "future_pair":
+            from .future_pair_state import history_clarification
+            sections.append(history_clarification(result, question) or render_result(result))
+        elif result.get("analysis_type") == "price_history":
             sections.append(render_result(result))
         elif result.get("status") == "NEEDS_INPUT" and result.get("missing_fields"):
             fields = result["missing_fields"]

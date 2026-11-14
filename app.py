@@ -4,12 +4,13 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+from datetime import date, timedelta
 import streamlit as st
 
 from agents.juneok.agent import AgentSession
 from agents.juneok.config import PROJECT_ROOT, Settings
-from agents.juneok.reporting import render_report, render_result, future_pair_summary, FIELD_NAMES
-from agents.juneok.presentation import connection_label
+from agents.juneok.reporting import render_report, render_result, FIELD_NAMES
+from agents.juneok.presentation import connection_label, render_dialogue
 from agents.juneok.ui_workflow import COST_LABELS, INPUT_CONTEXTS, form_snapshot, condition_rows
 from agents.juneok.workspace import SharedWorkspace, card_values
 
@@ -317,14 +318,18 @@ def _render_csv_manager():
 
 
 
-def _show_agent_reply(reply, current_version, draft_pending=False):
+def _show_agent_reply(reply, current_version, draft_pending=False, past_future_pair=False):
     from agents.juneok.settlement_reporting import render_settlement, citation_details
     settlements = [x['result'] for x in reply.get('visible_results', []) if x['result'].get('analysis_type') == 'settlement' and 'citations' in x['result']]
     display_text = reply.get("text", "응답을 확인할 수 없습니다.")
     for result in settlements:
         display_text = display_text.replace(render_settlement(result), render_settlement(result, details=False))
     version = reply.get("state", {}).get("version")
-    if draft_pending or version != current_version:
+    if past_future_pair:
+        with st.expander("이전 두 출하일 비교 응답"):
+            st.markdown(display_text)
+    elif draft_pending or (version != current_version and not any(
+            entry["tool"] == "compare_future_pair" for entry in reply.get("visible_results", []))):
         suffix = "카드에 저장 전 수정이 있습니다" if draft_pending else f"현재 버전 {current_version}"
         with st.expander(f"이전 조건 버전 {version}의 응답 · {suffix}"):
             st.markdown(display_text)
@@ -333,8 +338,112 @@ def _show_agent_reply(reply, current_version, draft_pending=False):
     for result in settlements:
         with st.expander(f"정산 근거 보기 · 기록 버전 {result['record_revision']}"):
             st.markdown(citation_details(result))
-    with st.expander("실행 진단 · 필요할 때 확인"):
-        st.json({"status": reply.get("status"), "events": reply.get("events", []), "metrics": reply.get("metrics", {})})
+    if reply.get("events") or reply.get("metrics"):
+        with st.expander("실행 진단 · 필요할 때 확인"):
+            st.json({"status": reply.get("status"), "events": reply.get("events", []), "metrics": reply.get("metrics", {})})
+
+
+def _apply_future_pair_chat_edit(ws, messages, version, patch, user_text):
+    result = ws.session.future_pair.apply("edit", version, patch)
+    if result["status"] == "INVALID_INPUT":
+        st.warning(result["message"])
+        return
+    entry = {"tool": "compare_future_pair", "result": result}
+    messages.extend([
+        {"role": "user", "content": user_text},
+        {"role": "assistant", "reply": {
+            "state": ws.store.snapshot(), "text": render_dialogue([entry]),
+            "visible_results": [entry],
+        }},
+    ])
+    st.rerun()
+
+
+def _render_later_shipment_edit(ws, messages, pair, version):
+    start = date.fromisoformat(pair["start_date"])
+    earlier = date.fromisoformat(pair["option_a"]["sale_date"])
+    later = date.fromisoformat(pair["options_b"][0]["sale_date"])
+    last_day = start + timedelta(days=min(365, (date.max - start).days))
+    with st.expander("나중 출하일 바꾸기"):
+        st.caption(f"먼저 출하하는 {earlier}과 나머지 조건을 유지합니다. 새 보관기간의 감모율을 이어서 확인합니다.")
+        with st.form(f"future_pair_chat_date_{version}"):
+            changed = st.date_input("새 나중 출하일", value=later,
+                                    min_value=earlier + timedelta(days=1), max_value=last_day)
+            submitted = st.form_submit_button("이 날짜로 변경")
+        if submitted:
+            if changed is None or changed == later:
+                st.info("현재와 다른 출하일을 골라주세요.")
+            else:
+                days = (changed - start).days
+                _apply_future_pair_chat_edit(ws, messages, version, {"option_b": {"delay_days": days}},
+                                             f"나중 출하일만 {changed}로 변경 · {days}일 보관")
+
+
+def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, current_pair):
+    from agents.juneok.future_pair_ui import render_future_pair_result
+
+    st.subheader("출하 상담")
+    if not key_present:
+        st.info("대화 연결 설정이 필요합니다. 아래 ‘조건 직접 입력’에서 출하를 비교할 수 있습니다.")
+        st.chat_input("출하 고민이나 바꿀 조건을 알려주세요", key="shipment_question", disabled=True)
+        return
+    if draft_pending or settlement_dirty:
+        st.warning("직접 입력에서 수정 중인 내용이 있습니다. 적용하거나 취소한 뒤 대화를 이어가세요.")
+    messages = st.session_state.setdefault("agent_messages", [])
+    if not messages:
+        st.caption("언제 팔지 고민되는 상황을 알려주세요. 알고 있는 물량이나 가격만 말해도 됩니다.")
+        examples = (
+            ("지금 팔지 보관할지 비교", "감귤 3톤을 지금 팔지 일주일 보관할지 비교하고 싶어요."),
+            ("두 출하일 비교", "감귤 3톤을 사흘 뒤에 팔지 열흘 뒤에 팔지 비교하고 싶어요."),
+        )
+        for column, (label, example) in zip(st.columns(2), examples):
+            column.button(label, disabled=draft_pending or settlement_dirty,
+                          on_click=st.session_state.update, kwargs={"shipment_question": example})
+
+    pair_state = ws.session.future_pair
+    latest_pair_message = next((index for index in reversed(range(len(messages)))
+                                if any(entry["tool"] == "compare_future_pair"
+                                       for entry in messages[index].get("reply", {}).get("visible_results", []))), None)
+    for index, message in enumerate(messages):
+        with st.chat_message(message["role"]):
+            reply = message.get("reply")
+            if not reply:
+                st.markdown(message["content"])
+                continue
+            pair = next((entry["result"] for entry in reply.get("visible_results", [])
+                         if entry["tool"] == "compare_future_pair"), None)
+            past_pair = pair is not None and (
+                pair.get("future_pair_version") != pair_state.version
+                or (pair["status"] == "OK" and current_pair is None)
+            )
+            _show_agent_reply(reply, ws.store.version, draft_pending, past_pair)
+            if pair is None or past_pair or index != latest_pair_message or draft_pending or settlement_dirty:
+                continue
+            if pair["status"] == "OK":
+                render_future_pair_result(current_pair, "chat")
+                _render_later_shipment_edit(ws, messages, current_pair, pair["future_pair_version"])
+            elif pair.get("manual_price_required") and index == len(messages) - 1:
+                with st.form(f"future_pair_chat_manual_{pair_state.version}"):
+                    price = st.number_input("나중 출하의 가정 단가 (원/kg)", min_value=0.01, value=None)
+                    submitted = st.form_submit_button("이 단가로 비교")
+                if submitted:
+                    if price is None:
+                        st.warning("나중 출하의 가정 단가를 입력해 주세요.")
+                    else:
+                        _apply_future_pair_chat_edit(ws, messages, pair["future_pair_version"],
+                                                     {"price_mode": "manual", "price_b": price},
+                                                     f"나중 출하 단가를 kg당 {price:,.12g}원으로 비교")
+
+    question = st.chat_input("출하 고민이나 바꿀 조건을 알려주세요", key="shipment_question",
+                             disabled=draft_pending or settlement_dirty)
+    if question and not draft_pending and not settlement_dirty:
+        messages.append({"role": "user", "content": question})
+        with st.spinner("필요한 조건과 자료를 확인합니다"):
+            reply = ws.run(question)
+        messages.append({"role": "assistant", "reply": reply})
+        st.session_state.last_agent_reply = {"status": reply.get("status"), "metrics": reply.get("metrics", {})}
+        st.session_state._force_card_sync = True
+        st.rerun()
 
 
 def _render_report(entries):
@@ -540,51 +649,23 @@ def main():
             st.success(notice)
         _render_csv_manager()
         case_download_slot, case_name = _render_cases(ws, _card_dirty())
-    comparison_tab, data_tab, tools_tab = st.tabs(["출하 비교", "자료 조회", "추가 도구"])
+    comparison_tab, data_tab, tools_tab = st.tabs(["출하 상담", "자료 조회", "추가 도구"])
     dirty_before = _card_dirty()
     with comparison_tab:
-        current_tab, future_tab = st.tabs(["오늘과 나중", "두 미래 출하안 비교"])
-        with current_tab:
-            _render_card_summary(ws)
-            if st.button("출하 조건 비교", disabled=dirty_before):
-                ws.calculate()
-            dirty = _render_cards(ws)
-            comparison_report = st.empty()
-        with future_tab:
-            from agents.juneok.future_pair_ui import render_future_pair
-            future_result = render_future_pair(ws.session.future_pair)
-        st.subheader("대화로 조건 확인")
-        messages = st.session_state.get("agent_messages", [])
-        last_reply = messages[-1].get("reply", {}) if messages else {}
-        if future_result and any(
-            entry["tool"] == "compare_future_pair"
-            and entry["result"]["status"] == "OK"
-            and entry["result"].get("future_pair_version") == ws.session.future_pair.version
-            for entry in last_reply.get("visible_results", [])
-        ):
-            conclusion, minimum = future_pair_summary(future_result)
-            st.info(f"**현재 미래 A/B 비교**\n\n{conclusion}\n\n{minimum}")
-            st.caption("상세 조건과 PDF·JSON은 위의 ‘두 미래 출하안 비교’ 탭에서 확인하세요.")
-        st.caption("예: ‘3톤을 3일 뒤와 10일 뒤에 파는 경우를 비교하고 싶어요.’")
-        if not settings.api_key:
-            st.info("자연어 대화는 모델 키가 필요합니다. 조건 카드·과거 자료 조회·PDF는 키 없이 사용할 수 있습니다.")
-        if dirty_before:
-            st.warning("카드에 저장하지 않은 수정이 있습니다. 먼저 적용하거나 편집을 취소하세요.")
-        for message in messages:
-            with st.chat_message(message["role"]):
-                if message.get("reply"):
-                    _show_agent_reply(message["reply"], ws.store.version, dirty_before)
-                else:
-                    st.markdown(message["content"])
-        question = st.chat_input("아는 조건이나 바꿀 항목을 알려 주세요", disabled=not settings.api_key or dirty_before or settlement_dirty)
-        if question and settings.api_key and not dirty_before and not settlement_dirty:
-            st.session_state.setdefault("agent_messages", []).append({"role": "user", "content": question})
-            with st.spinner("필요한 조건과 자료를 확인합니다"):
-                reply = ws.run(question)
-            st.session_state.agent_messages.append({"role": "assistant", "reply": reply})
-            st.session_state.last_agent_reply = {"status": reply.get("status"), "metrics": reply.get("metrics", {})}
-            st.session_state._force_card_sync = True
-            st.rerun()
+        chat_slot = st.empty()
+        comparison_report = st.empty()
+        with st.expander("조건 직접 입력", expanded=not settings.api_key):
+            current_tab, future_tab = st.tabs(["오늘과 나중", "두 미래 출하안 비교"])
+            with current_tab:
+                _render_card_summary(ws)
+                if st.button("출하 조건 비교", disabled=dirty_before):
+                    ws.calculate()
+                dirty = _render_cards(ws)
+            with future_tab:
+                from agents.juneok.future_pair_ui import render_future_pair
+                future_result = render_future_pair(ws.session.future_pair)
+        with chat_slot.container():
+            _render_shipment_chat(ws, bool(settings.api_key), dirty, settlement_dirty, future_result)
     if dirty:
         st.warning("입력 조건이 바뀌었습니다. ‘입력 조건 비교’를 눌러 적용하세요. 이전 결과·보고서·가정 범위 표는 숨겼습니다.")
         st.session_state.pop("sensitivity_result", None)
