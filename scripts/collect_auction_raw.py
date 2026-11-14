@@ -259,7 +259,11 @@ def main() -> int:
     ap.add_argument("--refresh", action="store_true", help="기존 날짜도 API에서 다시 수집")
     args = ap.parse_args()
 
-    key = os.environ.get("DATA_GO_KR_KEY", "").strip()
+    from dotenv import dotenv_values
+
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    key = os.environ.get("DATA_GO_KR_KEY") or dotenv_values(env_path).get("DATA_GO_KR_KEY") or ""
+    key = str(key).strip()
     if not key:
         ap.error("DATA_GO_KR_KEY 환경변수에 공공데이터포털 서비스키를 넣어주세요.")
     # 서비스키는 인코딩 형태로 발급될 수 있으므로 중복 URL 인코딩을 피한다.

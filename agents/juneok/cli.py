@@ -36,7 +36,11 @@ def main() -> int:
     group.add_argument("--question")
     group.add_argument("--chat", action="store_true")
     parser.add_argument("--save-report", action="store_true")
+    parser.add_argument("--experimental-forecast", action="store_true",
+                        help="명시적으로 연구용 ML 가격 추정 도구를 대화에만 등록 (실제 출하 권고 금지)")
     args = parser.parse_args()
+    if args.experimental_forecast and not (args.chat or args.question is not None):
+        parser.error("연구용 ML 연결은 --chat 또는 --question과 함께 사용하세요.")
     if args.check:
         print(json.dumps(Settings.load().public_status(), ensure_ascii=False, indent=2))
         return 0
@@ -49,7 +53,7 @@ def main() -> int:
         text = "# 오프라인 도구 시연\n\n사용자가 선택한 가상 예시입니다. 실제 모델 대화 검증과 구분합니다.\n\n" + render_report(results)
     else:
         from .agent import AgentSession
-        session = AgentSession()
+        session = AgentSession(experimental_forecast=args.experimental_forecast)
         if args.chat:
             while True:
                 try:

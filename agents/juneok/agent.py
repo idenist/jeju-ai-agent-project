@@ -61,7 +61,8 @@ update의 patch에서 변경하지 않을 항목은 null. options를 바꾸면 �
 
 
 class AgentSession:
-    def __init__(self, settings: Settings | None = None, client=None, policy=None):
+    def __init__(self, settings: Settings | None = None, client=None, policy=None,
+                 experimental_forecast: bool = False):
         self.settings = settings
         self.client = client
         self.store = ScenarioStore()
@@ -73,6 +74,14 @@ class AgentSession:
         self.price_history_revision = None
         from .future_pair_state import FuturePairState
         self.future_pair = FuturePairState()
+        # [격리] 준억님의 정식 미래 출하 비교 상태를 그대로 두고,
+        # 연구용 ML 비교의 대화 조건은 독립 Draft에만 저장합니다.
+        self.experimental_forecast = experimental_forecast
+        self.experimental_forecast_draft = None
+        self.experimental_forecast_revision = None
+        if experimental_forecast:
+            from agents.seunghyuk.forecast_agent import ExperimentalForecastDraft
+            self.experimental_forecast_draft = ExperimentalForecastDraft()
 
     def run(self, question: str) -> dict:
         from .data_refresh import kst_today
@@ -101,6 +110,35 @@ class AgentSession:
         if self.price_history_query is not None and self.price_history_revision != source_revision:
             self.price_history_query = None
             self.price_history_revision = None
+        # [PR #3 충돌 방지] 기본 서비스의 도구 목록·프롬프트는 변경하지 않습니다.
+        # --experimental-forecast 모드에서만 별도의 연구용 도구를 선택합니다.
+        experimental_tools, experimental_prompt = TOOLS, SYSTEM_PROMPT
+        forced_forecast = False
+        if self.experimental_forecast:
+            from agents.seunghyuk.forecast_agent import (
+                EXPERIMENTAL_TOOL, EXPERIMENTAL_PROMPT, keep_experimental_route,
+            )
+            if self.experimental_forecast_revision != source_revision:
+                # [데이터 버전] 기존 버전의 날짜·규격을 새 시장 원천에 섞지 않습니다.
+                self.experimental_forecast_draft.reset()
+                self.experimental_forecast_revision = source_revision
+
+            user_text = " ".join(question.casefold().split())
+            explicitly_ml = any(keyword in user_text for keyword in (
+                "연구용 ml", "실험용 ml", "ml 모델", "ml 예측", "예측 모델", "연구용 예측",
+            ))
+            # [도구 충돌] 준억님 compare_future_pair가 조건 보완 중이라면,
+            # 실험 모드의 '언제 팔까요?' 자동 분류가 그 대화를 가로채지 않도록 합니다.
+            # 연구용 ML로 명시 전환한 경우와 기존 ML 보완 턴만 예외입니다.
+            pending_future_pair = self.future_pair.pending is not None
+            pending_ml = self.experimental_forecast_draft.awaiting_input
+            if pending_future_pair and not pending_ml and not explicitly_ml:
+                experimental_tools = TOOLS
+            else:
+                forced_forecast = keep_experimental_route(question, self.experimental_forecast_draft)
+                experimental_tools = ([EXPERIMENTAL_TOOL] if forced_forecast
+                                      else [*TOOLS, EXPERIMENTAL_TOOL])
+                experimental_prompt = SYSTEM_PROMPT + EXPERIMENTAL_PROMPT
         start_context_version = self.task_context.snapshot()["version"]
         try:
             for _ in range(self.policy.model_requests):
@@ -110,6 +148,11 @@ class AgentSession:
                     raise RunStopped("TIME_LIMIT")
                 latest_user = user_starts(self.messages)[-1]
                 self.task_context.reconcile_scenario(self.store.scenario)
+                # [트러블슈팅] 단문 후속 답변에서도 확정된 ML 조건은 서버 상태에서 복원합니다.
+                experimental_context = (
+                    "연구용 ML 가격 실험 조건: " + json.dumps(
+                        self.experimental_forecast_draft.snapshot(), ensure_ascii=False) + "\n"
+                ) if self.experimental_forecast else ""
                 self.messages[latest_user]["content"] = (
                     f"현재 확인된 조건: {json.dumps(self.store.snapshot(), ensure_ascii=False)}\n"
                     f"이번 검토의 과업 맥락(선택 기록·현재 수치 아님): {json.dumps(self.task_context.snapshot(), ensure_ascii=False)}\n"
@@ -117,6 +160,7 @@ class AgentSession:
                     f"오늘(KST): {today}\n"
                     f"두 미래 출하안 비교 조건: {json.dumps(self.future_pair.snapshot(), ensure_ascii=False)}\n"
                     f"두 미래 출하안에서 확인 중인 항목: {json.dumps((self.future_pair.pending or {}).get('missing_fields', []), ensure_ascii=False)}\n"
+                    f"{experimental_context}"
                     f"정산 기록: {json.dumps({'available': bool(self.shipment and self.shipment.revision), 'revision': self.shipment.revision if self.shipment else None, 'details': 'local_only'}, ensure_ascii=False)}\n"
                     f"사용자: {question.strip()}")
                 metrics["trimmed_history_turns"] += bound_history(self.messages, self.policy.history_turns, self.policy.input_characters)
@@ -126,8 +170,10 @@ class AgentSession:
                 request_started = time.monotonic()
                 client = self.client.with_options(timeout=min(30, remaining), max_retries=0) if hasattr(self.client, "with_options") else self.client
                 response = client.responses.create(
-                    model=settings.model, instructions=SYSTEM_PROMPT, input=deepcopy(self.messages),
-                    tools=TOOLS, tool_choice="auto", parallel_tool_calls=False,
+                    model=settings.model, instructions=experimental_prompt, input=deepcopy(self.messages),
+                    tools=experimental_tools,
+                    tool_choice={"type": "function", "name": "compare_experimental_forecast"} if forced_forecast else "auto",
+                    parallel_tool_calls=False,
                     store=False, max_output_tokens=4000,
                 )
                 metrics["request_seconds"].append(round(time.monotonic() - request_started, 3))
@@ -193,6 +239,29 @@ class AgentSession:
                             task_context=self.task_context.snapshot(), input_context=getattr(self, "comparison_input_context", None))
                     elif call.name == "compare_future_pair":
                         result = execute_tool(call.name, arguments, self.store, future_pair=self.future_pair)
+                    elif call.name == "compare_experimental_forecast" and self.experimental_forecast:
+                        # [트러블슈팅] LLM이 입력 보완 턴을 new로 잘못 분류하면
+                        # 기존 3톤·규격·일자가 삭제됩니다. 동일 비교라면 edit로 교정합니다.
+                        if (forced_forecast and self.experimental_forecast_draft.awaiting_input
+                                and isinstance(arguments, dict) and arguments.get("action") == "new"
+                                and not any(word in question for word in
+                                            ("새 비교", "처음부터", "초기화", "이전 조건 무시", "새로 시작"))):
+                            patch = arguments.get("patch") or {}
+                            saved = self.experimental_forecast_draft.inputs
+                            changes_identity = any(
+                                patch.get(key) is not None and saved.get(key) is not None
+                                and patch[key] != saved[key] for key in ("as_of", "quantity")
+                            )
+                            changes_identity |= any(
+                                patch.get("spec", {}).get(key) is not None
+                                and saved["spec"].get(key) is not None
+                                and patch["spec"][key] != saved["spec"][key]
+                                for key in ("variety", "grade", "size", "package", "package_kg")
+                            ) if isinstance(patch.get("spec"), dict) else False
+                            if not changes_identity:
+                                arguments = {**arguments, "action": "edit"}
+                                recorded_arguments = arguments
+                        result = self.experimental_forecast_draft.apply(arguments)
                     else:
                         result = execute_tool(call.name, arguments, self.store)
                     if call.name in {"update_scenario", "compare_shipment_options"} and result["status"] != "INVALID_INPUT":
@@ -212,6 +281,10 @@ class AgentSession:
                             "status", "source_status", "message", "missing_fields", "choices",
                             "manual_price_required", "future_pair_version",
                         ) if key in result}
+                    elif call.name == "compare_experimental_forecast" and self.experimental_forecast:
+                        # [근거 격리] 연구용 예측가격·손익은 LLM에게 재전송하지 않습니다.
+                        from agents.seunghyuk.forecast_agent import model_receipt
+                        model_output = model_receipt(result)
                     elif call.name == "get_price_history":
                         from agents.common.price_history_service import price_history_model_receipt
                         model_output = price_history_model_receipt(result)
@@ -224,7 +297,7 @@ class AgentSession:
                     elif isinstance(arguments, dict) and arguments.get("finish_turn") is True and (
                             result["status"] in {"OK", "NEEDS_INPUT", "NEEDS_CLARIFICATION", "NO_DATA", "PARTIAL", "CHECK_REQUIRED"}
                             or (call.name == "get_price_history" and result["status"] == "DATA_ERROR")
-                            or call.name == "compare_future_pair"):
+                            or call.name in {"compare_future_pair", "compare_experimental_forecast"}):
                         finished = True
                 if finished:
                     break
@@ -271,6 +344,12 @@ class AgentSession:
                 visible = [{"tool": "compare_shipment_options", "result": missing}] if missing["status"] == "NEEDS_INPUT" else []
         text = render_dialogue(visible, question=question) if visible else "비교·조회할 조건을 말씀해 주세요. 확인된 조회·계산 결과가 없으면 수치를 제시하지 않습니다."
         report = report_for(visible)
+        if self.experimental_forecast and visible and visible[-1]["tool"] == "compare_experimental_forecast":
+            # [출력 경로] 준억님 출하 상담의 화면/PDF 렌더링은 그대로 유지합니다.
+            # 연구용 ML 결과만 전용 출력기로 표시합니다.
+            from agents.seunghyuk.forecast_agent import format_experimental_result
+            text = format_experimental_result(visible[-1]["result"])
+            report = text
         if status != "OK":
             warning = "\n\n" + FAILURE_GUIDANCE.get(status, FAILURE_GUIDANCE["API_ERROR"]) + " 확인된 도구 결과까지만 부분 결과이며 요청 전체가 완료된 것은 아닙니다."
             text += warning
