@@ -6,10 +6,18 @@ import time
 from copy import deepcopy
 from uuid import uuid4
 from .config import Settings
+from .latency import log_latency
 from .state import ScenarioStore
 from .tools import TOOLS, execute_tool, explain_term
 from .task_context import TaskContext, data_revision
 from .harness import ExecutionPolicy, RunStopped, RepeatGuard, bound_history, encoded_size, user_starts, classify_failure, FAILURE_GUIDANCE
+
+
+def load_model_sdk():
+    from openai import OpenAI
+
+    return OpenAI
+
 
 SYSTEM_PROMPT = """당신은 제주 감귤 출하 대안 비교 Agent입니다. 한국어로 필요한 조건을 간단히 확인합니다.
 실제 출하 기록·정산·공제·입금 검산 요청에는 reconcile_settlement를 사용하세요. 현재 기록 버전을 expected_record_revision에 넣고 기록이 없으면 null로 조회해 입력 안내를 표시합니다. 실제 기록은 카드에서 사용자 확인 후만 저장하며 update_scenario에 정산 금액을 넣지 않습니다. 검산 금액·입력·근거는 Python이 로컬 화면에 직접 표시하고 모델은 금액 없는 처리 상태만 받습니다. 동의 절차를 요구하거나 볼 수 없는 금액을 만들지 마세요. 후속 정산 질문도 최신 기록에 대해 이 도구를 다시 호출하세요. 원래 가정 대조·보관 효과 추정은 아직 미지원입니다. 근거 ID·URL을 생성하지 마세요.
@@ -93,8 +101,12 @@ class AgentSession:
             return {"status": "KEY_REQUIRED", "text": "프로젝트 .env에 OPENAI_API_KEY를 입력하세요. 직접 조건 비교와 과거 출하통계는 키 없이 사용할 수 있습니다.",
                     "tool_results": [], "events": [], "state": self.store.snapshot()}
         if self.client is None:
-            from openai import OpenAI
+            import_started = time.monotonic()
+            OpenAI = load_model_sdk()
+            log_latency("model_sdk_import", import_started)
+            client_started = time.monotonic()
             self.client = OpenAI(api_key=settings.api_key, timeout=30, max_retries=0)
+            log_latency("model_client_setup", client_started)
         # Every new user turn includes authoritative Python state. Old model text is not state.
         self.messages.append({"role": "user", "content": ""})
         results, events = [], []
@@ -171,13 +183,16 @@ class AgentSession:
                 metrics["model_requests"] += 1
                 request_started = time.monotonic()
                 client = self.client.with_options(timeout=min(30, remaining), max_retries=0) if hasattr(self.client, "with_options") else self.client
-                response = client.responses.create(
-                    model=settings.model, instructions=experimental_prompt, input=deepcopy(self.messages),
-                    tools=experimental_tools,
-                    tool_choice={"type": "function", "name": "compare_experimental_forecast"} if forced_forecast else "auto",
-                    parallel_tool_calls=False,
-                    store=False, max_output_tokens=4000,
-                )
+                try:
+                    response = client.responses.create(
+                        model=settings.model, instructions=experimental_prompt, input=deepcopy(self.messages),
+                        tools=experimental_tools,
+                        tool_choice={"type": "function", "name": "compare_experimental_forecast"} if forced_forecast else "auto",
+                        parallel_tool_calls=False,
+                        store=False, max_output_tokens=4000,
+                    )
+                finally:
+                    log_latency("model_request", request_started, call=metrics["model_requests"])
                 metrics["request_seconds"].append(round(time.monotonic() - request_started, 3))
                 phase = "model_output"
                 usage = getattr(response, "usage", None)
@@ -280,6 +295,7 @@ class AgentSession:
                     events.append({"tool": call.name, "status": result["status"], "scenario_version": self.store.version,
                                    "task_context_version": self.task_context.snapshot()["version"],
                                    "elapsed_seconds": round(time.monotonic() - tool_started, 3)})
+                    log_latency("tool_execution", tool_started, tool=call.name, status=result["status"])
                     model_output = result
                     if call.name == 'reconcile_settlement':
                         from .settlement import model_receipt

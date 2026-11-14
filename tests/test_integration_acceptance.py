@@ -10,7 +10,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from unittest.mock import patch
 
-from agents.common.data_contract import verify_integrated_price_sources, verify_price_pair_sources
+from agents.common.data_contract import verify_cached_price_sources, verify_integrated_price_sources, verify_price_pair_sources
 from agents.common.result_contract import normalize_tool_result
 from scripts.build_price_comparisons import FIELDS, REQUIRED, run
 
@@ -69,6 +69,17 @@ class FullSourceVerificationTests(unittest.TestCase):
         self.assertTrue(result["full_content_verified"])
         self.assertEqual(result["verified_comparison_rows"], 1)
         self.assertEqual(result["verified_availability_rows"], 6)
+
+    def test_cached_verification_reuses_only_identical_files(self):
+        with patch("agents.common.data_contract.verify_integrated_price_sources", wraps=verify_integrated_price_sources) as verify:
+            first = verify_cached_price_sources(self.root)
+            self.assertEqual(first["status"], "OK", first)
+            first["available_intervals"].clear()
+            self.assertEqual(verify_cached_price_sources(self.root)["available_intervals"], [3, 7, 14])
+            verify.assert_called_once()
+            self._edit_pair("price_comparisons.csv", "target_price_kg", "9999.00")
+            self.assertEqual(verify_cached_price_sources(self.root)["reason"], "PAIR_CONTENT_MISMATCH")
+            self.assertEqual(verify.call_count, 2)
 
     def test_price_change_with_same_row_count_is_detected(self):
         self._edit_pair("price_comparisons.csv", "target_price_kg", "9999.00")

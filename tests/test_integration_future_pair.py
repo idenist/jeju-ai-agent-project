@@ -144,7 +144,7 @@ class FuturePairTests(unittest.TestCase):
         unavailable = compare_future_pair(**COMMON, option_b=option_b, history_filters=FILTERS)
         self.assertEqual(unavailable["status"], "INTERVAL_NOT_AVAILABLE")
         self.assertTrue(unavailable["manual_price_required"])
-        with patch("agents.common.future_pair.verify_integrated_price_sources", side_effect=AssertionError):
+        with patch("agents.common.future_pair.verify_cached_price_sources", side_effect=AssertionError):
             manual = compare_future_pair(**COMMON, option_b=option_b, price_b=2750)
         row = manual["options_b"][0]
         self.assertEqual(Decimal(row["proceeds_krw"]), 7280600)
@@ -431,13 +431,13 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(unsupported["message"].count("B안 단가를 직접 입력"), 1)
         app.run()
         self.assertFalse(any(button.label.startswith("미래 A/B") for button in app.get("download_button")))
-        with patch("agents.common.future_pair.verify_integrated_price_sources", return_value={"status": "DATA_ERROR"}):
+        with patch("agents.common.future_pair.verify_cached_price_sources", return_value={"status": "DATA_ERROR"}):
             error = compare("edit", {"option_b": {"delay_days": 10, "loss_percent": 4, "loss_confirmed_for_period": True}})
         self.assertEqual(error["status"], "DATA_ERROR")
         self.assertTrue(error["manual_price_required"])
         self.assertIsNone(pair.current_result())
         self.assertEqual(pair.inputs["history_filters"], FILTERS)
-        with patch("agents.common.future_pair.verify_integrated_price_sources", side_effect=AssertionError):
+        with patch("agents.common.future_pair.verify_cached_price_sources", side_effect=AssertionError):
             manual = compare("edit", {"price_mode": "manual", "price_b": 2750,
                                       "option_b": {"delay_days": 8, "loss_percent": 4, "loss_confirmed_for_period": True}})
         self.assertEqual(manual["option_a"], seven["option_a"])

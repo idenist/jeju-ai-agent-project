@@ -9,6 +9,7 @@ import hashlib
 import json
 import re
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 from pathlib import Path
 from typing import Mapping
 
@@ -226,3 +227,41 @@ def verify_integrated_price_sources(project_root: Path, market_root: Path | None
         # 경로나 원문 데이터·사용자 입력값을 메시지에 노출하지 않습니다.
         return _error("PAIR_REBUILD_FAILED", "가격 비교 원천 또는 결과를 재검증하지 못했습니다.",
                       error_type=type(exc).__name__)
+
+
+def _price_source_fingerprint(root, selected):
+    paths = dict.fromkeys([selected / PRICE_FILE, *(root / path for path in
+                                                    (PRICE_FILE, *PAIR_FILES, REPORT_FILE, MANIFEST_FILE))])
+    return tuple(_digest(path) for path in paths)
+
+
+class _PriceVerificationFailed(Exception):
+    def __init__(self, result):
+        self.result = result
+
+
+@lru_cache(maxsize=4)
+def _verified_price_source_version(root, selected, fingerprint):
+    result = verify_integrated_price_sources(root, market_root=selected)
+    if result["status"] != "OK":
+        raise _PriceVerificationFailed(result)
+    if fingerprint != _price_source_fingerprint(root, selected):
+        raise _PriceVerificationFailed(_error("SOURCE_CHANGED_DURING_QUERY", "검증 중 가격 자료가 바뀌었습니다."))
+    return result
+
+
+def verify_cached_price_sources(project_root: Path) -> dict:
+    """Reuse a full verification only while every input has the same content hash."""
+    from agents.juneok.data_refresh import resolve_market_root
+
+    root = Path(project_root)
+    try:
+        selected = resolve_market_root(root)
+        fingerprint = _price_source_fingerprint(root, selected)
+        checked = _verified_price_source_version(root, selected, fingerprint)
+        return {**checked, "available_intervals": list(checked["available_intervals"]),
+                "source_fingerprint": (selected, fingerprint)}
+    except _PriceVerificationFailed as exc:
+        return exc.result
+    except (OSError, ValueError, KeyError, TypeError, UnicodeError):
+        return _error("SOURCE_READ_FAILED", "공통 데이터 또는 비교 자료를 검증하지 못했습니다.")
