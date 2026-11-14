@@ -19,6 +19,73 @@ COMMON = {"quantity": 3000, "price_basis": "gross", "start_date": "2026-11-12", 
 
 
 class FuturePairTests(unittest.TestCase):
+    def test_regulation_help_without_a_model_tool_keeps_the_pending_future_comparison(self):
+        from types import SimpleNamespace
+        from agents.juneok.agent import AgentSession
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        client = 모의_대화_클라이언트("compare_future_pair", {
+            "action": "new", "expected_version": 0,
+            "patch": {**COMMON, "option_b": OPTION_B, "price_mode": "history",
+                      "history_filters": {"variety": "조생귤", "size": "소", "package": "상자"}},
+        })
+        agent = AgentSession(client=client)
+        first = agent.run("3일 뒤와 10일 뒤를 비교해 주세요.")
+        self.assertIn("감귤의 등급은 어떻게 되나요?", first["text"])
+        self.assertNotIn("몇 kg 들어가나요?", first["text"])
+        before = agent.future_pair.snapshot()
+        with patch.object(client, "create", return_value=SimpleNamespace(output=[], status="completed")):
+            reply = agent.run("등급이나 상자 무게는 아직 모르겠어요. 어디부터 확인하면 돼요?")
+        self.assertEqual(agent.future_pair.snapshot(), before)
+        self.assertEqual(reply["visible_results"][0]["tool"], "compare_future_pair")
+        self.assertIn("등급은 포장 라벨", reply["text"])
+        self.assertIn("상자 라벨", reply["text"])
+        self.assertIn("두 출하일의 가정 단가", reply["text"])
+        self.assertNotIn("비교할 감귤은 몇 kg", reply["text"])
+
+        client.arguments = {"action": "edit", "expected_version": before["version"],
+                            "patch": {"history_filters": {"grade": "특", "package_kg": "5"}}}
+        result = agent.run("특 등급에 상자당 5kg이에요.")
+        self.assertEqual(result["visible_results"][0]["result"]["status"], "OK")
+        self.assertEqual(agent.future_pair.inputs["quantity"], 3000)
+        self.assertIsNone(agent.future_pair.pending)
+
+    def test_history_precedes_missing_costs_and_manual_recovery_preserves_inputs(self):
+        from agents.juneok.future_pair_state import FuturePairState, future_pair_feedback
+
+        pair = FuturePairState()
+        base = {**COMMON, "option_a": {**OPTION_A, "loss_percent": None, "daily_storage_cost": None},
+                "option_b": {**OPTION_B, "loss_percent": None, "daily_storage_cost": None},
+                "price_mode": "history", "history_filters": FILTERS}
+        with patch("agents.juneok.future_pair_state.compare_future_pair", side_effect=AssertionError):
+            preview = pair.apply("new", pair.version, base)
+            self.assertEqual(preview["source_status"], "HISTORY_READY")
+            self.assertEqual(preview["history_preview"]["clean_pairs"], 20)
+            self.assertTrue(preview["history_preview"]["source"]["comparison_sha256"])
+            self.assertEqual(len(preview["missing_fields"]), 4)
+            feedback = future_pair_feedback(preview)
+            self.assertIn("과거 7일 가격쌍 20개", feedback)
+            self.assertEqual(feedback.count("하루 보관비는 얼마인가요?"), 1)
+            self.assertIn("두 안의 비용이 같으면 한 번만 알려주세요.", feedback)
+            self.assertIsNone(pair.current_result())
+            no_price = pair.apply("edit", pair.version, {}, ["price_a"])
+            self.assertEqual(no_price["source_status"], "HISTORY_READY")
+            self.assertIsNone(no_price["history_preview"]["scenarios"][0]["option_b_price_per_kg"])
+            unsupported = pair.apply("edit", pair.version, {"price_a": 2500, "option_b": {"delay_days": 8}})
+            self.assertEqual(unsupported["source_status"], "INTERVAL_NOT_AVAILABLE")
+            self.assertTrue(unsupported["manual_price_required"])
+            manual = pair.apply("edit", pair.version, {"price_mode": "manual", "price_b": 2750})
+            self.assertEqual(manual["missing_fields"], preview["missing_fields"])
+            self.assertEqual(pair.inputs["quantity"], 3000)
+            self.assertEqual(pair.inputs["option_a"]["fee_percent"], 5)
+            self.assertIsNone(pair.inputs["option_a"]["loss_percent"])
+        finished = pair.apply("edit", pair.version, {
+            "option_a": {"loss_percent": 1, "daily_storage_cost": 10000},
+            "option_b": {"loss_percent": 4, "daily_storage_cost": 10000},
+        })
+        self.assertEqual(finished["status"], "OK")
+        self.assertEqual(Decimal(finished["options_b"][0]["difference_vs_a_krw"]), 261850)
+
     def test_three_and_ten_day_comparison_uses_actual_history_and_net_amounts(self):
         result = compare_future_pair(**COMMON, option_b=OPTION_B, history_filters=FILTERS)
         self.assertEqual(result["status"], "OK")
@@ -48,7 +115,7 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(Decimal(result["minimum_whole_krw_per_kg"]), 2500)
         self.assertEqual(Decimal(result["options_b"][0]["difference_vs_a_krw"]), 0)
         report = render_report([{"tool": "compare_future_pair", "result": result}])
-        self.assertIn("A 이상을 위한 B안 최소 단가: 2,500원/kg", report)
+        self.assertIn("최소 단가는 2,500원/kg", report)
 
     def test_b_date_change_preserves_a_and_uses_new_pairs_and_costs(self):
         first = compare_future_pair(**COMMON, option_b=OPTION_B, history_filters=FILTERS)
@@ -128,10 +195,72 @@ class FuturePairTests(unittest.TestCase):
         pdf = PdfReader(BytesIO(outputs["미래 A/B PDF 내려받기"]))
         pdf_text = "\n".join(page.extract_text() for page in pdf.pages)
         screen = "\n".join(item.value for item in app.markdown)
-        for value in ("7,018,750원", "7,280,600원", "261,850원", "A 이상을 위한 B안 최소 단가"):
+        for value in ("7,018,750원", "7,280,600원", "261,850원", "같거나 높아지는 최소 단가"):
             self.assertIn(value, screen)
             self.assertIn(value, pdf_text)
         self.assertEqual(app.session_state.workspace.store.snapshot(), original_scenario)
+
+        app.radio(key="future_pair_price_mode").set_value("과거 변동으로 가정").run()
+        self.assertEqual(app.text_input(key="future_pair_filter_variety").value, "조생귤")
+        self.assertEqual(app.text_input(key="future_pair_filter_grade").value, "특")
+        self.assertIsNone(pair.inputs["price_b"])
+        app.radio(key="future_pair_price_mode").set_value("직접 입력").run()
+        self.assertEqual(app.number_input(key="future_pair_price_b").value, 2750)
+        self.assertIsNone(pair.inputs["history_filters"])
+        self.assertFalse(any(button.label.startswith("미래 A/B") for button in app.get("download_button")))
+
+        app.checkbox(key="future_pair_shared_costs").check().run()
+        self.assertEqual(pair.inputs["option_b"]["fee_percent"], 5)
+        self.assertIsNone(pair.current_result())
+        app.checkbox(key="future_pair_shared_costs").uncheck().run()
+        self.assertEqual(app.number_input(key="future_pair_B_fee").value, 7)
+        self.assertEqual(pair.inputs["option_b"]["fee_percent"], 7)
+        app.checkbox(key="future_pair_shared_costs").check().run()
+        next(button for button in app.button if button.label == "새 비교 시작 · 조건도 초기화").click().run()
+        self.assertFalse(app.checkbox(key="future_pair_shared_costs").value)
+        self.assertIsNone(pair.current_result())
+        self.assertIsNone(app.number_input(key="future_pair_price_b").value)
+        app.radio(key="future_pair_price_mode").set_value("과거 변동으로 가정").run()
+        self.assertEqual(app.text_input(key="future_pair_filter_variety").value, "")
+
+    def test_missing_input_actions_open_only_the_needed_sections_and_preserve_values(self):
+        from streamlit.testing.v1 import AppTest
+
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=30).run()
+        app.selectbox(key="future_pair_basis").set_value("수수료 차감 전").run()
+        app.number_input(key="future_pair_quantity").set_value(3000.0)
+        app.number_input(key="future_pair_price_a").set_value(2500.0)
+        app.number_input(key="future_pair_A_loss_3").set_value(1.0)
+        app.text_input(key="future_pair_filter_variety").set_value("조생귤")
+        app.button(key="future_pair_calculate").click().run()
+        state = app.session_state.workspace.session.future_pair
+        before = state.snapshot()
+        self.assertFalse(any(button.key == "future_pair_open_history" for button in app.button))
+        app.button(key="future_pair_open_costs").click().run()
+        self.assertTrue(app.session_state.future_pair_costs_open)
+        self.assertFalse(app.session_state.future_pair_history_open)
+        self.assertEqual(state.snapshot(), before)
+        self.assertIsNone(state.current_result())
+
+        for side, option in (("A", OPTION_A), ("B", OPTION_B)):
+            for suffix, field in ((f"loss_{option['delay_days']}", "loss_percent"), ("storage", "daily_storage_cost"),
+                                  ("other", "other_cost_krw"), ("fee", "fee_percent")):
+                app.number_input(key=f"future_pair_{side}_{suffix}").set_value(float(option[field]))
+        app.button(key="future_pair_calculate").click().run()
+        before = state.snapshot()
+        self.assertFalse(any(button.key == "future_pair_open_costs" for button in app.button))
+        app.button(key="future_pair_open_history").click().run()
+        self.assertTrue(app.session_state.future_pair_history_open)
+        self.assertEqual(state.snapshot(), before)
+        self.assertEqual(app.text_input(key="future_pair_filter_variety").value, "조생귤")
+        self.assertFalse(any(button.label.startswith("미래 A/B") for button in app.get("download_button")))
+
+        for key, value in FILTERS.items():
+            app.text_input(key=f"future_pair_filter_{key}").set_value(value)
+        app.button(key="future_pair_calculate").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(state.current_result()["status"], "OK")
+        self.assertNotIn("future_pair_missing", app.session_state)
 
     def test_chat_conditions_project_to_card_and_only_current_result_is_exported(self):
         import streamlit as st
@@ -210,10 +339,13 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(len(client.requests), requests_before + 1)
         self.assertEqual(state.current_result()["options_b"][0]["price_per_kg"], "2800")
         self.assertEqual(app.number_input(key="future_pair_price_b").value, 2800)
+        self.assertTrue(any("385,770원" in item.value for item in app.markdown))
+        self.assertTrue(any(button.proto.id.endswith("-future_pair_pdf_chat") for button in app.get("download_button")))
         with patch.dict(os.environ, {"OPENAI_API_KEY": "TEST_ONLY_NOT_REAL_KEY"}):
             app.number_input(key="future_pair_price_b").set_value(2750).run()
         self.assertIsNone(state.current_result())
         self.assertEqual(state.inputs["price_b"], 2750)
+        self.assertTrue(any(item.label == "이전 두 출하일 비교 응답" for item in app.expander))
         self.assertFalse(any(button.label.startswith("미래 A/B") for button in app.get("download_button")))
 
     def test_chat_history_recalculates_exact_gap_and_recovers_with_manual_price(self):
@@ -286,3 +418,45 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(manual["option_a"], seven["option_a"])
         self.assertEqual(Decimal(manual["options_b"][0]["difference_vs_a_krw"]), 261850)
         self.assertIsNone(pair.inputs["history_filters"])
+
+    def test_chat_date_action_only_asks_for_new_b_loss_and_replaces_download(self):
+        from datetime import date
+        from streamlit.testing.v1 import AppTest
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "TEST_ONLY_NOT_REAL_KEY"}):
+            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=30).run()
+            ws = app.session_state.workspace
+            pair = ws.session.future_pair
+            client = 모의_대화_클라이언트("compare_future_pair", {
+                "action": "new", "expected_version": pair.version,
+                "patch": {**COMMON, "option_b": OPTION_B, "price_mode": "history", "history_filters": FILTERS},
+            })
+            ws.session.client = client
+            app.chat_input[0].set_value("3일 뒤와 10일 뒤를 비교해 주세요.").run()
+            original = pair.current_result()
+            self.assertEqual(original["interval_days"], 7)
+            next(field for field in app.date_input if field.label == "새 나중 출하일").set_value(date(2026, 11, 29))
+            next(button for button in app.button if button.label == "이 날짜로 변경").click().run()
+
+            self.assertFalse(app.exception)
+            self.assertEqual(len(client.requests), 1)
+            self.assertEqual(pair.inputs["option_a"], OPTION_A)
+            self.assertEqual(pair.inputs["option_b"], {**OPTION_B, "delay_days": 17, "loss_percent": None})
+            self.assertIsNone(pair.current_result())
+            self.assertFalse(any(button.label.startswith("미래 A/B") for button in app.get("download_button")))
+            reply = app.session_state.agent_messages[-1]["reply"]
+            pending = reply["visible_results"][0]["result"]
+            self.assertEqual(pending["missing_fields"], ["B안 기간 전체 감모율(%)"])
+            self.assertEqual(pending["history_preview"]["clean_pairs"], 15)
+            self.assertIn("17일 보관", reply["text"])
+            self.assertNotIn("두 안의 비용이 같으면", reply["text"])
+
+            client.arguments = {"action": "edit", "expected_version": pair.version,
+                                "patch": {"option_b": {"loss_percent": 4}}}
+            app.chat_input[0].set_value("17일 전체로 4% 줄어요.").run()
+            self.assertFalse(app.exception)
+            final = pair.current_result()
+            self.assertEqual(final["interval_days"], 14)
+            self.assertEqual(final["option_a"], original["option_a"])
+            self.assertTrue(any(button.proto.id.endswith("-future_pair_pdf_chat") for button in app.get("download_button")))

@@ -13,7 +13,7 @@ from .harness import ExecutionPolicy, RunStopped, RepeatGuard, bound_history, en
 
 SYSTEM_PROMPT = """당신은 제주 감귤 출하 대안 비교 Agent입니다. 한국어로 필요한 조건을 간단히 확인합니다.
 실제 출하 기록·정산·공제·입금 검산 요청에는 reconcile_settlement를 사용하세요. 현재 기록 버전을 expected_record_revision에 넣고 기록이 없으면 null로 조회해 입력 안내를 표시합니다. 실제 기록은 카드에서 사용자 확인 후만 저장하며 update_scenario에 정산 금액을 넣지 않습니다. 검산 금액·입력·근거는 Python이 로컬 화면에 직접 표시하고 모델은 금액 없는 처리 상태만 받습니다. 동의 절차를 요구하거나 볼 수 없는 금액을 만들지 마세요. 후속 정산 질문도 최신 기록에 대해 이 도구를 다시 호출하세요. 원래 가정 대조·보관 효과 추정은 아직 미지원입니다. 근거 ID·URL을 생성하지 마세요.
-사용자가 확보된 품종·규격의 목록이나 후보 탐색 자체를 요청할 때 explore_data를 사용합니다. 반면 과거 경락가격 비교·정확한 날짜 간격의 가격쌍 조회를 명시적으로 요청하면 일부 조건을 모르더라도 get_price_history가 우선입니다. 이 경우 explore_data로 대신 조회해 자료가 없다고 단정하지 마세요. 탐색 필터에는 사용자가 명시한 값만 넣고 후보를 농가 조건으로 자동 확정하지 않습니다. 출하/경매 품종을 연결하지 않습니다.
+사용자가 확보된 품종·규격의 목록이나 후보 탐색 자체를 요청할 때 explore_data를 사용합니다. 독립적인 과거 경락가격 비교·정확한 날짜 간격의 가격쌍 조회를 명시적으로 요청하면 일부 조건을 모르더라도 get_price_history가 우선입니다. 두 미래 출하안의 B단가에 사용할 과거 근거는 compare_future_pair로 조회합니다. 이 경우 explore_data로 대신 조회해 자료가 없다고 단정하지 마세요. 탐색 필터에는 사용자가 명시한 값만 넣고 후보를 농가 조건으로 자동 확정하지 않습니다. 출하/경매 품종을 연결하지 않습니다.
 주어진 제안단가에서 감모나 하루 보관비를 얼마까지 감당할 수 있는지 질문하면 solve_offer_limits를 사용합니다. 제안단가를 시장조회값으로 자동 채우지 말고 사용자 값/가정을 확인합니다. 역산 변수의 기존 미확인 값은 필요하지 않지만 고정할 다른 조건은 필요합니다. 상태를 바꾸지 말고 한 변수씩 계산합니다.
 역산/민감도용 가정 단가는 해당 도구 인수에만 넣습니다. 역산 요청의 3300원 같은 가정을 update_scenario의 future_price_per_kg에 저장하면 안 됩니다. 현재 조건 유지 요청이면 update_scenario 자체를 호출하지 마세요. 사용자가 실제 저장 조건 변경을 별도로 명시한 경우에만 변경합니다.
 저장한 비교와 현재 조건의 변경 검토에는 review_case_changes를 사용합니다. 기준 파일은 앱에서 사용자가 확인/선택한 파일만 사용합니다. 없으면 업로드/선택을 요청하고 임의 파일/경로를 만들지 마세요. 변경 검토는 현재 조건을 복원하거나 바꾸지 않습니다.
@@ -35,6 +35,9 @@ update의 patch에서 변경하지 않을 항목은 null. options를 바꾸면 �
 이미 알던 조건을 모름으로 철회하면 update_scenario의 clear_fields에 해당 이름을 넣으세요. patch null은 철회가 아닙니다.
 오늘과 미래를 비교할 조건은 계산 전에 update_scenario에 저장하세요. 두 날짜가 모두 미래인 비교에는 compare_future_pair를 사용하세요. expected_version은 현재 P2 조건의 version입니다. 시작일과 각 보관일은 사용자 표현으로 확정 가능한 값만 전달하세요. B안만 수정하거나 누락 답변을 보완할 때는 edit로 지정하고 확인한 값만 보내세요. 보관일을 바꿀 때 새 기간 전체 감모율을 사용자가 함께 확인한 경우에만 그 값과 loss_confirmed_for_period=true를 전달하세요. 값 철회는 clear_fields에 넣고(거래규격 예: history_filters.grade), 확인 질문이나 계산 결과를 받으면 finish_turn=true로 종료하세요. 용어·자료 해석 질문에는 explain_term 도구를 사용하세요.
 사용자가 B안에 과거 변동을 반영해 달라고 하면 price_mode=history로 선택하고 명시한 동일 거래규격만 history_filters에 넣으세요. 과거 모드의 날짜 수정은 모드와 규격을 유지합니다. 과거자료가 없거나 검증에 실패하면 도구 안내를 표시하고 사용자가 B 단가를 직접 제공한 경우에만 manual로 전환합니다. A 단가는 사용자가 정합니다. 과거 가격 가정과 직접 단가를 같은 요청에서 섞거나 후보를 임의 선택하지 마세요.
+두 미래 출하안에서 과거 가격을 먼저 보고 싶거나 B안 가격을 과거 변동으로 가정하려면, 감모율·보관비·수수료·A 단가가 미확인이어도 compare_future_pair를 price_mode=history로 호출하세요. 이미 저장된 과거 모드의 후속 답변은 edit로 이번에 알려준 값만 반영하세요. 모르는 값은 null로 두며, 0은 사용자가 확인한 경우에만 넣으세요. 도구가 가격 근거와 누락 조건을 표시하므로 HISTORY_READY, NEEDS_INPUT, NO_DATA가 나오면 그 응답으로 턴을 끝내세요.
+새 미래 출하안 비교에서 나중 단가를 모른다고 말하면 동일 규격의 과거 근거를 먼저 확인하세요. 직접 입력을 명시한 경우 그 방식을 사용하세요. 사용자가 비용을 두 안에 공통으로 적용한다고 말하면, 한 번 말한 보관비·별도 비용·수수료율을 option_a와 option_b의 해당 항목에 함께 넣으세요. 안별 값도 명시했으면 해당 안에 그 값을 사용하세요. 특정 안에만 말한 비용은 그 안에만 반영하세요. 감모율은 각각의 보관기간에 해당하는 값만 반영하세요.
+두 미래 출하안 비교가 확인을 기다릴 때 규격을 모르겠거나 확인 방법을 묻는 답변은 현재 비교의 후속입니다. 사용자가 새 비교나 다른 도구를 명시하지 않으면 현재 비교를 이어가세요. 새로 확인된 값이 있으면 compare_future_pair의 edit에 넣고, 확인 방법만 물으면 비교 조건을 변경하지 않습니다.
 새 기간 감모를 사용자가 명시 확인한 경우에만 loss_confirmed_for_period=true.
 현재 단가가 있으면 손익계산에 시장 등급·크기·포장을 요구하지 않습니다.
 저장·출하 변경 가능성은 사용자가 말하지 않으면 null로 두며, 가상 경제성 비교와 실행 가능성을 구분합니다.
@@ -71,6 +74,8 @@ class AgentSession:
         self.price_history_revision = None
         from .future_pair_state import FuturePairState
         self.future_pair = FuturePairState()
+        # [격리] 준억님의 정식 미래 출하 비교 상태를 그대로 두고,
+        # 연구용 ML 비교의 대화 조건은 독립 Draft에만 저장합니다.
         self.experimental_forecast = experimental_forecast
         self.experimental_forecast_draft = None
         self.experimental_forecast_revision = None
@@ -105,27 +110,35 @@ class AgentSession:
         if self.price_history_query is not None and self.price_history_revision != source_revision:
             self.price_history_query = None
             self.price_history_revision = None
-        # [트러블슈팅/재현] 첫 질문은 ML 비교 도구를 택했지만, 같은 질문의 다음 턴에서는
-        # 일반 compare_shipment_options로 빠져 이미 받은 물량·기간을 다시 요청했다.
-        # [원인] 초기 구현은 모든 도구를 한꺼번에 노출하고 tool_choice=auto에 맡겼다.
-        # 해결 의도: 미완료 연구용 비교의 후속 턴만 도구를 고정하고 일반 모드는 건드리지 않는다.
+        # [PR #3 충돌 방지] 기본 서비스의 도구 목록·프롬프트는 변경하지 않습니다.
+        # --experimental-forecast 모드에서만 별도의 연구용 도구를 선택합니다.
         experimental_tools, experimental_prompt = TOOLS, SYSTEM_PROMPT
-        # 강제 라우팅은 run()의 이번 질문 단위로 계산한다.
-        # 이를 세션 영구 플래그로 쓰면 사용자가 다른 질문을 해도 ML로 묶이는 문제가 생긴다.
         forced_forecast = False
         if self.experimental_forecast:
-            from agents.seunghyuk.forecast_agent import (EXPERIMENTAL_TOOL, EXPERIMENTAL_PROMPT,
-                                                         keep_experimental_route)
-            # 원천 데이터의 버전이 달라지면 이전 기준일·규격으로 남은 조건을 이어 쓰면 안 된다.
-            # 가격 데이터 수정 후 묵은 분석 조건이 섞이는 것을 막기 위해 실험 상태를 초기화한다.
+            from agents.seunghyuk.forecast_agent import (
+                EXPERIMENTAL_TOOL, EXPERIMENTAL_PROMPT, keep_experimental_route,
+            )
             if self.experimental_forecast_revision != source_revision:
+                # [데이터 버전] 기존 버전의 날짜·규격을 새 시장 원천에 섞지 않습니다.
                 self.experimental_forecast_draft.reset()
                 self.experimental_forecast_revision = source_revision
-            # ML 비교를 명시했거나 앞선 ML 비교가 아직 NEEDS_INPUT/NO_DATA인 동안만
-            # 연구용 도구만 노출한다. 조건 답변의 의도를 LLM 자유 도구선택에 맡기지 않는다.
-            forced_forecast = keep_experimental_route(question, self.experimental_forecast_draft)
-            experimental_tools = [EXPERIMENTAL_TOOL] if forced_forecast else [*TOOLS, EXPERIMENTAL_TOOL]
-            experimental_prompt = SYSTEM_PROMPT + EXPERIMENTAL_PROMPT
+
+            user_text = " ".join(question.casefold().split())
+            explicitly_ml = any(keyword in user_text for keyword in (
+                "연구용 ml", "실험용 ml", "ml 모델", "ml 예측", "예측 모델", "연구용 예측",
+            ))
+            # [도구 충돌] 준억님 compare_future_pair가 조건 보완 중이라면,
+            # 실험 모드의 '언제 팔까요?' 자동 분류가 그 대화를 가로채지 않도록 합니다.
+            # 연구용 ML로 명시 전환한 경우와 기존 ML 보완 턴만 예외입니다.
+            pending_future_pair = self.future_pair.pending is not None
+            pending_ml = self.experimental_forecast_draft.awaiting_input
+            if pending_future_pair and not pending_ml and not explicitly_ml:
+                experimental_tools = TOOLS
+            else:
+                forced_forecast = keep_experimental_route(question, self.experimental_forecast_draft)
+                experimental_tools = ([EXPERIMENTAL_TOOL] if forced_forecast
+                                      else [*TOOLS, EXPERIMENTAL_TOOL])
+                experimental_prompt = SYSTEM_PROMPT + EXPERIMENTAL_PROMPT
         start_context_version = self.task_context.snapshot()["version"]
         try:
             for _ in range(self.policy.model_requests):
@@ -135,8 +148,7 @@ class AgentSession:
                     raise RunStopped("TIME_LIMIT")
                 latest_user = user_starts(self.messages)[-1]
                 self.task_context.reconcile_scenario(self.store.scenario)
-                # 대화 텍스트만 믿지 말고 Python에 보관한 확정 조건을 매 요청에 다시 제공한다.
-                # 특히 다음 턴이 "수수료 차감 전" 한 문장이어도 이전 3톤·날짜·규격을 복원할 수 있다.
+                # [트러블슈팅] 단문 후속 답변에서도 확정된 ML 조건은 서버 상태에서 복원합니다.
                 experimental_context = (
                     "연구용 ML 가격 실험 조건: " + json.dumps(
                         self.experimental_forecast_draft.snapshot(), ensure_ascii=False) + "\n"
@@ -147,6 +159,7 @@ class AgentSession:
                     f"이전 과거 경락가격 조회 인수(자동 적용값·후보 제외): {json.dumps(self.price_history_query, ensure_ascii=False)}\n"
                     f"오늘(KST): {today}\n"
                     f"두 미래 출하안 비교 조건: {json.dumps(self.future_pair.snapshot(), ensure_ascii=False)}\n"
+                    f"두 미래 출하안에서 확인 중인 항목: {json.dumps((self.future_pair.pending or {}).get('missing_fields', []), ensure_ascii=False)}\n"
                     f"{experimental_context}"
                     f"정산 기록: {json.dumps({'available': bool(self.shipment and self.shipment.revision), 'revision': self.shipment.revision if self.shipment else None, 'details': 'local_only'}, ensure_ascii=False)}\n"
                     f"사용자: {question.strip()}")
@@ -156,8 +169,6 @@ class AgentSession:
                 metrics["model_requests"] += 1
                 request_started = time.monotonic()
                 client = self.client.with_options(timeout=min(30, remaining), max_retries=0) if hasattr(self.client, "with_options") else self.client
-                # 강제 라우팅 상황에서는 모델에 '예측 도구 하나'만 보여준다.
-                # 미완료 ML 비교를 일반 계산기가 가로채는 회귀를 방지한다.
                 response = client.responses.create(
                     model=settings.model, instructions=experimental_prompt, input=deepcopy(self.messages),
                     tools=experimental_tools,
@@ -228,36 +239,33 @@ class AgentSession:
                             task_context=self.task_context.snapshot(), input_context=getattr(self, "comparison_input_context", None))
                     elif call.name == "compare_future_pair":
                         result = execute_tool(call.name, arguments, self.store, future_pair=self.future_pair)
-                    # [방어] 모델이 '조건 보완' 요청을 action=new로 잘못 분류하면
-                    # 기존 연구용 입력이 초기화되어 이미 확인한 날짜·규격을 다시 묻게 된다.
-                    # 사용자 명시 초기화/핵심 식별값 변경이 없을 때만 new를 edit로 교정한다.
                     elif call.name == "compare_experimental_forecast" and self.experimental_forecast:
-                        # 조건만 답하는 다음 턴을 새 작업으로 오해해 기존 입력을 지우지 않습니다.
+                        # [트러블슈팅] LLM이 입력 보완 턴을 new로 잘못 분류하면
+                        # 기존 3톤·규격·일자가 삭제됩니다. 동일 비교라면 edit로 교정합니다.
                         if (forced_forecast and self.experimental_forecast_draft.awaiting_input
                                 and isinstance(arguments, dict) and arguments.get("action") == "new"
                                 and not any(word in question for word in
                                             ("새 비교", "처음부터", "초기화", "이전 조건 무시", "새로 시작"))):
                             patch = arguments.get("patch") or {}
                             saved = self.experimental_forecast_draft.inputs
-                            # 새 요청을 무조건 edit로 바꾸면 다른 기준일·물량의 새 실험까지
-                            # 이전 실험에 덧씌우게 된다. 핵심 식별정보가 바뀌는지는 별도로 검사한다.
                             changes_identity = any(
                                 patch.get(key) is not None and saved.get(key) is not None
                                 and patch[key] != saved[key] for key in ("as_of", "quantity")
                             )
                             changes_identity |= any(
-                                patch.get("spec", {}).get(key) is not None and saved["spec"].get(key) is not None
+                                patch.get("spec", {}).get(key) is not None
+                                and saved["spec"].get(key) is not None
                                 and patch["spec"][key] != saved["spec"][key]
                                 for key in ("variety", "grade", "size", "package", "package_kg")
                             ) if isinstance(patch.get("spec"), dict) else False
-                            # 교정 사실을 recorded_arguments에도 반영해 이후 호출 이력이
-                            # 실제 적용한 action과 다르게 기록되지 않게 한다.
                             if not changes_identity:
                                 arguments = {**arguments, "action": "edit"}
                                 recorded_arguments = arguments
                         result = self.experimental_forecast_draft.apply(arguments)
                     else:
                         result = execute_tool(call.name, arguments, self.store)
+                    if call.name in {"update_scenario", "compare_shipment_options"} and result["status"] != "INVALID_INPUT":
+                        self.future_pair.pending = None
                     self.task_context.record(call.name, recorded_arguments or {}, result, scenario=self.store.scenario)
                     item = {"tool": call.name, "result": result}
                     results.append(item)
@@ -273,9 +281,8 @@ class AgentSession:
                             "status", "source_status", "message", "missing_fields", "choices",
                             "manual_price_required", "future_pair_version",
                         ) if key in result}
-                    # 연구용 추정가격·손익 금액은 LLM 대화로 재전송하지 않는다.
-                    # 검증된 Python 결과를 로컬 화면에서 출력하고 모델에는 상태만 전달한다.
                     elif call.name == "compare_experimental_forecast" and self.experimental_forecast:
+                        # [근거 격리] 연구용 예측가격·손익은 LLM에게 재전송하지 않습니다.
                         from agents.seunghyuk.forecast_agent import model_receipt
                         model_output = model_receipt(result)
                     elif call.name == "get_price_history":
@@ -326,16 +333,20 @@ class AgentSession:
                       ("forecast_limits", ("예측", "다음 주", "미래가격"))]
             help_intent = any(x in question for x in ("뜻", "뭐", "무엇", "설명", "의미", "예측", "다음 주"))
             topic = next((t for t, words in topics if help_intent and any(w in question for w in words)), None)
-            missing = compare_shipment_options(self.store.scenario)
             if topic:
                 entry = {"tool": "explain_term", "result": explain_term(topic)}
                 results.append(entry)
                 visible = [entry]
+            elif self.future_pair.pending is not None:
+                visible = [{"tool": "compare_future_pair", "result": deepcopy(self.future_pair.pending)}]
             else:
+                missing = compare_shipment_options(self.store.scenario)
                 visible = [{"tool": "compare_shipment_options", "result": missing}] if missing["status"] == "NEEDS_INPUT" else []
-        text = render_dialogue(visible) if visible else "비교·조회할 조건을 말씀해 주세요. 확인된 조회·계산 결과가 없으면 수치를 제시하지 않습니다."
+        text = render_dialogue(visible, question=question) if visible else "비교·조회할 조건을 말씀해 주세요. 확인된 조회·계산 결과가 없으면 수치를 제시하지 않습니다."
         report = report_for(visible)
         if self.experimental_forecast and visible and visible[-1]["tool"] == "compare_experimental_forecast":
+            # [출력 경로] 준억님 출하 상담의 화면/PDF 렌더링은 그대로 유지합니다.
+            # 연구용 ML 결과만 전용 출력기로 표시합니다.
             from agents.seunghyuk.forecast_agent import format_experimental_result
             text = format_experimental_result(visible[-1]["result"])
             report = text
