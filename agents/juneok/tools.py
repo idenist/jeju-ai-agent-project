@@ -57,7 +57,8 @@ TOOLS = [
                                   }), {"type": "null"}]},
                                   "option_a": {"anyOf": [FUTURE_OPTION, {"type": "null"}]},
                                   "option_b": {"anyOf": [FUTURE_OPTION, {"type": "null"}]}}),
-          "clear_fields": {"type": "array", "items": {"type": "string"}}}),
+          "clear_fields": {"type": "array", "items": {"type": "string"},
+                           "description": "사용자가 명시적으로 지워 달라고 한 항목만 지정. B안 단가를 직접 입력으로 변경할 때 과거 거래규격은 자동 해제되므로 []를 전달."}}),
     tool("reconcile_settlement", "정산 카드에서 확인한 출하 기록을 로컬 Python에서 읽기 전용 검산하고 금액·근거는 앱에 직접 표시. 모델에는 상세 금액 없는 처리 상태만 반환. 기록이 없으면 카드 연결/입력 안내. 자연어 금액의 자동 저장·원래 가정 대조·보관 효과/수익 예측 없음.",
          {"expected_record_revision": nullable("integer", minimum=0)}),
     tool("review_case_changes", "사용자가 앱에서 명시적으로 선택한 저장 비교와 현재 조건의 변경·재계산 결과를 읽기 전용 검토. 기준 파일이 없으면 업로드/선택 질문. 복원/현재 조건 변경 없음. 당시 보관 숫자는 사실로 재사용하지 않음.",
@@ -133,7 +134,7 @@ def explain_term(topic: str) -> dict:
     return {"status": "OK", "topic": topic, "explanation": HELP[topic]}
 
 
-def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=None, task_context=None, input_context=None, shipment=None, future_pair=None) -> dict:
+def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=None, task_context=None, input_context=None, shipment=None, future_pair=None, *, on_progress=None) -> dict:
     if not isinstance(args, dict):
         return {"status": "INVALID_INPUT", "message": "도구 입력은 객체여야 합니다."}
     schemas = {t["name"]: t["parameters"] for t in TOOLS}
@@ -149,7 +150,8 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
         if name == "compare_future_pair":
             if future_pair is None:
                 return {"status": "INVALID_INPUT", "message": "미래 출하 비교 조건을 확인할 수 없습니다."}
-            return future_pair.apply(args.get("action"), args.get("expected_version"), args.get("patch"), args.get("clear_fields"))
+            return future_pair.apply(args.get("action"), args.get("expected_version"), args.get("patch"),
+                                     args.get("clear_fields"), on_progress=on_progress)
         if name == "reconcile_settlement":
             from .settlement import reconcile
             if shipment is not None and args.get("expected_record_revision") is not None and (type(args["expected_record_revision"]) is not int or args["expected_record_revision"] != shipment.revision):
@@ -167,7 +169,8 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
             return explain_term(args.get("topic"))
         if name == "explore_data":
             from .catalog import explore_data
-            return explore_data(args.get("source"), args.get("filters"), args.get("offset", 0), args.get("limit", 20))
+            return explore_data(args.get("source"), args.get("filters"), args.get("offset", 0), args.get("limit", 20),
+                                on_progress=on_progress)
         if name in {"compare_shipment_options", "compare_sensitivity", "build_review_brief", "explain_decision_conditions", "solve_offer_limits"}:
             version = args.get("expected_version")
             if type(version) is not int or version != store.version:
@@ -177,7 +180,8 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
                 result = solve_offer_limits(store.scenario, args.get("option_id"), args.get("quoted_price_per_kg"), args.get("solve_for"))
             elif name == "build_review_brief":
                 from .briefing import build_review_brief
-                result = build_review_brief(store.scenario, *[args.get(k) for k in ["shipment_query", "market_query", "option_id", "loss_values", "price_values"]])
+                result = build_review_brief(store.scenario, *[args.get(k) for k in ["shipment_query", "market_query", "option_id", "loss_values", "price_values"]],
+                                            on_progress=on_progress)
             elif name == "explain_decision_conditions":
                 from .insights import decision_conditions
                 result = decision_conditions(store.scenario, *[args.get(k) for k in ["option_id", "loss_values", "price_values"]])
@@ -185,6 +189,8 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
                 from .sensitivity import compare_sensitivity
                 result = compare_sensitivity(store.scenario, args.get("option_id"), args.get("loss_values"), args.get("price_values"))
             else:
+                if on_progress:
+                    on_progress("compare")
                 result = compare_shipment_options(store.scenario)
             return {**result, "scenario_version": store.version}
         if name == "get_price_history":
@@ -193,7 +199,8 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
                 args.pop("limit", None)
             return get_integrated_price_history(args)
         from .evidence import get_historical_shipment_context, get_market_evidence
-        return (get_historical_shipment_context if name == "get_historical_shipment_context" else get_market_evidence)(deepcopy(args))
+        query = get_historical_shipment_context if name == "get_historical_shipment_context" else get_market_evidence
+        return query(deepcopy(args), on_progress=on_progress)
     except (KeyError, TypeError, ValueError):
         return {"status": "INVALID_INPUT", "message": "도구 입력 형식을 확인하세요."}
     except (OSError, ArithmeticError):

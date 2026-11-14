@@ -45,6 +45,7 @@ def _sync_inputs(state):
     if any(values["option_a"][field] != values["option_b"][field]
            for field in ("daily_storage_cost", "other_cost_krw", "fee_percent")):
         st.session_state.future_pair_shared_costs = False
+    st.session_state.future_pair_applied_shared_costs = st.session_state.get("future_pair_shared_costs", False)
     for key in list(st.session_state):
         if key.startswith(("future_pair_A_loss_", "future_pair_B_loss_")):
             del st.session_state[key]
@@ -77,9 +78,9 @@ def _sync_inputs(state):
     return True
 
 
-def _toggle_shared_costs(state):
+def _toggle_shared_costs(state, same_costs):
     fields = {"daily_storage_cost": "storage", "other_cost_krw": "other", "fee_percent": "fee"}
-    if st.session_state.future_pair_shared_costs:
+    if same_costs:
         st.session_state.future_pair_separate_costs = {
             field: st.session_state.get(f"future_pair_B_{suffix}", state.inputs["option_b"][field])
             for field, suffix in fields.items()
@@ -154,7 +155,10 @@ def render_future_pair(state):
         with st.expander("감모율과 비용 입력", key="future_pair_costs_open", on_change="rerun"):
             st.caption("비용이 없다고 확인한 항목에는 0을 입력하세요. 모르는 값은 비워 두고 확인하세요.")
             same_costs = st.checkbox("A와 B의 하루 보관비·별도 비용·수수료율이 같아요",
-                                     key="future_pair_shared_costs", on_change=_toggle_shared_costs, args=(state,))
+                                     key="future_pair_shared_costs")
+            if same_costs != st.session_state.get("future_pair_applied_shared_costs", False):
+                _toggle_shared_costs(state, same_costs)
+                st.session_state.future_pair_applied_shared_costs = same_costs
             left, right = st.columns(2)
             with left:
                 option_a = _cost_fields("A", a_days, gross)
@@ -216,10 +220,23 @@ def render_future_pair(state):
         return result
 
 
-def render_future_pair_result(result, location):
+def render_future_pair_result(result, location, *, report_json=None):
     entries = [{"tool": "compare_future_pair", "result": result}]
-    if location == "card":
+    if location == "chat":
+        with st.container(border=True):
+            st.markdown("**감귤 출하 비교 보고서**")
+            _render_future_pair_pdf(entries, location)
+            with st.expander("보고서 미리보기"):
+                st.markdown(render_report(entries))
+            with st.expander("상세 · JSON"):
+                _render_future_pair_json(result, location, report_json)
+    else:
         st.markdown(render_report(entries))
+        _render_future_pair_pdf(entries, location)
+        _render_future_pair_json(result, location)
+
+
+def _render_future_pair_pdf(entries, location):
     try:
         pdf = render_pdf_report(entries)
     except Exception:
@@ -227,9 +244,10 @@ def render_future_pair_result(result, location):
     else:
         st.download_button("미래 A/B PDF 내려받기", pdf, "미래출하비교.pdf", "application/pdf",
                            key=f"future_pair_pdf_{location}", on_click="ignore")
-    content = json.dumps({"format": "jeju-future-pair", "version": 1, "result": result}, ensure_ascii=False, indent=2)
+
+
+def _render_future_pair_json(result, location, content=None):
+    if content is None:
+        content = json.dumps({"format": "jeju-future-pair", "version": 1, "result": result}, ensure_ascii=False, indent=2)
     st.download_button("미래 A/B 결과 JSON 내려받기", content, "미래출하비교.json", "application/json",
                        key=f"future_pair_json_{location}", on_click="ignore")
-    if location == "chat":
-        with st.expander("가격 근거와 상세 조건 보기"):
-            st.markdown(render_report(entries))

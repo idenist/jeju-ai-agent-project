@@ -129,7 +129,7 @@ class 직접가격조회화면검수(unittest.TestCase):
 
     def test_키없는_화면에_과거_경락가격_조회가_있음(self):
         app = self._app()
-        self.assertTrue(app.chat_input[0].disabled)
+        self.assertTrue(app.text_input(key="shipment_question").disabled)
         self.assertTrue(any(button.label == "과거 경락가격" for button in app.button))
         self.assertTrue(any(button.label == "과거 경락가격 직접 조회" and not button.disabled for button in app.button))
 

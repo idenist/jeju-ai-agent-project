@@ -12,7 +12,7 @@ MARKET = ("market_code", "variety", "grade", "size", "package", "package_kg")
 SHIPMENT = ("shipment_variety", "year", "target_month")
 
 
-def explore_data(source, filters=None, offset=0, limit=20, root=PROJECT_ROOT):
+def explore_data(source, filters=None, offset=0, limit=20, root=PROJECT_ROOT, *, on_progress=None):
     try:
         if source not in {"market", "shipment"} or not isinstance(filters, (dict, type(None))):
             raise ValueError("자료 종류와 선택 조건을 확인하세요.")
@@ -33,6 +33,8 @@ def explore_data(source, filters=None, offset=0, limit=20, root=PROJECT_ROOT):
     except (ValueError, TypeError, ArithmeticError) as exc:
         return {"status": "INVALID_INPUT", "message": str(exc)}
     try:
+        if on_progress:
+            on_progress("catalog_csv")
         groups = defaultdict(list)
         if source == "market":
             selected = resolve_market_root(root)

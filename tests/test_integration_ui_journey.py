@@ -71,7 +71,7 @@ class 통합화면사용자흐름검수(unittest.TestCase):
 
     def test_키가_없어도_경락가격과_손익계산_진입점이_있음(self):
         app = self._app()
-        self.assertTrue(app.chat_input[0].disabled)
+        self.assertTrue(app.text_input(key="shipment_question").disabled)
         for label in ("과거 경락가격 직접 조회", "입력 조건 비교", "과거 출하량 조회"):
             self.assertFalse(self._button(app, label).disabled)
         self.assertTrue(any(button.label == "과거 경락가격" for button in app.button))
@@ -277,8 +277,9 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         client = 모의_대화_클라이언트("get_price_history", {"follow_up": True, "interval_days": 14})
         ws.session.client = client
         with patch.dict(os.environ, {"OPENAI_API_KEY": "TEST_ONLY_NOT_REAL_KEY"}):
-            self.assertFalse(app.chat_input[0].disabled)
-            app.chat_input[0].set_value("앞에서 선택한 규격 그대로 과거 14일로 바꿔줘").run()
+            self.assertFalse(app.text_input(key="shipment_question").disabled)
+            app.text_input(key="shipment_question").set_value("앞에서 선택한 규격 그대로 과거 14일로 바꿔줘")
+            app.button(key="shipment_send").click().run()
         self.assertEqual(list(app.exception), [])
         self.assertEqual(len(client.requests), 1)
         self.assertEqual(ws.session.price_history_query["interval_days"], 14)
