@@ -9,13 +9,18 @@ import argparse
 import csv
 import hashlib
 import json
+import re
+import shutil
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from itertools import zip_longest
 from pathlib import Path
 
-from scripts.build_price_comparisons import run as build_price_comparisons
-from scripts.preprocess_auction import run as preprocess_auction
+from scripts.build_price_comparisons import FIELDS as PAIR_FIELDS, run as build_price_comparisons
+from scripts.preprocess_auction import (
+    DETAILED_FIELDS, VARIETY_FIELDS, run as preprocess_auction,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SEASONS = ("2024-2025", "2025-2026")
@@ -108,14 +113,150 @@ def run_season(season: str) -> dict:
         }
 
 
+
+def csv_row_count(path: Path, expected_fields: list[str] | tuple[str, ...]) -> int:
+    """서비스 계약과 동일한 컬럼 순서·행 구조인지 확인한다."""
+    with path.open(encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames != list(expected_fields):
+            raise ValueError(f"{path.name}: 컬럼 계약 불일치")
+        count = 0
+        for row in reader:
+            if None in row or any(value is None for value in row.values()):
+                raise ValueError(f"{path.name}: {count + 2}행의 컬럼 수 불일치")
+            count += 1
+        return count
+
+
+def build_new_dataset(inputs: list[Path], name: str) -> dict:
+    """신규 원본을 운영 파일과 분리된 검증 묶음으로 생성한다. 자동 활성화하지 않는다."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", name):
+        raise ValueError("데이터 이름은 영문/숫자로 시작하는 영문·숫자·밑줄·하이픈 1~64자여야 합니다.")
+    sources = [p.resolve(strict=True) for p in inputs]
+    if len(sources) != len(set(sources)) or not all(p.is_file() and p.suffix.lower() == ".csv" for p in sources):
+        raise ValueError("중복 없는 CSV 원본 파일만 입력할 수 있습니다.")
+
+    base = ROOT / "artifacts" / "seunghyuk" / "datasets"
+    destination = base / name
+    if destination.exists():
+        raise ValueError(f"같은 이름의 데이터 묶음이 이미 존재합니다: {name} (덮어쓰기 금지)")
+    base.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{name}-", dir=base))
+    try:
+        raw_dir = staging / "data" / "raw"
+        processed = staging / "data" / "processed"
+        reports = staging / "data" / "reports"
+        raw_dir.mkdir(parents=True)
+        print(f"[{name}] [1/4] 원본 보존·해시 검증", flush=True)
+        copied = []
+        input_metadata = []
+        for i, source in enumerate(sources, 1):
+            raw = raw_dir / f"source_{i:02d}.csv"
+            before = sha256(source)
+            shutil.copyfile(source, raw)
+            if sha256(raw) != before or sha256(source) != before:
+                raise ValueError(f"원본 복사 중 파일이 변경됐습니다: {source.name}")
+            copied.append(raw)
+            input_metadata.append({
+                "original_filename": source.name,
+                "file": raw.relative_to(staging).as_posix(),
+                "sha256": before,
+                "bytes": raw.stat().st_size,
+            })
+        print(f"[{name}] [2/4] 경매 거래 정제·일별 가격 생성", flush=True)
+        pre = preprocess_auction(copied, processed, reports)
+        if pre["input_rows"] <= 0 or pre["accepted_rows"] <= 0 or pre["daily_prices_rows"] <= 0:
+            raise ValueError("원본 거래 또는 분석 가능한 경매가격이 없습니다.")
+        if pre["input_rows"] != pre["accepted_rows"] + pre["rejected_rows"]:
+            raise ValueError("채택·제외 거래 합계가 원본 거래 건수와 다릅니다.")
+        today = datetime.now(timezone(timedelta(hours=9))).date().isoformat()
+        dates = pre["observed_dates"]
+        if not dates or dates[-1] > today:
+            raise ValueError("유효한 관측일이 없거나 미래 거래일이 포함됐습니다.")
+
+        print(f"[{name}] [3/4] 날짜·동일 규격 가격쌍 생성", flush=True)
+        pair = build_price_comparisons(processed / "daily_prices.csv", processed, reports)
+        if pair["input_rows"] != pre["daily_prices_rows"] or pair["input_sha256"] != sha256(processed / "daily_prices.csv"):
+            raise ValueError("가격쌍과 일별 가격 원천의 버전이 일치하지 않습니다.")
+        if pair["availability_rows"] != pre["daily_prices_rows"] * len(pair["interval_days"]):
+            raise ValueError("가격 비교 전체 시도 행 수가 입력과 일치하지 않습니다.")
+        if pair["rows"] != sum(stats["matched_pairs"] for stats in pair["by_interval"].values()):
+            raise ValueError("가격 비교 연결쌍 집계가 일치하지 않습니다.")
+
+        print(f"[{name}] [4/4] CSV 계약·행 수·해시 검증 후 묶음 확정", flush=True)
+        expected = (
+            ("daily_prices.csv", DETAILED_FIELDS, pre["daily_prices_rows"]),
+            ("daily_variety_prices.csv", VARIETY_FIELDS, pre["daily_variety_prices_rows"]),
+            ("price_comparisons.csv", PAIR_FIELDS, pair["rows"]),
+            ("price_comparison_availability.csv", PAIR_FIELDS, pair["availability_rows"]),
+        )
+        counts = {}
+        for filename, fields, count in expected:
+            actual = csv_row_count(processed / filename, fields)
+            if actual != count:
+                raise ValueError(f"{filename}: 보고서 {count}행 / 실제 {actual}행")
+            counts[filename] = actual
+
+        files = [*copied, *(processed / filename for filename in OUTPUTS),
+                 reports / "auction_quality_report.json",
+                 reports / "price_comparison_report.json",
+                 reports / "price_comparison_coverage.md"]
+        hashes = {p.relative_to(staging).as_posix(): sha256(p) for p in files}
+        clean = sum(x["comparable_without_warnings"] for x in pair["by_interval"].values())
+        manifest = {
+            "status": "OFFLINE_VALIDATED",
+            "agent_activated": False,
+            "snapshot_name": name,
+            "observed_date_min": dates[0],
+            "observed_date_max": dates[-1],
+            "input_rows": pre["input_rows"],
+            "accepted_rows": pre["accepted_rows"],
+            "rejected_rows": pre["rejected_rows"],
+            "csv_rows": counts,
+            "clean_price_pairs": clean,
+            "price_pair_usable": clean > 0,
+            "inputs": input_metadata,
+            "sha256": hashes,
+            "notes": [
+                "원본 CSV는 동일 묶음의 data/raw/에 복사·보존되었습니다.",
+                "가격 비교는 과거 관측값이며 미래가격 예측이나 출하 효과가 아닙니다.",
+                "Agent 연결·기본 데이터 전환에는 팀 데이터 계약 및 승인 절차가 필요합니다.",
+            ],
+        }
+        (staging / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        if destination.exists():
+            raise ValueError("데이터 이름이 처리 도중 중복됐습니다. 기존 결과를 덮어쓰지 않습니다.")
+        staging.rename(destination)
+        print(f"  검증 완료: 거래 {pre['accepted_rows']:,}건, 가격 {pre['daily_prices_rows']:,}행, 경고 없는 쌍 {clean:,}개", flush=True)
+        if clean == 0:
+            print("  [주의] 정상 가격쌍이 없어 과거 가격 비교에는 사용할 수 없습니다.", flush=True)
+        print(f"  저장: {destination.relative_to(ROOT)}", flush=True)
+        return manifest
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="시즌 경매 데이터의 전체 파이프라인을 재현·검증합니다. 원본은 변경하지 않습니다.")
-    parser.add_argument("--season", choices=(*SEASONS, "all"), default="all", help="검증할 시즌(기본: all)")
-    parser.add_argument("--save-report", action="store_true", help="검증 요약 JSON 하나를 artifacts/에 저장")
+    parser = argparse.ArgumentParser(description="시즌 재현성 검증 또는 신규 원본의 오프라인 데이터 묶음 생성")
+    parser.add_argument("--season", choices=(*SEASONS, "all"), help="기존 시즌 검증 (기본: all)")
+    parser.add_argument("--save-report", action="store_true", help="기존 시즌 검증 요약을 artifacts/에 저장")
+    parser.add_argument("--input", type=Path, nargs="+", help="신규 경매 원본 CSV (여러 개 가능)")
+    parser.add_argument("--name", help="신규 데이터 묶음 이름. 이미 존재하면 덮어쓰지 않음")
     args = parser.parse_args()
 
+    if args.input and (args.season is not None or args.save_report or not args.name):
+        parser.error("신규 데이터 모드에는 --input CSV... --name 이름만 사용하세요.")
+    if not args.input and args.name:
+        parser.error("--name을 사용할 때는 --input을 지정하세요.")
     try:
-        seasons = SEASONS if args.season == "all" else (args.season,)
+        if args.input:
+            build_new_dataset(args.input, args.name)
+            print("\n[PASS] 신규 원본 → 오프라인 검증 데이터 묶음 생성 완료 (Agent에는 미반영)", flush=True)
+            return 0
+        seasons = SEASONS if args.season in (None, "all") else (args.season,)
         results = [run_season(season) for season in seasons]
         if args.save_report:
             output = ROOT / "artifacts" / "seunghyuk" / "시즌_파이프라인_검증.json"
