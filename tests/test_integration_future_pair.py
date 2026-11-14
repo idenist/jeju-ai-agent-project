@@ -105,6 +105,15 @@ class FuturePairTests(unittest.TestCase):
         self.assertLess(report.index("A안 대비 차액"), report.index("기간 전체 감모"))
         self.assertIn("과거 동일 규격 경락가격쌍", report)
         self.assertNotIn("trade_type", report)
+        from agents.juneok.presentation import render_dialogue
+        reply = render_dialogue([{"tool": "compare_future_pair", "result": result}])
+        for output in (reply, report):
+            self.assertIn("중앙값 가정(2,409.37원/kg)에서 A안(11/15)의 비교금액이 B안(11/22)보다 670,493원", output)
+            self.assertIn("최소 단가는 2,660원/kg", output)
+            self.assertIn("B안(11/22)이 유리한 가격 가정은 최고 4,732.49원/kg", output)
+        self.assertIn("| B안(11/22) | 최저 | 1,661.44원/kg | 4,345,001원 | -2,673,749원 |", report)
+        self.assertEqual(Decimal(result["options_b"][0]["proceeds_krw"]), Decimal("4345000.896"))
+        self.assertNotIn("2배를 넘습니다", reply)
 
     def test_exact_whole_won_break_even_can_be_a_tie(self):
         option_a = {**OPTION_A, "loss_percent": 0, "daily_storage_cost": 0, "other_cost_krw": 0, "fee_percent": 0}
@@ -135,7 +144,7 @@ class FuturePairTests(unittest.TestCase):
         unavailable = compare_future_pair(**COMMON, option_b=option_b, history_filters=FILTERS)
         self.assertEqual(unavailable["status"], "INTERVAL_NOT_AVAILABLE")
         self.assertTrue(unavailable["manual_price_required"])
-        with patch("agents.common.future_pair.verify_integrated_price_sources", side_effect=AssertionError):
+        with patch("agents.common.future_pair.verify_cached_price_sources", side_effect=AssertionError):
             manual = compare_future_pair(**COMMON, option_b=option_b, price_b=2750)
         row = manual["options_b"][0]
         self.assertEqual(Decimal(row["proceeds_krw"]), 7280600)
@@ -224,6 +233,19 @@ class FuturePairTests(unittest.TestCase):
         self.assertIsNone(app.number_input(key="future_pair_price_b").value)
         app.radio(key="future_pair_price_mode").set_value("과거 변동으로 가정").run()
         self.assertEqual(app.text_input(key="future_pair_filter_variety").value, "")
+
+    def test_manual_price_over_twice_a_warns_without_altering_the_comparison(self):
+        from agents.juneok.presentation import render_dialogue
+        from agents.juneok.reporting import manual_price_warning
+        self.assertIsNone(manual_price_warning(2500, 5000))
+        self.assertIsNone(manual_price_warning(2500, 2600))
+        result = compare_future_pair(**COMMON, option_b=OPTION_B, price_b=26000)
+        self.assertEqual(result["status"], "OK")
+        self.assertEqual(Decimal(result["options_b"][0]["price_per_kg"]), 26000)
+        entries = [{"tool": "compare_future_pair", "result": result}]
+        for output in (render_dialogue(entries), render_report(entries)):
+            self.assertIn("26,000원/kg", output)
+            self.assertIn("2배를 넘습니다", output)
 
     def test_missing_input_actions_open_only_the_needed_sections_and_preserve_values(self):
         from streamlit.testing.v1 import AppTest
@@ -409,13 +431,13 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(unsupported["message"].count("B안 단가를 직접 입력"), 1)
         app.run()
         self.assertFalse(any(button.label.startswith("미래 A/B") for button in app.get("download_button")))
-        with patch("agents.common.future_pair.verify_integrated_price_sources", return_value={"status": "DATA_ERROR"}):
+        with patch("agents.common.future_pair.verify_cached_price_sources", return_value={"status": "DATA_ERROR"}):
             error = compare("edit", {"option_b": {"delay_days": 10, "loss_percent": 4, "loss_confirmed_for_period": True}})
         self.assertEqual(error["status"], "DATA_ERROR")
         self.assertTrue(error["manual_price_required"])
         self.assertIsNone(pair.current_result())
         self.assertEqual(pair.inputs["history_filters"], FILTERS)
-        with patch("agents.common.future_pair.verify_integrated_price_sources", side_effect=AssertionError):
+        with patch("agents.common.future_pair.verify_cached_price_sources", side_effect=AssertionError):
             manual = compare("edit", {"price_mode": "manual", "price_b": 2750,
                                       "option_b": {"delay_days": 8, "loss_percent": 4, "loss_confirmed_for_period": True}})
         self.assertEqual(manual["option_a"], seven["option_a"])

@@ -1,11 +1,13 @@
 """Compare two future shipments using the existing option calculator."""
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_CEILING
+from time import monotonic
 
 from agents.common.calculation_service import compare_shipment_options
-from agents.common.data_contract import verify_integrated_price_sources
+from agents.common.data_contract import verify_cached_price_sources
 from agents.juneok.comparison import decimal, fixed
 from agents.juneok.config import PROJECT_ROOT
+from agents.juneok.latency import log_latency
 
 
 def _engine_option(option, template):
@@ -15,14 +17,19 @@ def _engine_option(option, template):
 
 
 def _verified_history(lookup, args, **kwargs):
-    before = verify_integrated_price_sources(PROJECT_ROOT)
+    started = monotonic()
+    before = verify_cached_price_sources(PROJECT_ROOT)
+    log_latency("csv_verify_before", started)
     if before["status"] != "OK" or before.get("full_content_verified") is not True:
         return {"status": "DATA_ERROR", "message": "과거 가격 자료의 원천을 확인하지 못했습니다. B안 단가를 직접 입력할 수 있습니다."}
+    started = monotonic()
     result = lookup(args, **kwargs)
-    after = verify_integrated_price_sources(PROJECT_ROOT)
+    log_latency("csv_lookup", started)
+    started = monotonic()
+    after = verify_cached_price_sources(PROJECT_ROOT)
+    log_latency("csv_verify_after", started)
     if (after["status"] != "OK" or after.get("full_content_verified") is not True
-            or before["selected_market_sha256"] != after["selected_market_sha256"]
-            or before["comparison_source_sha256"] != after["comparison_source_sha256"]):
+            or before["source_fingerprint"] != after["source_fingerprint"]):
         return {"status": "DATA_ERROR", "message": "조회 중 자료가 바뀌었습니다. B안 단가를 직접 입력할 수 있습니다."}
     return result
 

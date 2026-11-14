@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from .reporting import future_pair_summary, render_report, render_result, FIELD_NAMES, _field
+from .reporting import future_pair_summary, manual_price_warning, render_report, render_result, FIELD_NAMES, _field
 
 
 def select_results(results: list[dict], version: int) -> list[dict]:
@@ -40,8 +40,11 @@ def render_dialogue(results: list[dict], *, question: str = "") -> str:
     for entry in results:
         result = entry["result"]
         if result.get("analysis_type") == "future_pair" and result.get("status") == "OK":
-            conclusion, minimum = future_pair_summary(result)
-            sections.insert(0, f"**{conclusion}**\n\n{minimum}")
+            conclusion, minimum, favorable = future_pair_summary(result)
+            a, b = result["option_a"], result["options_b"][0]
+            warning = manual_price_warning(a["price_per_kg"], b["price_per_kg"]) if b["id"] == "manual_b" else None
+            sections.insert(0, "\n\n".join(part for part in
+                                            (f"**{conclusion}**", minimum, favorable, warning) if part))
         elif result.get("analysis_type") == "future_pair":
             from .future_pair_state import history_clarification
             sections.append(history_clarification(result, question) or render_result(result))

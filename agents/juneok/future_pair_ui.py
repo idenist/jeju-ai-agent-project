@@ -6,7 +6,7 @@ import streamlit as st
 
 from .future_pair_state import HISTORY_FIELDS, MAX_RATE_PERCENT, OPTION_LABELS, future_pair_feedback
 from .pdf_report import render_pdf_report
-from .reporting import render_report
+from .reporting import manual_price_warning, render_report
 
 
 def _storage_period(side, default_days):
@@ -151,6 +151,8 @@ def render_future_pair(state):
             st.session_state.setdefault("future_pair_price_b", drafts.get("future_pair_price_b"))
             price_b = st.number_input("B안 가정 단가(원/kg)", min_value=0.0, value=None, key="future_pair_price_b")
             drafts["future_pair_price_b"] = price_b
+            if warning := manual_price_warning(price_a, price_b):
+                st.warning(warning)
 
         with st.expander("감모율과 비용 입력", key="future_pair_costs_open", on_change="rerun"):
             st.caption("비용이 없다고 확인한 항목에는 0을 입력하세요. 모르는 값은 비워 두고 확인하세요.")

@@ -5,13 +5,15 @@ import csv
 import hashlib
 import json
 import re
-from time import monotonic
+from threading import Thread
+from time import monotonic, time
 from datetime import date, timedelta
 import streamlit as st
 
 from agents.juneok.agent import AgentSession
 from agents.juneok.config import PROJECT_ROOT, Settings
-from agents.juneok.reporting import render_report, render_result, FIELD_NAMES
+from agents.juneok.latency import latency_logging_enabled, log_latency
+from agents.juneok.reporting import manual_price_warning, render_report, render_result, FIELD_NAMES
 from agents.juneok.presentation import connection_label, render_dialogue
 from agents.juneok.ui_workflow import COST_LABELS, INPUT_CONTEXTS, form_snapshot, condition_rows
 from agents.juneok.workspace import SharedWorkspace, card_values
@@ -30,6 +32,22 @@ def _workspace():
         st.session_state.workspace = SharedWorkspace(session)
         st.session_state.agent_session = session
     return st.session_state.workspace
+
+
+@st.cache_resource(show_spinner=False)
+def _preload_model_sdk():
+    def load():
+        from agents.juneok.agent import load_model_sdk
+
+        try:
+            load_model_sdk()
+        except ImportError:
+            # The normal request path handles a missing or broken SDK.
+            return
+
+    worker = Thread(target=load, name="openai-sdk-preload", daemon=True)
+    worker.start()
+    return worker
 
 
 def _card_dirty():
@@ -478,6 +496,8 @@ def _submit_shipment_question(example=None):
     messages = st.session_state.setdefault("agent_messages", [])
     if question.strip() and not (messages and messages[-1].get("pending")):
         messages.append({"role": "user", "content": question.strip(), "pending": True, "started": monotonic()})
+        if latency_logging_enabled():
+            messages[-1]["submitted_ms"] = int(time() * 1000)
 
 
 def _render_shipment_composer(disabled, show_examples, *, busy=False):
@@ -509,10 +529,11 @@ def _render_chat_pair_actions(ws, messages, pair, current_pair, latest_message):
     if pair["status"] == "OK" and current_pair is not None:
         _render_later_shipment_edit(ws, messages, current_pair, pair["future_pair_version"])
     elif pair.get("manual_price_required") and latest_message:
-        with st.form(f"future_pair_chat_manual_{pair['future_pair_version']}"):
-            price = st.number_input("나중 출하의 가정 단가 (원/kg)", min_value=0.01, value=None)
-            submitted = st.form_submit_button("이 단가로 비교")
-        if submitted:
+        key = f"future_pair_chat_manual_{pair['future_pair_version']}"
+        price = st.number_input("나중 출하의 가정 단가 (원/kg)", min_value=0.01, value=None, key=key)
+        if warning := manual_price_warning(ws.session.future_pair.inputs["price_a"], price):
+            st.warning(warning)
+        if st.button("이 단가로 비교", key=f"{key}_submit"):
             if price is None:
                 st.warning("나중 출하의 가정 단가를 입력해 주세요.")
             else:
@@ -636,6 +657,9 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
         with transcript.chat_message("assistant"):
             pending.pop("pending")
             started = pending.pop("started", None)
+            submitted_ms = pending.pop("submitted_ms", None)
+            if started is not None:
+                log_latency("submit_to_agent", started)
             if _REPORT_REQUEST.fullmatch(pending["content"]):
                 message = "방금 비교한 결과의 보고서입니다." if previous_report else "내려받을 최근 출하 비교 결과가 없습니다. 출하 조건을 비교한 뒤 다시 요청해 주세요."
                 reply = {"status": "OK", "text": message, "state": ws.store.snapshot(), "chat_report": previous_report}
@@ -646,9 +670,23 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                 )
                 reply["chat_report"] = _chat_report(ws, reply)
                 st.session_state.last_agent_reply = {"status": reply.get("status"), "metrics": reply.get("metrics", {})}
+            ready = monotonic()
             messages.append({"role": "assistant", "reply": {**reply, "progress_steps": steps,
                                                             "progress_elapsed": elapsed}})
             _show_agent_reply(reply, ws.store.version)
+            if submitted_ms is not None:
+                log_latency("answer_queued", ready)
+                log_latency("submit_to_answer_queued", started)
+                queued_ms = int(time() * 1000)
+                st.html(f"""<span id="jeju-latency-{submitted_ms}" hidden></span><script>
+                    requestAnimationFrame(() => requestAnimationFrame(() => {{
+                        const marker = document.getElementById('jeju-latency-{submitted_ms}');
+                        if (marker) {{
+                            marker.dataset.submitToDisplayMs = Date.now() - {submitted_ms};
+                            marker.dataset.queueToDisplayMs = Date.now() - {queued_ms};
+                        }}
+                    }}));
+                    </script>""", unsafe_allow_javascript=True)
             if report := reply.get("chat_report"):
                 _render_chat_report(report)
             pair = _chat_pair(reply)
@@ -923,6 +961,8 @@ def main():
         </style>
     """)
     settings = Settings.load()
+    if settings.api_key:
+        _preload_model_sdk()
     ws = _workspace()
     if ws.check_data_change():
         st.session_state.agent_messages = []
