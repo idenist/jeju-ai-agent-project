@@ -527,6 +527,18 @@ def _chat_pair(reply):
 
 
 def _chat_report(ws, reply):
+    timing = next((entry["result"] for entry in reply.get("visible_results", [])
+                   if entry.get("tool") == "analyze_shipment_timing" and
+                   entry.get("result", {}).get("status") in {"OK", "INSUFFICIENT_DATA"}), None)
+    if timing is not None:
+        from agents.seunghyuk.shipment_timing_bundle import report_entries, json_from_entries, source_fingerprint
+        economic = ws.session.future_pair.current_result()
+        entries = report_entries(timing, economic)
+        return {"kind": "shipment_timing", "version": ws.store.version,
+                "pair_version": ws.session.future_pair.version,
+                "source_sha256": timing["source"]["data_sha256"],
+                "source_fingerprint": source_fingerprint(),
+                "entries": entries, "json": json_from_entries(entries)}
     pair = _chat_pair(reply)
     if pair is not None:
         state = ws.session.future_pair
@@ -551,12 +563,16 @@ def _chat_report(ws, reply):
             "entries": entries, "json": report_json}
 
 
-def _latest_chat_report(messages, version, current_pair):
+def _latest_chat_report(messages, version, current_pair, pair_version=None):
     for index in range(len(messages) - 1, -1, -1):
         reply = messages[index].get("reply", {})
         if report := reply.get("chat_report"):
             if report["kind"] == "future_pair":
                 current = current_pair == report["entries"][0]["result"]
+            elif report["kind"] == "shipment_timing":
+                from agents.seunghyuk.shipment_timing_bundle import source_fingerprint
+                current = (version == report["version"] and pair_version == report["pair_version"]
+                           and tuple(report["source_fingerprint"]) == source_fingerprint())
             else:
                 current = version == report["version"]
             return (index, report) if current else (None, None)
@@ -568,7 +584,10 @@ def _latest_chat_report(messages, version, current_pair):
 
 
 def _render_chat_report(report):
-    if report["kind"] == "future_pair":
+    if report["kind"] == "shipment_timing":
+        from agents.seunghyuk.shipment_timing_ui import render_integrated_chat_report
+        render_integrated_chat_report(report)
+    elif report["kind"] == "future_pair":
         from agents.juneok.future_pair_ui import render_future_pair_result
         render_future_pair_result(report["entries"][0]["result"], "chat", report_json=report["json"])
     else:
@@ -595,7 +614,7 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                                        for entry in messages[index].get("reply", {}).get("visible_results", []))), None)
     previous_pair_actions = None
     previous_report_slot = None
-    report_index, previous_report = _latest_chat_report(messages, ws.store.version, current_pair)
+    report_index, previous_report = _latest_chat_report(messages, ws.store.version, current_pair, ws.session.future_pair.version)
     transcript = st.container(key="shipment_transcript", height=640, border=False, autoscroll=True) if messages else None
     for index, message in enumerate(messages):
         with transcript.chat_message(message["role"]):
@@ -983,7 +1002,7 @@ def main():
                 from agents.juneok.future_pair_ui import render_future_pair
                 future_result = render_future_pair(ws.session.future_pair)
                 from agents.seunghyuk.shipment_timing_ui import render_shipment_timing_panel
-                render_shipment_timing_panel(ws.session.future_pair.inputs)
+                render_shipment_timing_panel(ws.session.future_pair)
         with tools:
             data_tab, tools_tab = st.tabs(["자료 조회", "추가 도구"])
             with data_tab:

@@ -7,7 +7,7 @@ from copy import deepcopy
 from uuid import uuid4
 from .config import Settings
 from .state import ScenarioStore
-from .tools import TOOLS, execute_tool, explain_term
+from .tools import TOOLS, TIMING_TOOL, execute_tool, explain_term
 from .task_context import TaskContext, data_revision
 from .harness import ExecutionPolicy, RunStopped, RepeatGuard, bound_history, encoded_size, user_starts, classify_failure, FAILURE_GUIDANCE
 
@@ -114,7 +114,7 @@ class AgentSession:
             self.price_history_revision = None
         # [PR #3 충돌 방지] 기본 서비스의 도구 목록·프롬프트는 변경하지 않습니다.
         # --experimental-forecast 모드에서만 별도의 연구용 도구를 선택합니다.
-        experimental_tools, experimental_prompt = TOOLS, SYSTEM_PROMPT
+        experimental_tools, experimental_prompt = [*TOOLS, TIMING_TOOL], SYSTEM_PROMPT
         forced_forecast = False
         if self.experimental_forecast:
             from agents.seunghyuk.forecast_agent import (
@@ -135,11 +135,11 @@ class AgentSession:
             pending_future_pair = self.future_pair.pending is not None
             pending_ml = self.experimental_forecast_draft.awaiting_input
             if pending_future_pair and not pending_ml and not explicitly_ml:
-                experimental_tools = TOOLS
+                experimental_tools = [*TOOLS, TIMING_TOOL]
             else:
                 forced_forecast = keep_experimental_route(question, self.experimental_forecast_draft)
                 experimental_tools = ([EXPERIMENTAL_TOOL] if forced_forecast
-                                      else [*TOOLS, EXPERIMENTAL_TOOL])
+                                      else [*TOOLS, TIMING_TOOL, EXPERIMENTAL_TOOL])
                 experimental_prompt = SYSTEM_PROMPT + EXPERIMENTAL_PROMPT
         start_context_version = self.task_context.snapshot()["version"]
         try:
