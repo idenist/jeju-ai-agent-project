@@ -157,7 +157,7 @@ def render_pdf_report(results: list[dict]) -> bytes:
     buffer = BytesIO()
     document = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=17 * mm, rightMargin=17 * mm,
                                  topMargin=18 * mm, bottomMargin=23 * mm, pageCompression=1,
-                                 title="제주 감귤 출하 비교 보고서", author="제주 감귤 Agent", invariant=1)
+                                 title=markdown.splitlines()[0].removeprefix("# "), author="제주 감귤 Agent", invariant=1)
     styles = _styles()
     story = []
     last_section_start = None

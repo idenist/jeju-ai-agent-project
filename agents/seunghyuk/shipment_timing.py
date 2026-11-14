@@ -256,12 +256,12 @@ def format_timing_report(result: dict) -> str:
         lines += ["", f"- A 주변 7일 출하량 중앙값: **{Decimal(s['a_median_7day_tons']):,.2f}톤**",
                   f"- B 주변 7일 출하량 중앙값: **{Decimal(s['b_median_7day_tons']):,.2f}톤**",
                   f"- B가 더 많았던 해: **{s['b_higher_years']}/{result['paired_year_count']}개**",
-                  f"- 같은 연도의 B−A 출하량 차이 중앙값: **{Decimal(s['paired_median_b_minus_a_tons']):+,.2f}톤**"]
+                  f"- 같은 연도의 출하량 차이 중앙값(B안 - A안): **{Decimal(s['paired_median_b_minus_a_tons']):+,.2f}톤**"]
         if s["paired_median_change_pct"] is not None:
             lines.append(f"- 같은 연도 대비 증감률 중앙값: **{Decimal(s['paired_median_change_pct']):+,.2f}%**")
     else:
         lines += ["", f"**비교 보류:** {result['message']}"]
-    lines += ["", "| 비교 연도 | A 주변 7일(톤) | B 주변 7일(톤) | B−A(톤) |",
+    lines += ["", "| 비교 연도 | A 주변 7일(톤) | B 주변 7일(톤) | B안 - A안(톤) |",
               "| --- | ---: | ---: | ---: |"]
     for row in result["years"]:
         lines.append(f"| {row['reference_year']} | {Decimal(row['a_tons']):,.2f} | "

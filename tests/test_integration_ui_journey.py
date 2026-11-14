@@ -67,7 +67,24 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         next(widget for widget in app.number_input if widget.key == "price_history_interval_days").set_value(interval)
 
     def _pdf_buttons(self, app):
-        return [button for button in app.get("download_button") if button.label == "PDF 보고서 내려받기"]
+        return [button for button in app.get("download_button") if button.label in
+                {"PDF 보고서 내려받기", "출하 비교 PDF 저장"}]
+
+    def test_hub_855_chat_shows_the_integrated_card_without_a_second_pdf(self):
+        app = self._app(key=True)
+        client = 모의_대화_클라이언트("analyze_shipment_timing", {
+            "shipment_variety": "노지온주", "option_a_date": "2026-11-18", "option_b_date": "2026-11-25",
+        })
+        app.session_state.workspace.session.client = client
+        app.text_input(key="shipment_question").set_value(
+            "#855 자료로 노지온주 11월 18일과 11월 25일 출하 시기를 비교해 주세요."
+        )
+        self._run(app, "보내기", key=True)
+        self.assertEqual(client.requests[0]["tool_choice"], "auto")
+        labels = [button.label for button in app.get("download_button")]
+        self.assertEqual(labels.count("출하 시기·경제성 통합 PDF"), 1)
+        self.assertIn("출하 시기·경제성 통합 JSON", labels)
+        self.assertNotIn("PDF 보고서 내려받기", labels)
 
     def test_키가_없어도_경락가격과_손익계산_진입점이_있음(self):
         app = self._app()
@@ -198,7 +215,8 @@ class 통합화면사용자흐름검수(unittest.TestCase):
                     self.assertEqual(saved["archived_results"], entries)
                     self.assertEqual(saved["snapshot"], ws.store.snapshot())
                     self.assertTrue(any(item.value.strip() == render_report(entries).strip() for item in app.markdown))
-                    pdf = outputs["PDF 보고서 내려받기"]
+                    pdf_label = "PDF 보고서 내려받기" if tool == "get_price_history" else "출하 비교 PDF 저장"
+                    pdf = outputs[pdf_label]
                     text = "\n".join(page.extract_text() for page in PdfReader(BytesIO(pdf)).pages)
                     if tool == "get_price_history":
                         price = Decimal(entries[0]["result"]["examples"][0]["target_price_kg"])

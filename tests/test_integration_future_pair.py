@@ -282,7 +282,7 @@ class FuturePairTests(unittest.TestCase):
         result = json.loads(outputs["미래 A/B 결과 JSON 내려받기"])["result"]
         self.assertEqual(result["option_a"], first_a)
         self.assertEqual(Decimal(result["options_b"][0]["difference_vs_a_krw"]), 261850)
-        pdf = PdfReader(BytesIO(outputs["미래 A/B PDF 내려받기"]))
+        pdf = PdfReader(BytesIO(outputs["두 출하일 비교 PDF 저장"]))
         pdf_text = "\n".join(page.extract_text() for page in pdf.pages)
         screen = "\n".join(item.value for item in app.markdown)
         for value in ("7,018,750원", "7,280,600원", "261,850원", "같거나 높아지는 최소 단가"):
@@ -430,7 +430,7 @@ class FuturePairTests(unittest.TestCase):
         result = json.loads(outputs["미래 A/B 결과 JSON 내려받기"])["result"]
         self.assertEqual(result, state.current_result())
         self.assertIn("251,850원", "\n".join(item.value for item in app.markdown))
-        pdf = PdfReader(BytesIO(outputs["미래 A/B PDF 내려받기"]))
+        pdf = PdfReader(BytesIO(outputs["두 출하일 비교 PDF 저장"]))
         self.assertIn("251,850원", "\n".join(page.extract_text() for page in pdf.pages))
         self.assertEqual(ws.store.snapshot(), original)
         self.assertEqual(ws.current_entries(), before_entries)
@@ -497,7 +497,7 @@ class FuturePairTests(unittest.TestCase):
         source = saved["evidence"][saved["options_b"][0]["id"]]
         self.assertEqual(source["clean_pairs"], 15)
         self.assertTrue(source["source"]["comparison_sha256"])
-        pdf = PdfReader(BytesIO(files["미래 A/B PDF 내려받기"]))
+        pdf = PdfReader(BytesIO(files["두 출하일 비교 PDF 저장"]))
         pdf_text = "\n".join(page.extract_text() for page in pdf.pages)
         screen = "\n".join(item.value for item in app.markdown)
         for value in ("7,018,750원", "15쌍", "과거 동일 규격 경락가격쌍", *source["base_date_range"]):

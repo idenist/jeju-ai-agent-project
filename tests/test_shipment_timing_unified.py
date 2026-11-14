@@ -91,6 +91,7 @@ class BundleTest(unittest.TestCase):
         from io import BytesIO
         reader = PdfReader(BytesIO(pdf))
         self.assertGreaterEqual(len(reader.pages), 1)
+        self.assertIn("B안 - A안(톤)", "\n".join(page.extract_text() for page in reader.pages))
 
 
 class ChatReportPipelineTest(unittest.TestCase):

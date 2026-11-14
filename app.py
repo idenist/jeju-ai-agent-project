@@ -727,6 +727,13 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
 def _render_report(entries, *, chat_json=None):
     if not entries:
         return
+    tools = {entry["tool"] for entry in entries}
+    if tools == {"explain_term"}:
+        pdf_label, pdf_name = "용어 설명 PDF 저장", "제주감귤_용어설명.pdf"
+    elif "compare_shipment_options" in tools:
+        pdf_label, pdf_name = "출하 비교 PDF 저장", "제주감귤_비교보고서.pdf"
+    else:
+        pdf_label, pdf_name = "PDF 보고서 내려받기", "제주감귤_비교보고서.pdf"
     markdown = render_report(entries)
     # Cache bytes by the frozen report, not by mutable widget state.
     stamp = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
@@ -742,7 +749,7 @@ def _render_report(entries, *, chat_json=None):
         with st.container(border=True):
             st.markdown("**감귤 출하 비교 보고서**")
             if cached:
-                st.download_button("PDF 보고서 내려받기", cached[1], "제주감귤_비교보고서.pdf", "application/pdf",
+                st.download_button(pdf_label, cached[1], pdf_name, "application/pdf",
                                    key="download_chat_pdf", on_click="ignore")
             else:
                 st.warning("PDF를 만들지 못했습니다. 보고서 미리보기와 JSON은 확인할 수 있습니다.")
@@ -758,7 +765,8 @@ def _render_report(entries, *, chat_json=None):
     st.subheader("결과와 보고서 미리보기")
     st.markdown(markdown)
     if cached:
-        st.download_button("PDF 보고서 내려받기", cached[1], file_name="제주감귤_비교보고서.pdf", mime="application/pdf", key="download_pdf")
+        st.download_button(pdf_label, cached[1], file_name=pdf_name, mime="application/pdf", key="download_pdf",
+                           on_click="ignore")
     else:
         st.error("PDF를 만들지 못했습니다. 미리보기와 입력 조건은 보존했습니다. 설치와 한글 글꼴 파일을 확인한 뒤 다시 시도하세요.")
     with st.expander("보조 형식 · Markdown"):
@@ -1090,8 +1098,12 @@ def main():
             "get_price_history", "get_historical_shipment_context", "get_market_evidence", "explore_data"
         }:
             report_slot = data_report
-        if report_slot is not chat_report or not any(entry["tool"] == "compare_shipment_options" and
-                                                     entry["result"]["status"] == "OK" for entry in entries):
+        has_chat_card = any(
+            (entry["tool"] == "compare_shipment_options" and entry["result"]["status"] == "OK")
+            or (entry["tool"] == "analyze_shipment_timing" and entry["result"]["status"] in {"OK", "INSUFFICIENT_DATA"})
+            for entry in entries
+        )
+        if report_slot is not chat_report or not has_chat_card:
             with report_slot.container():
                 _render_report(entries)
     # 직접 조회·손익 계산 이후 확정된 결과로 사이드바 JSON 다운로드를 생성합니다.
