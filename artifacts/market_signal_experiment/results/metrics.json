@@ -1,0 +1,300 @@
+{
+  "status": "EXPLORATORY_ONLY_NO_DEPLOY",
+  "claim": "Same-feature-set except added market info; tests incremental predictive signal, not causal attribution.",
+  "train_season": "2024-2025",
+  "exploratory_validation_season": "2025-2026",
+  "IMPORTANT": "2025-26 season already repeatedly inspected in V1-H6; NOT independent holdout; 2026-27 partial is excluded.",
+  "forecast_asof": "end of market settlement day t, market aggregate and base price at t assumed available after finalization",
+  "market_scope": "same wholesale market; 제주산 감귤 경매만 (NOT national shipment volume / supply)",
+  "target": "same-spec market daily total_amount / kg on exact future calendar date when both days quality_OK",
+  "sample_selection": ">=5 transactions and known grade+size on BOTH base and target dates. Missing future prices not imputed.",
+  "control": "A=current price (3v14 always earliest); B=fixed HistGradientBoosting with current/spec/history; C=same HGBR with +market features",
+  "fixed_model": {
+    "name": "HistGradientBoostingRegressor",
+    "max_iter": 90,
+    "learning_rate": 0.05,
+    "max_depth": 3,
+    "max_leaf_nodes": 8,
+    "min_samples_leaf": 30,
+    "l2_regularization": 10,
+    "random_state": 42,
+    "target": "log(future/base)"
+  },
+  "categorical_columns": [
+    "market_code",
+    "variety_code",
+    "grade_code",
+    "size_code",
+    "package",
+    "package_kg",
+    "trade_type"
+  ],
+  "baseline_numeric_columns": [
+    "feature_price_kg",
+    "feature_total_kg",
+    "feature_transaction_count",
+    "feature_weekday",
+    "feature_month",
+    "feature_season_day_index",
+    "feature_lag3_price_kg",
+    "feature_lag7_price_kg",
+    "feature_trailing7_mean_price_kg",
+    "feature_trailing7_total_kg",
+    "feature_trailing7_ok_days"
+  ],
+  "added_market_numeric_columns": [
+    "market_7d_kg",
+    "market_prev7d_kg",
+    "market_kg_log_change",
+    "market_price_log_change",
+    "market_7d_transactions",
+    "market_7d_observed_days",
+    "market_prev7d_observed_days",
+    "market_variety_share_7d",
+    "market_variety_share_change",
+    "market_variety_price_log_change",
+    "market_variety_kg_log_change"
+  ],
+  "market_missing_days": "never impute missing raw market observation as zero; 7d windows require >=4 observed days for trend; other missing values median-imputed in train only",
+  "source_data_audit": {
+    "source_zip_sha256": "dd192088571facce6996a95a8e8d54a75b0e912fac4b5f51f7cdd9bfca8ee053",
+    "source_zip_files": 12,
+    "selected_files": {
+      "2024-2025": 5,
+      "2025-2026": 5
+    },
+    "ignored_season": "2026-2027 (partial, excluded from training, feature selection, validation)",
+    "rows_by_season": {
+      "2024-2025": {
+        "raw_rows": 178160,
+        "accepted_rows": 166670,
+        "not_auction": 6152,
+        "nonpositive": 1852,
+        "not_jeju": 2149,
+        "amount_mismatch": 337,
+        "exact_duplicate": 1000
+      },
+      "2025-2026": {
+        "raw_rows": 207526,
+        "accepted_rows": 198138,
+        "not_jeju": 638,
+        "not_auction": 6367,
+        "nonpositive": 2230,
+        "amount_mismatch": 134,
+        "exact_duplicate": 19
+      }
+    },
+    "detail_group_count": {
+      "2024-2025": 9246,
+      "2025-2026": 6023
+    },
+    "detail_quality_ok_count": {
+      "2024-2025": 2438,
+      "2025-2026": 1822
+    },
+    "market_dates_by_season": {
+      "2024-2025": 124,
+      "2025-2026": 120
+    }
+  },
+  "sample_counts": {
+    "train": 4588,
+    "validation": 3277,
+    "train_unique_base_days": 116,
+    "validation_unique_base_days": 117
+  },
+  "scores": {
+    "3": {
+      "n": 1047,
+      "days": 90,
+      "mae_krw_kg": {
+        "A": 450.649,
+        "B": 422.521,
+        "C": 449.413
+      },
+      "market_gain_B_minus_C_mae": -26.892,
+      "market_gain_B_minus_C_weekly_bootstrap_ci": {
+        "weeks": 22,
+        "ci_low": -48.846,
+        "ci_high": -7.646
+      },
+      "by_month": {
+        "01": {
+          "n": 169,
+          "mae_A": 426.342,
+          "mae_B": 456.115,
+          "mae_C": 508.4
+        },
+        "02": {
+          "n": 163,
+          "mae_A": 495.964,
+          "mae_B": 510.148,
+          "mae_C": 511.673
+        },
+        "10": {
+          "n": 268,
+          "mae_A": 571.649,
+          "mae_B": 494.87,
+          "mae_C": 522.258
+        },
+        "11": {
+          "n": 248,
+          "mae_A": 268.766,
+          "mae_B": 233.785,
+          "mae_C": 239.341
+        },
+        "12": {
+          "n": 199,
+          "mae_A": 497.887,
+          "mae_B": 459.989,
+          "mae_C": 512.015
+        }
+      }
+    },
+    "7": {
+      "n": 1180,
+      "days": 106,
+      "mae_krw_kg": {
+        "A": 572.767,
+        "B": 510.689,
+        "C": 554.618
+      },
+      "market_gain_B_minus_C_mae": -43.929,
+      "market_gain_B_minus_C_weekly_bootstrap_ci": {
+        "weeks": 21,
+        "ci_low": -112.347,
+        "ci_high": 2.183
+      },
+      "by_month": {
+        "01": {
+          "n": 192,
+          "mae_A": 560.796,
+          "mae_B": 542.647,
+          "mae_C": 534.857
+        },
+        "02": {
+          "n": 132,
+          "mae_A": 638.612,
+          "mae_B": 604.637,
+          "mae_C": 675.939
+        },
+        "10": {
+          "n": 357,
+          "mae_A": 723.922,
+          "mae_B": 611.391,
+          "mae_C": 699.549
+        },
+        "11": {
+          "n": 272,
+          "mae_A": 362.667,
+          "mae_B": 290.926,
+          "mae_C": 297.742
+        },
+        "12": {
+          "n": 227,
+          "mae_A": 558.635,
+          "mae_B": 533.983,
+          "mae_C": 580.651
+        }
+      }
+    },
+    "14": {
+      "n": 1050,
+      "days": 104,
+      "mae_krw_kg": {
+        "A": 610.587,
+        "B": 565.901,
+        "C": 618.049
+      },
+      "market_gain_B_minus_C_mae": -52.148,
+      "market_gain_B_minus_C_weekly_bootstrap_ci": {
+        "weeks": 20,
+        "ci_low": -102.004,
+        "ci_high": -14.267
+      },
+      "by_month": {
+        "01": {
+          "n": 180,
+          "mae_A": 498.27,
+          "mae_B": 617.275,
+          "mae_C": 642.402
+        },
+        "02": {
+          "n": 103,
+          "mae_A": 845.599,
+          "mae_B": 860.94,
+          "mae_C": 1087.257
+        },
+        "10": {
+          "n": 345,
+          "mae_A": 677.931,
+          "mae_B": 531.589,
+          "mae_C": 551.868
+        },
+        "11": {
+          "n": 213,
+          "mae_A": 500.28,
+          "mae_B": 357.93,
+          "mae_C": 400.987
+        },
+        "12": {
+          "n": 209,
+          "mae_A": 592.751,
+          "mae_B": 644.843,
+          "mae_C": 696.299
+        }
+      }
+    }
+  },
+  "choice_3v14": {
+    "A": {
+      "pairs": 724,
+      "different_base_dates": 80,
+      "selection_accuracy_pct": 59.39,
+      "mean_regret_krw": 402858.0,
+      "recommended_B": 0,
+      "incorrect_B": 0
+    },
+    "B": {
+      "pairs": 724,
+      "different_base_dates": 80,
+      "selection_accuracy_pct": 56.08,
+      "mean_regret_krw": 483129.0,
+      "recommended_B": 408,
+      "incorrect_B": 216
+    },
+    "C": {
+      "pairs": 724,
+      "different_base_dates": 80,
+      "selection_accuracy_pct": 49.45,
+      "mean_regret_krw": 635864.0,
+      "recommended_B": 520,
+      "incorrect_B": 296
+    },
+    "market_regret_gain_B_minus_C": -152735.0,
+    "weekly_bootstrap_regret_B_minus_C": {
+      "weeks": 20,
+      "ci_low": -401988.624,
+      "ci_high": 23083.964
+    }
+  },
+  "hypothetical_choice_contract": {
+    "quantity_kg": 3000,
+    "shrink_3d": 0.01,
+    "shrink_14d": 0.04,
+    "fee_3d": 0.05,
+    "fee_14d": 0.07,
+    "storage_per_day_krw": 10000,
+    "meaning": "arbitrary example conditions; not real farm profit or guarantee"
+  },
+  "limitations": [
+    "Settlement date != physical shipping date; daily data may not have been finalized at farmer decision time.",
+    "One independent train season, one repeatedly used exploratory validation season. Selection bias possible.",
+    "Quality OK means >=5 transactions with grade and size known; does NOT guarantee price homogeneity.",
+    "Auction corporation and shipment type are mixed by prior target contract; they may shift over time.",
+    "Market-level price mixes varieties and specifications; its trend can reflect composition changes.",
+    "Exact-date and both-days-OK label coverage may be selection-biased; not all potential farm cases.",
+    "Weekly bootstraps are exploratory; adjacent weeks and seasons still not statistically independent.",
+    "jeju_shipments(1).csv is deliberately not used; it ends Sep 2025, with missing dates."
+  ]
+}
