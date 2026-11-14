@@ -13,7 +13,7 @@ from .harness import ExecutionPolicy, RunStopped, RepeatGuard, bound_history, en
 
 SYSTEM_PROMPT = """당신은 제주 감귤 출하 대안 비교 Agent입니다. 한국어로 필요한 조건을 간단히 확인합니다.
 실제 출하 기록·정산·공제·입금 검산 요청에는 reconcile_settlement를 사용하세요. 현재 기록 버전을 expected_record_revision에 넣고 기록이 없으면 null로 조회해 입력 안내를 표시합니다. 실제 기록은 카드에서 사용자 확인 후만 저장하며 update_scenario에 정산 금액을 넣지 않습니다. 검산 금액·입력·근거는 Python이 로컬 화면에 직접 표시하고 모델은 금액 없는 처리 상태만 받습니다. 동의 절차를 요구하거나 볼 수 없는 금액을 만들지 마세요. 후속 정산 질문도 최신 기록에 대해 이 도구를 다시 호출하세요. 원래 가정 대조·보관 효과 추정은 아직 미지원입니다. 근거 ID·URL을 생성하지 마세요.
-사용자가 확보된 품종·규격의 목록이나 후보 탐색 자체를 요청할 때 explore_data를 사용합니다. 반면 과거 경락가격 비교·정확한 날짜 간격의 가격쌍 조회를 명시적으로 요청하면 일부 조건을 모르더라도 get_price_history가 우선입니다. 이 경우 explore_data로 대신 조회해 자료가 없다고 단정하지 마세요. 탐색 필터에는 사용자가 명시한 값만 넣고 후보를 농가 조건으로 자동 확정하지 않습니다. 출하/경매 품종을 연결하지 않습니다.
+사용자가 확보된 품종·규격의 목록이나 후보 탐색 자체를 요청할 때 explore_data를 사용합니다. 독립적인 과거 경락가격 비교·정확한 날짜 간격의 가격쌍 조회를 명시적으로 요청하면 일부 조건을 모르더라도 get_price_history가 우선입니다. 두 미래 출하안의 B단가에 사용할 과거 근거는 compare_future_pair로 조회합니다. 이 경우 explore_data로 대신 조회해 자료가 없다고 단정하지 마세요. 탐색 필터에는 사용자가 명시한 값만 넣고 후보를 농가 조건으로 자동 확정하지 않습니다. 출하/경매 품종을 연결하지 않습니다.
 주어진 제안단가에서 감모나 하루 보관비를 얼마까지 감당할 수 있는지 질문하면 solve_offer_limits를 사용합니다. 제안단가를 시장조회값으로 자동 채우지 말고 사용자 값/가정을 확인합니다. 역산 변수의 기존 미확인 값은 필요하지 않지만 고정할 다른 조건은 필요합니다. 상태를 바꾸지 말고 한 변수씩 계산합니다.
 역산/민감도용 가정 단가는 해당 도구 인수에만 넣습니다. 역산 요청의 3300원 같은 가정을 update_scenario의 future_price_per_kg에 저장하면 안 됩니다. 현재 조건 유지 요청이면 update_scenario 자체를 호출하지 마세요. 사용자가 실제 저장 조건 변경을 별도로 명시한 경우에만 변경합니다.
 저장한 비교와 현재 조건의 변경 검토에는 review_case_changes를 사용합니다. 기준 파일은 앱에서 사용자가 확인/선택한 파일만 사용합니다. 없으면 업로드/선택을 요청하고 임의 파일/경로를 만들지 마세요. 변경 검토는 현재 조건을 복원하거나 바꾸지 않습니다.
@@ -35,6 +35,9 @@ update의 patch에서 변경하지 않을 항목은 null. options를 바꾸면 �
 이미 알던 조건을 모름으로 철회하면 update_scenario의 clear_fields에 해당 이름을 넣으세요. patch null은 철회가 아닙니다.
 오늘과 미래를 비교할 조건은 계산 전에 update_scenario에 저장하세요. 두 날짜가 모두 미래인 비교에는 compare_future_pair를 사용하세요. expected_version은 현재 P2 조건의 version입니다. 시작일과 각 보관일은 사용자 표현으로 확정 가능한 값만 전달하세요. B안만 수정하거나 누락 답변을 보완할 때는 edit로 지정하고 확인한 값만 보내세요. 보관일을 바꿀 때 새 기간 전체 감모율을 사용자가 함께 확인한 경우에만 그 값과 loss_confirmed_for_period=true를 전달하세요. 값 철회는 clear_fields에 넣고(거래규격 예: history_filters.grade), 확인 질문이나 계산 결과를 받으면 finish_turn=true로 종료하세요. 용어·자료 해석 질문에는 explain_term 도구를 사용하세요.
 사용자가 B안에 과거 변동을 반영해 달라고 하면 price_mode=history로 선택하고 명시한 동일 거래규격만 history_filters에 넣으세요. 과거 모드의 날짜 수정은 모드와 규격을 유지합니다. 과거자료가 없거나 검증에 실패하면 도구 안내를 표시하고 사용자가 B 단가를 직접 제공한 경우에만 manual로 전환합니다. A 단가는 사용자가 정합니다. 과거 가격 가정과 직접 단가를 같은 요청에서 섞거나 후보를 임의 선택하지 마세요.
+두 미래 출하안에서 과거 가격을 먼저 보고 싶거나 B안 가격을 과거 변동으로 가정하려면, 감모율·보관비·수수료·A 단가가 미확인이어도 compare_future_pair를 price_mode=history로 호출하세요. 이미 저장된 과거 모드의 후속 답변은 edit로 이번에 알려준 값만 반영하세요. 모르는 값은 null로 두며, 0은 사용자가 확인한 경우에만 넣으세요. 도구가 가격 근거와 누락 조건을 표시하므로 HISTORY_READY, NEEDS_INPUT, NO_DATA가 나오면 그 응답으로 턴을 끝내세요.
+새 미래 출하안 비교에서 나중 단가를 모른다고 말하면 동일 규격의 과거 근거를 먼저 확인하세요. 직접 입력을 명시한 경우 그 방식을 사용하세요. 사용자가 비용을 두 안에 공통으로 적용한다고 말하면, 한 번 말한 보관비·별도 비용·수수료율을 option_a와 option_b의 해당 항목에 함께 넣으세요. 안별 값도 명시했으면 해당 안에 그 값을 사용하세요. 특정 안에만 말한 비용은 그 안에만 반영하세요. 감모율은 각각의 보관기간에 해당하는 값만 반영하세요.
+두 미래 출하안 비교가 확인을 기다릴 때 규격을 모르겠거나 확인 방법을 묻는 답변은 현재 비교의 후속입니다. 사용자가 새 비교나 다른 도구를 명시하지 않으면 현재 비교를 이어가세요. 새로 확인된 값이 있으면 compare_future_pair의 edit에 넣고, 확인 방법만 물으면 비교 조건을 변경하지 않습니다.
 새 기간 감모를 사용자가 명시 확인한 경우에만 loss_confirmed_for_period=true.
 현재 단가가 있으면 손익계산에 시장 등급·크기·포장을 요구하지 않습니다.
 저장·출하 변경 가능성은 사용자가 말하지 않으면 null로 두며, 가상 경제성 비교와 실행 가능성을 구분합니다.
@@ -113,6 +116,7 @@ class AgentSession:
                     f"이전 과거 경락가격 조회 인수(자동 적용값·후보 제외): {json.dumps(self.price_history_query, ensure_ascii=False)}\n"
                     f"오늘(KST): {today}\n"
                     f"두 미래 출하안 비교 조건: {json.dumps(self.future_pair.snapshot(), ensure_ascii=False)}\n"
+                    f"두 미래 출하안에서 확인 중인 항목: {json.dumps((self.future_pair.pending or {}).get('missing_fields', []), ensure_ascii=False)}\n"
                     f"정산 기록: {json.dumps({'available': bool(self.shipment and self.shipment.revision), 'revision': self.shipment.revision if self.shipment else None, 'details': 'local_only'}, ensure_ascii=False)}\n"
                     f"사용자: {question.strip()}")
                 metrics["trimmed_history_turns"] += bound_history(self.messages, self.policy.history_turns, self.policy.input_characters)
@@ -191,6 +195,8 @@ class AgentSession:
                         result = execute_tool(call.name, arguments, self.store, future_pair=self.future_pair)
                     else:
                         result = execute_tool(call.name, arguments, self.store)
+                    if call.name in {"update_scenario", "compare_shipment_options"} and result["status"] != "INVALID_INPUT":
+                        self.future_pair.pending = None
                     self.task_context.record(call.name, recorded_arguments or {}, result, scenario=self.store.scenario)
                     item = {"tool": call.name, "result": result}
                     results.append(item)
@@ -254,14 +260,16 @@ class AgentSession:
                       ("forecast_limits", ("예측", "다음 주", "미래가격"))]
             help_intent = any(x in question for x in ("뜻", "뭐", "무엇", "설명", "의미", "예측", "다음 주"))
             topic = next((t for t, words in topics if help_intent and any(w in question for w in words)), None)
-            missing = compare_shipment_options(self.store.scenario)
             if topic:
                 entry = {"tool": "explain_term", "result": explain_term(topic)}
                 results.append(entry)
                 visible = [entry]
+            elif self.future_pair.pending is not None:
+                visible = [{"tool": "compare_future_pair", "result": deepcopy(self.future_pair.pending)}]
             else:
+                missing = compare_shipment_options(self.store.scenario)
                 visible = [{"tool": "compare_shipment_options", "result": missing}] if missing["status"] == "NEEDS_INPUT" else []
-        text = render_dialogue(visible) if visible else "비교·조회할 조건을 말씀해 주세요. 확인된 조회·계산 결과가 없으면 수치를 제시하지 않습니다."
+        text = render_dialogue(visible, question=question) if visible else "비교·조회할 조건을 말씀해 주세요. 확인된 조회·계산 결과가 없으면 수치를 제시하지 않습니다."
         report = report_for(visible)
         if status != "OK":
             warning = "\n\n" + FAILURE_GUIDANCE.get(status, FAILURE_GUIDANCE["API_ERROR"]) + " 확인된 도구 결과까지만 부분 결과이며 요청 전체가 완료된 것은 아닙니다."

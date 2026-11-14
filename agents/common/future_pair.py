@@ -14,6 +14,34 @@ def _engine_option(option, template):
             "costs": None if costs is None else [{"category": "other", "amount_krw": costs}]}
 
 
+def _verified_history(lookup, args, **kwargs):
+    before = verify_integrated_price_sources(PROJECT_ROOT)
+    if before["status"] != "OK" or before.get("full_content_verified") is not True:
+        return {"status": "DATA_ERROR", "message": "과거 가격 자료의 원천을 확인하지 못했습니다. B안 단가를 직접 입력할 수 있습니다."}
+    result = lookup(args, **kwargs)
+    after = verify_integrated_price_sources(PROJECT_ROOT)
+    if (after["status"] != "OK" or after.get("full_content_verified") is not True
+            or before["selected_market_sha256"] != after["selected_market_sha256"]
+            or before["comparison_source_sha256"] != after["comparison_source_sha256"]):
+        return {"status": "DATA_ERROR", "message": "조회 중 자료가 바뀌었습니다. B안 단가를 직접 입력할 수 있습니다."}
+    return result
+
+
+def preview_future_pair_history(start_date, days_a, days_b, price_a, filters):
+    """Read historical evidence before the cost inputs are known."""
+    from agents.jeonghyeon.price_scenario import execute_scenario_tool
+
+    start = date.fromisoformat(start_date)
+    result = _verified_history(execute_scenario_tool, {
+        **filters, "option_a_sale_date": (start + timedelta(days=days_a)).isoformat(),
+        "option_b_sale_date": (start + timedelta(days=days_b)).isoformat(),
+        "option_a_price_per_kg": price_a,
+    })
+    if result.get("manual_price_allowed"):
+        result = {**result, "manual_price_required": True}
+    return result
+
+
 def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b,
                         price_a, price_b=None, history_filters=None):
     """The historical interval is B minus A. Storage costs start at day zero."""
@@ -55,21 +83,14 @@ def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b
     else:
         from agents.jeonghyeon.comparison_input import build_future_pair_input
 
-        before = verify_integrated_price_sources(PROJECT_ROOT)
-        if before["status"] != "OK" or before.get("full_content_verified") is not True:
-            return {"status": "DATA_ERROR", "message": "과거 가격 자료의 원천을 확인하지 못했습니다. B안 단가를 직접 입력할 수 있습니다."}
         cost_fields = ("delay_days", "loss_percent", "daily_storage_cost")
-        converted = build_future_pair_input(
+        converted = _verified_history(
+            build_future_pair_input,
             {**history_filters, "option_a_sale_date": sale_a, "option_b_sale_date": sale_b,
              "option_a_price_per_kg": price_a},
             option_a={key: option_a.get(key) for key in cost_fields},
             option_b={key: option_b.get(key) for key in cost_fields},
         )
-        after = verify_integrated_price_sources(PROJECT_ROOT)
-        if (after["status"] != "OK" or after.get("full_content_verified") is not True
-                or before["selected_market_sha256"] != after["selected_market_sha256"]
-                or before["comparison_source_sha256"] != after["comparison_source_sha256"]):
-            return {"status": "DATA_ERROR", "message": "조회 중 자료가 바뀌었습니다. B안 단가를 직접 입력할 수 있습니다."}
         if converted["status"] != "OK":
             return converted
         converted_input = converted["comparison_input"]

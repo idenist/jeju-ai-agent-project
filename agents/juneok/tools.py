@@ -46,7 +46,7 @@ def tool(name: str, description: str, properties: dict) -> dict:
 
 
 TOOLS = [
-    tool("compare_future_pair", "두 미래 출하일을 비교합니다. 새 비교는 new, 기존 P2 조건 수정은 edit. B안 단가는 직접 입력(manual) 또는 과거 동일규격 변동 가정(history). 사용자가 말한 값만 보내고 변경 없는 값은 null. 날짜 변경 시 새 기간 전체 감모를 확인한 경우에만 같이 전달합니다.",
+    tool("compare_future_pair", "두 미래 출하일을 비교합니다. 새 비교는 new, 기존 P2 조건 수정은 edit. B안 단가는 직접 입력(manual) 또는 과거 동일규격 변동 가정(history). history는 감모율·보관비가 없어도 과거 근거를 먼저 조회합니다. 사용자가 말한 값만 보내고 변경 없는 값은 null. 날짜 변경 시 새 기간 전체 감모를 확인한 경우에만 같이 전달합니다.",
          {"action": {"type": "string", "enum": ["new", "edit"]}, "expected_version": {"type": "integer"},
           "patch": object_schema({"quantity": nullable("number"), "price_basis": nullable("string", enum=["gross", "commission_net", None]),
                                   "start_date": nullable("string"), "price_a": nullable("number"), "price_b": nullable("number"),
