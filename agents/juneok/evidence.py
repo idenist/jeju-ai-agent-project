@@ -109,7 +109,7 @@ def _shipment_source(root: Path, rows: list[dict]) -> tuple[dict, list[str], dic
     return source, warnings, report
 
 
-def get_historical_shipment_context(args: dict, root: Path = PROJECT_ROOT) -> dict:
+def get_historical_shipment_context(args: dict, root: Path = PROJECT_ROOT, *, on_progress=None) -> dict:
     """Return historical monthly values without imputing missing periods."""
     allowed = {"shipment_variety", "target_month", "start_year", "end_year"}
     try:
@@ -131,6 +131,8 @@ def get_historical_shipment_context(args: dict, root: Path = PROJECT_ROOT) -> di
         return _error("INVALID_INPUT", str(exc))
     try:
         root = Path(root)
+        if on_progress:
+            on_progress("shipment_csv")
         rows = _shipment_rows(root)
         source, warnings, report = _shipment_source(root, rows)
         selected = [r for r in rows if r["variety"] == variety and int(r["year_month"][5:]) == month
@@ -195,7 +197,7 @@ def _market_rows(root: Path) -> list[dict]:
     return rows
 
 
-def get_market_evidence(args: dict, root: Path = PROJECT_ROOT) -> dict:
+def get_market_evidence(args: dict, root: Path = PROJECT_ROOT, *, on_progress=None) -> dict:
     """Query an exact condition and recompute weighted price from source totals."""
     try:
         if not isinstance(args, dict) or set(args) - (MARKET_FIELDS | {"as_of"}):
@@ -217,6 +219,8 @@ def get_market_evidence(args: dict, root: Path = PROJECT_ROOT) -> dict:
     try:
         from .data_refresh import resolve_market_root
         selected_root = resolve_market_root(Path(root))
+        if on_progress:
+            on_progress("market_csv")
         rows = _market_rows(selected_root)
         auction = [r for r in rows if r["trade_type"] == "경매"]
         dates = [_day(r["date"]) for r in auction]

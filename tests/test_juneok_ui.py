@@ -10,8 +10,6 @@ from streamlit.testing.v1 import AppTest
 from agents.juneok.reporting import render_report, render_result
 from agents.juneok.comparison import compare_shipment_options
 from agents.juneok.state import demo_scenario
-from agents.juneok.agent import AgentSession
-from agents.juneok.config import Settings
 from test_juneok_harness import FakeClient, call, response
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,19 +41,21 @@ class UiTests(unittest.TestCase):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "TEST_ONLY_NOT_A_REAL_KEY"}):
             app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
             app.session_state.workspace.session.client = FakeClient(responses)
-            app.chat_input[0].set_value("가상 조건을 입력할게요").run()
+            app.text_input(key="shipment_question").set_value("가상 조건을 입력할게요")
+            app.button(key="shipment_send").click().run()
             self.assertEqual(list(app.exception), [])
             self.assertEqual(app.session_state.quantity, "3000")
             self.assertEqual(app.session_state.loss_0, "2")
             self.assertEqual(app.session_state.card_option_ids[0], "seven_days")
             next(x for x in app.text_input if x.key == "loss_0").set_value("4").run()
-            self.assertTrue(app.chat_input[0].disabled)
+            self.assertTrue(app.text_input(key="shipment_question").disabled)
             self.assertEqual(len(app.get("download_button")), 0)
             self.assertTrue(any("카드에 저장 전 수정" in x.label for x in app.expander))
             next(b for b in app.button if b.label == "입력 조건 비교").click().run()
-            self.assertFalse(app.chat_input[0].disabled)
+            self.assertFalse(app.text_input(key="shipment_question").disabled)
             self.assertIs(app.session_state.workspace.store, app.session_state.agent_session.store)
-            app.chat_input[0].set_value("방금 카드의 조건을 다시 확인해 줘").run()
+            app.text_input(key="shipment_question").set_value("방금 카드의 조건을 다시 확인해 줘")
+            app.button(key="shipment_send").click().run()
             self.assertEqual(list(app.exception), [])
             self.assertEqual(app.session_state.workspace.store.version, 2)
             self.assertEqual(app.session_state.loss_0, "4")
@@ -113,23 +113,43 @@ class UiTests(unittest.TestCase):
             self.assertFalse(any(b.label == "확인한 자료 적용 · 대화 초기화" for b in app.button))
 
     def test_chat_success_label_report_and_rerun_preserve_results(self):
-        session = AgentSession(Settings(model="mock"), FakeClient([response(call("update_scenario", {
-            "expected_version": 0, "patch": demo_scenario(), "finish_turn": True}))]))
-        reply = session.run("가상 조건")
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "TEST_ONLY_NOT_A_REAL_KEY"}), patch.object(AgentSession, "run", return_value=reply):
+        responses = [response(call("update_scenario", {
+            "expected_version": 0, "patch": demo_scenario(), "finish_turn": True}))]
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "TEST_ONLY_NOT_A_REAL_KEY"}):
             app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
-            app.chat_input[0].set_value("조건 비교").run()
+            app.session_state.workspace.session.client = FakeClient(responses)
+            app.text_input(key="shipment_question").set_value("조건 비교")
+            app.button(key="shipment_send").click().run()
             self.assertEqual(list(app.exception), [])
             self.assertTrue(any("호출 성공" in str(x.value) for x in app.sidebar.markdown))
             self.assertTrue(any("3,109원/kg" in str(x.value) for x in app.markdown))
-            self.assertEqual(app.session_state.agent_messages[-1]["reply"]["report"], reply["report"])
+            saved_report = app.session_state.agent_messages[-1]["reply"]["chat_report"]
             app.run()
             self.assertEqual(list(app.exception), [])
             self.assertTrue(any("3,109원/kg" in str(x.value) for x in app.markdown))
-            self.assertEqual({b.label for b in app.get("download_button")}, {"PDF 보고서 내려받기", "MD 내려받기", "비교 JSON 내려받기"})
+            self.assertIn("PDF 보고서 내려받기", {b.label for b in app.get("download_button")})
+            self.assertTrue(any(x.label == "보고서 미리보기" for x in app.expander))
+            self.assertTrue(any(x.label == "상세 · JSON" for x in app.expander))
+            self.assertEqual(app.session_state.agent_messages[-1]["reply"]["chat_report"], saved_report)
             with patch.dict(os.environ, {"OPENAI_MODEL": "different-model"}):
                 app.run()
                 self.assertTrue(any("실제 호출 전" in str(x.value) for x in app.sidebar.markdown))
+
+    def test_chat_pdf_request_reuses_the_saved_report(self):
+        responses = [response(call("update_scenario", {"expected_version": 0, "patch": demo_scenario(), "finish_turn": True}))]
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "TEST_ONLY_NOT_A_REAL_KEY"}):
+            app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+            ws = app.session_state.workspace
+            ws.session.client = FakeClient(responses)
+            app.text_input(key="shipment_question").set_value("가상 조건으로 출하를 비교해 주세요")
+            app.button(key="shipment_send").click().run()
+            before = app.session_state.agent_messages[-1]["reply"]["chat_report"]
+            with patch.object(ws, "run", side_effect=AssertionError("report retrieval ran the model")):
+                app.text_input(key="shipment_question").set_value("방금 비교 PDF로 줘")
+                app.button(key="shipment_send").click().run()
+            self.assertFalse(app.exception)
+            self.assertEqual(app.session_state.agent_messages[-1]["reply"]["chat_report"], before)
+            self.assertEqual(sum(b.label == "PDF 보고서 내려받기" for b in app.get("download_button")), 1)
 
     def make_app(self):
         # Blank OS override makes tests independent of the developer's product .env.
@@ -140,7 +160,7 @@ class UiTests(unittest.TestCase):
 
     def test_keyless_screen_has_offline_tools_and_disabled_chat(self):
         app = self.make_app()
-        self.assertTrue(app.chat_input[0].disabled)
+        self.assertTrue(app.text_input(key="shipment_question").disabled)
         self.assertTrue(any("API 키 미설정" in str(x.value) for x in app.sidebar.markdown))
         self.assertTrue(any(x.value == "현재 조건 카드" for x in app.subheader))
 

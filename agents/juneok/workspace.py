@@ -315,10 +315,10 @@ class SharedWorkspace:
             self.calculate([FIELD_NAMES.get(k, k) for k in updated.get("changed_fields", [])])
         return updated
 
-    def run(self, question):
+    def run(self, question, *, on_progress=None):
         revision = data_revision()
         self.session.comparison_input_context = self.input_context
-        reply = self.session.run(question)
+        reply = self.session.run(question, on_progress=on_progress) if on_progress else self.session.run(question)
         visible = reply.get("visible_results", [])
         entries = [entry for entry in visible if entry["tool"] != "compare_future_pair"]
         if entries or not visible or reply["status"] != "OK":

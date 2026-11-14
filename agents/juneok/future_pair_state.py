@@ -172,16 +172,16 @@ class FuturePairState:
     def _storage_days(self):
         return {f"{side}안": self.inputs[f"option_{side.lower()}"]["delay_days"] for side in ("A", "B")}
 
-    def calculate(self, *, preview_history=False):
+    def calculate(self, *, preview_history=False, on_progress=None):
         self.clear_result()
         historical = self.inputs["history_filters"] is not None
         if missing := self._missing(self.inputs):
             if preview_history and historical:
-                return self._preview_history(missing)
+                return self._preview_history(missing, on_progress)
             return self._response("NEEDS_INPUT", "비교 조건을 확인해 주세요.", missing_fields=missing,
                                   comparison_inputs_pending=preview_history, storage_days=self._storage_days())
         revision = _price_revision() if historical else None
-        result = compare_future_pair(**self.inputs)
+        result = compare_future_pair(**self.inputs, on_progress=on_progress)
         if historical and ((revision is None and result["status"] == "OK")
                            or (revision is not None and revision != _price_revision())):
             return self._response("DATA_ERROR", "조회 중 가격 자료가 바뀌었습니다. B안 단가를 직접 입력할 수 있습니다.",
@@ -191,13 +191,15 @@ class FuturePairState:
             self.source_revision = revision
         return self._agent_result({**result, "analysis_type": "future_pair", "future_pair_version": self.version})
 
-    def _preview_history(self, missing):
+    def _preview_history(self, missing, on_progress):
         start = self.inputs["start_date"]
         a, b = (self.inputs[side]["delay_days"] for side in ("option_a", "option_b"))
         date_labels = {LABELS["start_date"], "A안 보관일", "B안 보관일"}
         if date_fields := [field for field in missing if field in date_labels]:
             return self._response("NEEDS_INPUT", "과거 가격을 조회할 날짜부터 알려주세요.", missing_fields=date_fields)
         revision = _price_revision()
+        if on_progress:
+            on_progress("price_history")
         result = preview_future_pair_history(start, a, b, self.inputs["price_a"], self.inputs["history_filters"])
         if result.get("scenarios"):
             if revision is None or revision != _price_revision():
@@ -240,7 +242,7 @@ class FuturePairState:
                         if inputs[key][field] is None and (field != "fee_percent" or inputs["price_basis"] == "gross")]
         return missing
 
-    def apply(self, action, expected_version, patch, clear_fields=None):
+    def apply(self, action, expected_version, patch, clear_fields=None, *, on_progress=None):
         if type(expected_version) is not int or expected_version != self.version:
             return self._response("INVALID_INPUT", "비교 조건 버전이 바뀌었습니다. 최신 조건을 확인해 주세요.")
         if action not in ("new", "edit") or not isinstance(patch, dict):
@@ -252,7 +254,7 @@ class FuturePairState:
         except ValueError as exc:
             return self._response("INVALID_INPUT", str(exc))
         self.replace(candidate)
-        result = self.calculate(preview_history=True)
+        result = self.calculate(preview_history=True, on_progress=on_progress)
         if result["status"] in {"NEEDS_INPUT", "NO_DATA"}:
             self.pending = deepcopy(result)
         return result
@@ -293,8 +295,12 @@ class FuturePairState:
                 candidate[side][name] = None
                 if name == "delay_days":
                     candidate[side]["loss_percent"] = None
-            elif side == "history_filters" and name in HISTORY_FIELDS and history:
-                candidate["history_filters"].pop(name, None)
+            elif mode == "manual" and field == "history_filters":
+                # Switching to a manual price already removed the history filters.
+                continue
+            elif side == "history_filters" and name in HISTORY_FIELDS and (history or mode == "manual"):
+                if history:
+                    candidate["history_filters"].pop(name, None)
             else:
                 raise ValueError("지울 비교 항목을 확인해 주세요.")
         for field in LABELS:
