@@ -98,6 +98,16 @@ UI 변경 전 상태를 [원격 개인 브랜치 체크포인트 0353a0f](https:
 
 2026-11-14 로컬 검토본에 대화 결과에서 나중 출하일을 바꾸는 동작을 반영했다. Chrome에서 `gpt-6-luna`로 3일과 10일을 비교한 뒤, 달력에서 나중 출하일을 12월 1일로 바꿨다. 17일 보관에 대한 감모율만 물었고, 14일 간격 가격쌍 15개를 먼저 표시했다. 감모율 4%를 대화로 답한 뒤 A안 비교금액 7,018,750원과 나중 출하 최소 단가 2,686원/kg을 화면·PDF·JSON에서 확인했다.
 
+### 4. 첫 화면과 대화 입력 다듬기
+
+- 제목 아래에 예시 두 장을 두고, 입력 라벨과 입력칸·보내기 버튼을 보여준다. 보내기는 입력칸 오른쪽에 둔다. 추천 질문 두 개는 비교 의도만 담아 클릭하면 바로 전송한다. 상단 탭에서 대화·직접 입력·자료 도구를 바꾸며, 같은 세션의 대화와 비교 조건을 유지한다. [W3C 입력 안내](https://www.w3.org/WAI/tutorials/forms/instructions/) · [Microsoft HAX의 대화 시작 예시](https://www.microsoft.com/en-us/haxtoolkit/example/business-chat-g1-d-demonstrate-possible-system-inputs/)
+- 대화를 시작하면 예시를 접고 입력을 화면 하단에 고정한다. 보내기·Enter·추천 질문은 같은 전송 흐름을 사용한다. 설치 기준은 `requirements-juneok.lock`의 Streamlit 1.67.0이다. [Streamlit 하단 영역](https://docs.streamlit.io/develop/api-reference/layout/st.bottom) · [Streamlit 폼](https://docs.streamlit.io/develop/concepts/architecture/forms)
+- 대기 중에는 경과 시간과 실제 CSV 조회·손익 계산 단계를 보여준다. 작업 과정은 열린 상태로 시작하고, 답변이 나오면 전체 소요 시간으로 접힌다. [Streamlit 상태 표시](https://docs.streamlit.io/develop/api-reference/status/st.status)
+- 일반 출하 비교와 P2의 완료 답변 아래에 보고서 미리보기·PDF·상세 JSON을 배치한다. “방금 비교 PDF로 줘”는 대화에서 보관한 동일 결과를 제공한다.
+- 직접 입력의 공통 비용 체크는 위젯이 반환한 값을 읽은 뒤 처리한다. 공통 적용을 해제하면 이전 B안 별도 비용을 복원한다. [Streamlit 위젯 실행 순서](https://docs.streamlit.io/develop/concepts/architecture/widget-behavior#order-of-operations)
+
+통합 기준 `d9a1448`에서 자동 테스트 590개와 실제 모델 평가 `INT-02`, `INT-07`, `INT-11`의 5턴을 통과했다. 실제 브라우저에서는 대화에서 일반 출하 비교와 P2를 실행하고 보고서 미리보기, PDF·JSON 다운로드, “방금 비교 PDF로 줘”를 확인했다. 두 비교 모두 처음 받은 PDF와 재요청한 PDF의 SHA-256이 같았다. 일반 비교 차액은 597,000원, P2 차액은 241,850원이고 P2 손익분기 최소 단가는 2,660원/kg이었다. 농가 사용성과 센터 실장비 실행은 별도 검증 과제로 남아 있다.
+
 ## 검증에 사용할 과제
 
 | 과제 | 무엇을 확인하나 |
