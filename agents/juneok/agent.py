@@ -83,7 +83,7 @@ class AgentSession:
             from agents.seunghyuk.forecast_agent import ExperimentalForecastDraft
             self.experimental_forecast_draft = ExperimentalForecastDraft()
 
-    def run(self, question: str) -> dict:
+    def run(self, question: str, *, on_progress=None) -> dict:
         from .data_refresh import kst_today
         from .presentation import select_results, render_dialogue, report_for
         settings = self.settings or Settings.load()
@@ -166,6 +166,8 @@ class AgentSession:
                 metrics["trimmed_history_turns"] += bound_history(self.messages, self.policy.history_turns, self.policy.input_characters)
                 metrics["request_input_characters"].append(encoded_size(self.messages))
                 phase = "model_request"
+                if on_progress and results:
+                    on_progress("response")
                 metrics["model_requests"] += 1
                 request_started = time.monotonic()
                 client = self.client.with_options(timeout=min(30, remaining), max_retries=0) if hasattr(self.client, "with_options") else self.client
@@ -228,6 +230,8 @@ class AgentSession:
                                       "source_status": "INVALID_INPUT", "reason": "INVALID_INPUT",
                                       "message": str(exc), "is_future_forecast": False}
                         else:
+                            if not clarification and on_progress:
+                                on_progress("price_history")
                             result = clarification or execute_tool(call.name, recorded_arguments, self.store)
                             if result.get("status") in {"OK", "NEEDS_INPUT", "NO_DATA"}:
                                 self.price_history_query = deepcopy(recorded_arguments)
@@ -238,7 +242,8 @@ class AgentSession:
                         result = execute_tool(call.name, arguments, self.store, reference_case=getattr(self, "comparison_reference", None),
                             task_context=self.task_context.snapshot(), input_context=getattr(self, "comparison_input_context", None))
                     elif call.name == "compare_future_pair":
-                        result = execute_tool(call.name, arguments, self.store, future_pair=self.future_pair)
+                        result = execute_tool(call.name, arguments, self.store, future_pair=self.future_pair,
+                                              on_progress=on_progress)
                     elif call.name == "compare_experimental_forecast" and self.experimental_forecast:
                         # [트러블슈팅] LLM이 입력 보완 턴을 new로 잘못 분류하면
                         # 기존 3톤·규격·일자가 삭제됩니다. 동일 비교라면 edit로 교정합니다.
@@ -262,6 +267,9 @@ class AgentSession:
                                 arguments = {**arguments, "action": "edit"}
                                 recorded_arguments = arguments
                         result = self.experimental_forecast_draft.apply(arguments)
+                    elif on_progress and call.name in {"compare_shipment_options", "explore_data", "build_review_brief",
+                                                       "get_historical_shipment_context", "get_market_evidence"}:
+                        result = execute_tool(call.name, arguments, self.store, on_progress=on_progress)
                     else:
                         result = execute_tool(call.name, arguments, self.store)
                     if call.name in {"update_scenario", "compare_shipment_options"} and result["status"] != "INVALID_INPUT":
@@ -318,6 +326,8 @@ class AgentSession:
         if (comparisons and comparisons[-1]["result"].get("scenario_version") != self.store.version) or (
                 updated and not comparisons and not any(x["tool"] in {"compare_sensitivity", "build_review_brief", "explain_decision_conditions", "solve_offer_limits"}
                     and x["result"].get("scenario_version") == self.store.version for x in results)):
+            if on_progress:
+                on_progress("compare")
             refreshed = execute_tool("compare_shipment_options", {"expected_version": self.store.version}, self.store)
             self.task_context.record("compare_shipment_options", {}, refreshed, set_goal=False, scenario=self.store.scenario)
             results.append({"tool": "compare_shipment_options", "result": refreshed})

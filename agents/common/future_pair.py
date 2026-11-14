@@ -43,7 +43,7 @@ def preview_future_pair_history(start_date, days_a, days_b, price_a, filters):
 
 
 def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b,
-                        price_a, price_b=None, history_filters=None):
+                        price_a, price_b=None, history_filters=None, on_progress=None):
     """The historical interval is B minus A. Storage costs start at day zero."""
     days_a, days_b = option_a.get("delay_days"), option_b.get("delay_days")
     if (type(days_a) is not int or type(days_b) is not int
@@ -84,6 +84,8 @@ def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b
         from agents.jeonghyeon.comparison_input import build_future_pair_input
 
         cost_fields = ("delay_days", "loss_percent", "daily_storage_cost")
+        if on_progress:
+            on_progress("price_history")
         converted = _verified_history(
             build_future_pair_input,
             {**history_filters, "option_a_sale_date": sale_a, "option_b_sale_date": sale_b,
@@ -100,6 +102,8 @@ def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b
         cautions = converted["cautions"]
 
     a_input = _engine_option(option_a, a_template)
+    if on_progress:
+        on_progress("compare")
     result_a = compare_shipment_options({**common, "options": [a_input]})
     if result_a["status"] != "OK":
         return result_a
