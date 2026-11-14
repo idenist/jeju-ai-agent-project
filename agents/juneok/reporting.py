@@ -22,6 +22,7 @@ TOOL_LABELS = {"compare_shipment_options": "출하 대안 비교", "compare_sens
 TOOL_LABELS.update(explore_data="확보 자료 탐색", solve_offer_limits="제안단가의 허용 조건", review_case_changes="저장 비교의 변경 검토")
 TOOL_LABELS.update(reconcile_settlement="출하 기록·정산 검산", get_price_history="과거 동일규격 경락가격 비교")
 TOOL_LABELS["compare_future_pair"] = "두 미래 출하안 비교"
+TOOL_LABELS["analyze_shipment_timing"] = "제주데이터허브 출하 시기 A/B 분석"
 FIELD_NAMES.update(quoted_price_per_kg="제안 단가 또는 미래 단가 가정(원/kg)", option_id="검토할 보관 대안")
 FIELD_NAMES.update(comparison_reference="변경 검토 기준으로 선택한 저장 JSON")
 
@@ -172,6 +173,9 @@ def _render_result_body(result: dict) -> str:
     if not isinstance(result, dict):
         return "결과 형식을 확인할 수 없습니다."
     status = result.get("status", "UNKNOWN")
+    if result.get("analysis_type") == "shipment_timing":
+        from agents.seunghyuk.shipment_timing import format_timing_report
+        return format_timing_report(result)
     if result.get("analysis_type") == "future_pair":
         if status == "OK":
             return _render_future_pair(result)

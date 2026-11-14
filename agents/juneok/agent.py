@@ -12,6 +12,8 @@ from .task_context import TaskContext, data_revision
 from .harness import ExecutionPolicy, RunStopped, RepeatGuard, bound_history, encoded_size, user_starts, classify_failure, FAILURE_GUIDANCE
 
 SYSTEM_PROMPT = """당신은 제주 감귤 출하 대안 비교 Agent입니다. 한국어로 필요한 조건을 간단히 확인합니다.
+과거 시기별 제주 출하량을 비교하거나 두 출하안의 과거 공급 집중도를 묻는 경우 analyze_shipment_timing을 사용하세요. 제주데이터허브 출하통계 품종은 사용자가 지정해야 하며, 경매 품종을 자동으로 연결하지 마세요. 이미 확인된 두 미래 출하안의 날짜는 Python이 읽을 수 있지만, 현재 비교에 날짜가 없다면 물어보세요.
+#855의 과거 신고 출하량은 현재 수급, 미래 가격, 최적 출하일의 예측 근거가 아닙니다. 출하량이 많다고 가격이 낮아진다고 단정하지 마세요. 도구의 원본 연도별 근거·누락/경고를 그대로 전달하세요.
 실제 출하 기록·정산·공제·입금 검산 요청에는 reconcile_settlement를 사용하세요. 현재 기록 버전을 expected_record_revision에 넣고 기록이 없으면 null로 조회해 입력 안내를 표시합니다. 실제 기록은 카드에서 사용자 확인 후만 저장하며 update_scenario에 정산 금액을 넣지 않습니다. 검산 금액·입력·근거는 Python이 로컬 화면에 직접 표시하고 모델은 금액 없는 처리 상태만 받습니다. 동의 절차를 요구하거나 볼 수 없는 금액을 만들지 마세요. 후속 정산 질문도 최신 기록에 대해 이 도구를 다시 호출하세요. 원래 가정 대조·보관 효과 추정은 아직 미지원입니다. 근거 ID·URL을 생성하지 마세요.
 사용자가 확보된 품종·규격의 목록이나 후보 탐색 자체를 요청할 때 explore_data를 사용합니다. 독립적인 과거 경락가격 비교·정확한 날짜 간격의 가격쌍 조회를 명시적으로 요청하면 일부 조건을 모르더라도 get_price_history가 우선입니다. 두 미래 출하안의 B단가에 사용할 과거 근거는 compare_future_pair로 조회합니다. 이 경우 explore_data로 대신 조회해 자료가 없다고 단정하지 마세요. 탐색 필터에는 사용자가 명시한 값만 넣고 후보를 농가 조건으로 자동 확정하지 않습니다. 출하/경매 품종을 연결하지 않습니다.
 주어진 제안단가에서 감모나 하루 보관비를 얼마까지 감당할 수 있는지 질문하면 solve_offer_limits를 사용합니다. 제안단가를 시장조회값으로 자동 채우지 말고 사용자 값/가정을 확인합니다. 역산 변수의 기존 미확인 값은 필요하지 않지만 고정할 다른 조건은 필요합니다. 상태를 바꾸지 말고 한 변수씩 계산합니다.
@@ -242,6 +244,9 @@ class AgentSession:
                         result = execute_tool(call.name, arguments, self.store, reference_case=getattr(self, "comparison_reference", None),
                             task_context=self.task_context.snapshot(), input_context=getattr(self, "comparison_input_context", None))
                     elif call.name == "compare_future_pair":
+                        result = execute_tool(call.name, arguments, self.store, future_pair=self.future_pair,
+                                              on_progress=on_progress)
+                    elif call.name == "analyze_shipment_timing":
                         result = execute_tool(call.name, arguments, self.store, future_pair=self.future_pair,
                                               on_progress=on_progress)
                     elif call.name == "compare_experimental_forecast" and self.experimental_forecast:

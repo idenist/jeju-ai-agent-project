@@ -982,6 +982,8 @@ def main():
             with future_tab:
                 from agents.juneok.future_pair_ui import render_future_pair
                 future_result = render_future_pair(ws.session.future_pair)
+                from agents.seunghyuk.shipment_timing_ui import render_shipment_timing_panel
+                render_shipment_timing_panel(ws.session.future_pair.inputs)
         with tools:
             data_tab, tools_tab = st.tabs(["자료 조회", "추가 도구"])
             with data_tab:

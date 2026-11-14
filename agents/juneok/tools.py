@@ -92,6 +92,10 @@ TOOLS = [
          {"expected_version": {"type": "integer"}, "option_id": {"type": "string"},
           "loss_values": nullable("array", minItems=1, maxItems=7, items={"type": "number", "minimum": 0, "exclusiveMaximum": 100}),
           "price_values": nullable("array", minItems=1, maxItems=7, items={"type": "number", "minimum": 0})}),
+    tool("analyze_shipment_timing", "제주데이터허브 #855의 과거 같은 시기 7일 출하량으로 두 출하 예정일을 비교합니다. 경매 품종을 자동 매핑하거나 미래가격·유리한 출하일을 예측하지 않습니다. 출하통계 품종을 사용자가 명시해야 합니다. 날짜를 모르면 null, 이미 확인된 두 미래 출하안 날짜가 있을 때만 재사용합니다.",
+         {"shipment_variety": nullable("string", description="제주데이터허브 출하통계 품종: 노지온주/월동온주/하우스온주/한라봉/천혜향/레드향. 경매 조생귤을 노지온주로 자동 변환 금지"),
+          "option_a_date": nullable("string", description="A안 실제 출하 예정일 YYYY-MM-DD. 모르면 null"),
+          "option_b_date": nullable("string", description="B안 실제 출하 예정일 YYYY-MM-DD. 모르면 null")}),
     tool("get_historical_shipment_context", "제주데이터허브 #855의 실제 과거 월별 출하량 조회. 경매 품종을 출하 품종으로 자동 매핑하지 말 것. 2026 실시간 공급 아님.",
          {"shipment_variety": {"type": "string"}, "target_month": {"type": "integer", "minimum": 1, "maximum": 12},
           "start_year": nullable("integer"), "end_year": nullable("integer")}),
@@ -198,6 +202,16 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
             if args.get("limit") is None:
                 args.pop("limit", None)
             return get_integrated_price_history(args)
+        if name == "analyze_shipment_timing":
+            from agents.seunghyuk.shipment_timing import analyze_shipment_timing, resolve_pair_dates
+            query = {key: args.get(key) for key in ("shipment_variety", "option_a_date", "option_b_date")}
+            if future_pair is not None:
+                stored_a, stored_b = resolve_pair_dates(getattr(future_pair, "inputs", None))
+                query["option_a_date"] = query["option_a_date"] or stored_a
+                query["option_b_date"] = query["option_b_date"] or stored_b
+            if on_progress:
+                on_progress("shipment_csv")
+            return analyze_shipment_timing(query)
         from .evidence import get_historical_shipment_context, get_market_evidence
         query = get_historical_shipment_context if name == "get_historical_shipment_context" else get_market_evidence
         return query(deepcopy(args), on_progress=on_progress)
