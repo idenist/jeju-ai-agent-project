@@ -14,6 +14,8 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from statistics import median
+from time import perf_counter
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,9 +29,13 @@ PRICE_QUERY = {
 SOURCE_PATHS = (
     "app.py", "agents/juneok/agent.py", "agents/juneok/tools.py",
     "agents/juneok/workspace.py", "agents/juneok/state.py",
+    "agents/juneok/future_pair_state.py", "agents/juneok/presentation.py", "agents/juneok/reporting.py",
+    "agents/common/future_pair.py", "agents/common/data_contract.py",
     "agents/common/calculation_service.py", "agents/common/price_history_service.py",
     "agents/common/price_history_followup.py", "agents/jeonghyeon/price_history.py",
+    "agents/jeonghyeon/comparison_input.py", "agents/jeonghyeon/price_scenario.py",
     "data/processed/daily_prices.csv", "data/processed/price_comparison_availability.csv",
+    "data/processed/price_comparisons.csv", "data/metadata/juneok_manifest.json",
     "data/reports/price_comparison_report.json", "evals/integration_e2e_cases.json",
     "scripts/evaluate_integrated_agent.py",
 )
@@ -52,8 +58,8 @@ def load_cases(path: Path = CASES_FILE) -> list[dict]:
         if not isinstance(case.get("title"), str) or not case["title"]:
             raise ValueError(f"{case['id']}: 문항 제목이 없습니다.")
         turns = case.get("turns")
-        if not isinstance(turns, list) or not 1 <= len(turns) <= 4:
-            raise ValueError(f"{case['id']}: 사용자 턴은 1~4개여야 합니다.")
+        if not isinstance(turns, list) or not 1 <= len(turns) <= 6:
+            raise ValueError(f"{case['id']}: 사용자 턴은 1~6개여야 합니다.")
         for index, turn in enumerate(turns, 1):
             if not isinstance(turn, dict) or not isinstance(turn.get("user"), str) or not turn["user"].strip():
                 raise ValueError(f"{case['id']} {index}턴: 질문이 없습니다.")
@@ -66,6 +72,14 @@ def load_cases(path: Path = CASES_FILE) -> list[dict]:
                     raise ValueError(f"{case['id']} {index}턴: 기대 도구 이름이 없습니다.")
                 if not isinstance(expected.get("fields", {}), dict):
                     raise ValueError(f"{case['id']} {index}턴: 기대 결과 필드가 잘못됐습니다.")
+                references = expected.get("same_fields_as_turn", {})
+                if not isinstance(references, dict) or any(
+                    not field.strip() or type(turn_number) is not int or not 1 <= turn_number < index
+                    for field, turn_number in references.items()
+                ):
+                    raise ValueError(f"{case['id']} {index}턴: 비교할 이전 턴 참조가 잘못됐습니다.")
+            if "future_pair_has_result" in turn and type(turn["future_pair_has_result"]) is not bool:
+                raise ValueError(f"{case['id']} {index}턴: 현재 미래 출하 결과 기대값이 잘못됐습니다.")
             for field in ("history_fields", "model_args"):
                 if not isinstance(turn.get(field, {}), dict):
                     raise ValueError(f"{case['id']} {index}턴: {field} 형식이 잘못됐습니다.")
@@ -92,7 +106,8 @@ def preflight() -> dict:
             raise RuntimeError(f"{interval}일 가격쌍이 평가 기준과 일치하지 않습니다: {result.get('status')}")
         observed[str(interval)] = result["clean_pairs"]
     names = {tool["name"] for tool in TOOLS}
-    if "get_price_history" not in names or "compare_shipment_options" not in names or "get_price_scenarios" in names:
+    required = {"get_price_history", "compare_shipment_options", "compare_future_pair"}
+    if not required.issubset(names) or "get_price_scenarios" in names:
         raise RuntimeError("통합 Agent의 활성 도구 계약이 변경됐습니다. 평가 기준을 확인하세요.")
     return {"status": "OK", "verified_availability_rows": 4776,
             "clean_pairs_by_interval": observed, "activated_scenario_tool": False}
@@ -162,7 +177,7 @@ def model_calls(session) -> list[dict]:
 
 
 def score_turn(spec: dict, reply: dict, before_state: dict, after_state: dict,
-               history_query: dict | None, calls: list[dict]) -> dict:
+               history_query: dict | None, calls: list[dict], *, previous_turns=()) -> dict:
     """도구 실행 결과, 모델 인수, 시나리오 불변을 서로 독립적으로 채점합니다."""
     failures = []
     if reply.get("status") != "OK":
@@ -186,6 +201,14 @@ def score_turn(spec: dict, reply: dict, before_state: dict, after_state: dict,
                 continue
             if not equal_values(actual, desired):
                 failures.append("wrong_field:" + expected["tool"] + ":" + field)
+        for field, turn_number in expected.get("same_fields_as_turn", {}).items():
+            previous_results = [row["result"] for row in previous_turns[turn_number - 1]["tool_results"]
+                                if row.get("tool") == expected["tool"]]
+            try:
+                if not previous_results or read_path(result, field) != read_path(previous_results[-1], field):
+                    failures.append(f"changed_field:{expected['tool']}:{field}:turn_{turn_number}")
+            except KeyError:
+                failures.append(f"missing_comparison_field:{expected['tool']}:{field}:turn_{turn_number}")
         for name in expected.get("missing_contains", []):
             if name not in result.get("missing_fields", []):
                 failures.append("missing_confirmation:" + name)
@@ -260,16 +283,23 @@ def run_case(case: dict, settings) -> dict:
     for index, spec in enumerate(case["turns"], 1):
         before = workspace.store.snapshot()
         previous_ids = {call["call_id"] for call in model_calls(workspace.session)}
+        started = perf_counter()
         reply = workspace.run(spec["user"])
+        elapsed = round(perf_counter() - started, 3)
         after = workspace.store.snapshot()
         calls = [call for call in model_calls(workspace.session) if call["call_id"] not in previous_ids]
-        verdict = score_turn(spec, reply, before, after, workspace.session.price_history_query, calls)
+        verdict = score_turn(spec, reply, before, after, workspace.session.price_history_query, calls,
+                             previous_turns=outcome)
         quality = turn_quality(reply)
         if not quality["passed"]:
-            verdict["passed"] = False
             verdict["failures"].append("outcome_quality_check_failed")
+        if "future_pair_has_result" in spec:
+            current = workspace.session.future_pair.current_result()
+            if (current is not None) != spec["future_pair_has_result"]:
+                verdict["failures"].append("unexpected_current_future_pair_result")
+        verdict["passed"] = not verdict["failures"]
         row = {"turn_index": index, "user": spec["user"], **verdict, "quality": quality,
-               "run_status": reply.get("status"), "text": reply.get("text"),
+               "run_status": reply.get("status"), "text": reply.get("text"), "response_seconds": elapsed,
                "metrics": reply.get("metrics", {}), "model_tool_arguments": calls,
                "tool_results": reply.get("tool_results", []),
                "history_query": workspace.session.price_history_query,
@@ -295,11 +325,18 @@ def summarize(cases: list[dict], reports: list[dict], repeats: int, model: str) 
     failures = Counter(reason for item in reports for turn in item["turns"] for reason in turn["failures"])
     metrics = {key: sum(turn.get("metrics", {}).get(key, 0) or 0 for item in reports for turn in item["turns"])
                for key in ("model_requests", "input_tokens", "output_tokens", "cached_input_tokens")}
+    first_response = {}
+    for case in cases:
+        samples = [item["turns"][0]["response_seconds"] for item in reports
+                   if item.get("id") == case["id"] and item["turns"] and item["turns"][0].get("passed")]
+        if samples:
+            first_response[case["id"]] = {"samples": samples, "median": round(median(samples), 3), "max": max(samples)}
     return {"model": model, "planned_runs": len(cases) * repeats,
             "completed_runs": completed, "passed_runs": passed,
             "pass_rate": round(passed / completed, 4) if completed else None,
             "complete": completed == len(cases) * repeats,
             "categories": categories, "failure_counts": dict(failures), "usage": metrics,
+            "first_response_seconds": first_response,
             "estimated_cost_usd": None,
             "note": "API 요금 추정 불가: 모델별 실제 가격 정보 미입력. 실제 청구액은 서비스 사용량에서 확인하세요."}
 
@@ -417,6 +454,8 @@ def main(argv: list[str] | None = None) -> int:
     _save_json(folder / "summary.json", summary)
     print(f"평가 결과: {summary['passed_runs']}/{summary['completed_runs']}회 통과 "
           f"(계획 {summary['planned_runs']}회) · 기록: {folder}")
+    for case_id, timing in summary["first_response_seconds"].items():
+        print(f"{case_id} 첫 응답 · {len(timing['samples'])}개 · 중앙값 {timing['median']:.3f}초 · 최대 {timing['max']:.3f}초")
     if stop_reason:
         print("평가가 중단됐습니다: " + stop_reason, file=sys.stderr)
         return 2

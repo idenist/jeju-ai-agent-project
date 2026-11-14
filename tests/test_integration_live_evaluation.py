@@ -26,9 +26,9 @@ class 통합모델평가기검수(unittest.TestCase):
 
     def test_고정_평가셋의_개수와_다중턴_검증(self):
         cases = evaluator.load_cases()
-        self.assertEqual(len(cases), 12)
-        self.assertEqual(sum(len(x["turns"]) for x in cases), 16)
-        self.assertEqual(len({x["id"] for x in cases}), 12)
+        self.assertEqual(len(cases), 13)
+        self.assertEqual(sum(len(x["turns"]) for x in cases), 22)
+        self.assertEqual(len({x["id"] for x in cases}), 13)
 
     def test_잘못된_평가셋_중복과_빈질문_차단(self):
         cases = evaluator.load_cases()
@@ -48,7 +48,7 @@ class 통합모델평가기검수(unittest.TestCase):
         with patch.object(evaluator, "preflight") as check, redirect_stdout(output):
             result = evaluator.main(["--list"])
         self.assertEqual(result, 0)
-        self.assertIn("12개 / 자연어 턴: 16개", output.getvalue())
+        self.assertIn("13개 / 자연어 턴: 22개", output.getvalue())
         check.assert_not_called()
 
     def test_기본_검증은_실제_모델_호출을_하지_않음(self):
@@ -86,6 +86,19 @@ class 통합모델평가기검수(unittest.TestCase):
         result = evaluator.score_turn(self.normal, {"status": "OK", "tool_results": []},
                                       self.before, deepcopy(self.before), {}, [])
         self.assertIn("missing_tool:get_price_history", result["failures"])
+
+    def test_미래_출하에서_A안_금액이_같아도_조건이_바뀌면_실패(self):
+        expected = {"tool": "compare_future_pair", "status": "OK", "same_fields_as_turn": {"option_a": 1}}
+        prior = {"tool": "compare_future_pair", "result": {"status": "OK", "option_a": {
+            "proceeds_krw": "7018750", "sale_date": "2026-11-18"}}}
+        reply = {"status": "OK", "tool_results": [deepcopy(prior)]}
+        call = {"tool": "compare_future_pair", "args": {}}
+        def score():
+            return evaluator.score_turn({"expect": [expected]}, reply, self.before, self.before,
+                                        None, [call], previous_turns=[{"tool_results": [prior]}])
+        self.assertTrue(score()["passed"])
+        reply["tool_results"][0]["result"]["option_a"]["sale_date"] = "2026-11-19"
+        self.assertIn("changed_field:compare_future_pair:option_a:turn_1", score()["failures"])
 
     def test_미검증_가격을_성공으로_위장하지_못함(self):
         reply = deepcopy(self.reply)
@@ -143,6 +156,16 @@ class 통합모델평가기검수(unittest.TestCase):
         self.assertEqual(summary["usage"]["input_tokens"], 250)
         self.assertEqual(summary["failure_counts"]["missing_tool:x"], 1)
         self.assertIsNone(summary["estimated_cost_usd"])
+
+    def test_문항별_첫_성공_응답의_중앙값과_최댓값을_집계(self):
+        def sample(case_id, seconds, passed=True):
+            return {"id": case_id, "passed": passed, "category": "다중턴", "turns": [
+                {"passed": passed, "response_seconds": seconds, "failures": []},
+                {"passed": True, "response_seconds": 99, "failures": []}]}
+        reports = [sample("INT-13", 15), sample("INT-13", 5), sample("INT-13", 9),
+                   sample("INT-13", 91, passed=False), sample("INT-01", 40)]
+        summary = evaluator.summarize([{"id": "INT-13"}, {"id": "INT-01"}], reports, 3, "test-model")
+        self.assertEqual(summary["first_response_seconds"]["INT-13"], {"samples": [15, 5, 9], "median": 9, "max": 15})
 
     def test_숫자_표시차이는_같고_알수없는_필드는_다름(self):
         self.assertTrue(evaluator.equal_values("5.00", 5))
