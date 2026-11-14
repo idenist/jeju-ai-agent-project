@@ -97,13 +97,14 @@ def main() -> int:
     lines += ["", "## 자료가 없을 때", "",
               "| 시즌 | 경우 | 상태 | B안 단가 | 직접 입력 안내 |", "|---|---|---|---|---|"]
     for season in SEASONS:
-        for label, interval, spec in (("10일 간격(자료에 없는 간격)", 10, SPEC),
-                                      ("자료에 없는 크기", 7, {**SPEC, "size": "없는크기"})):
+        for label, interval, spec, expected in (
+                ("10일 간격(자료에 없는 간격)", 10, SPEC, "INTERVAL_NOT_AVAILABLE"),
+                ("자료에 없는 크기", 7, {**SPEC, "size": "없는크기"}, "NO_DATA")):
             result = run(season, interval, spec)
             has_price = bool(result.get("scenarios"))
             manual = bool(result.get("manual_price_allowed"))
-            # 근거가 없는데 단가가 채워지거나 직접 입력 안내가 빠지면 실패로 본다.
-            ok &= (not has_price) and (manual or result["status"] in {"NEEDS_CLARIFICATION", "ERROR"})
+            # 기대한 상태여야 하고, 가정 단가는 비어 있으며, 직접 입력 안내가 반드시 있어야 통과한다.
+            ok &= result["status"] == expected and not has_price and manual
             lines.append(f"| {season} | {label} | {result['status']} | {'있음' if has_price else '없음'} | "
                          f"{'있음' if manual else '없음'} |")
 
