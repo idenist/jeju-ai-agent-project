@@ -26,9 +26,9 @@ class 통합모델평가기검수(unittest.TestCase):
 
     def test_고정_평가셋의_개수와_다중턴_검증(self):
         cases = evaluator.load_cases()
-        self.assertEqual(len(cases), 15)
-        self.assertEqual(sum(len(x["turns"]) for x in cases), 27)
-        self.assertEqual(len({x["id"] for x in cases}), 15)
+        self.assertEqual(len(cases), 21)
+        self.assertEqual(sum(len(x["turns"]) for x in cases), 44)
+        self.assertEqual(len({x["id"] for x in cases}), 21)
 
     def test_잘못된_평가셋_중복과_빈질문_차단(self):
         cases = evaluator.load_cases()
@@ -48,7 +48,7 @@ class 통합모델평가기검수(unittest.TestCase):
         with patch.object(evaluator, "preflight") as check, redirect_stdout(output):
             result = evaluator.main(["--list"])
         self.assertEqual(result, 0)
-        self.assertIn("15개 / 자연어 턴: 27개", output.getvalue())
+        self.assertIn("21개 / 자연어 턴: 44개", output.getvalue())
         check.assert_not_called()
 
     def test_기본_검증은_실제_모델_호출을_하지_않음(self):
@@ -81,6 +81,15 @@ class 통합모델평가기검수(unittest.TestCase):
         result = evaluator.score_turn(self.normal, self.reply, self.before, deepcopy(self.before),
                                       {"interval_days": 7}, [])
         self.assertIn("expected_tool_not_selected_by_model:get_price_history", result["failures"])
+
+    def test_상자_무게_확인처럼_로컬_처리를_기대한_턴을_구분한다(self):
+        spec = deepcopy(self.normal)
+        spec["expect"][0]["model_selected"] = False
+        no_call = evaluator.score_turn(spec, self.reply, self.before, self.before, None, [])
+        self.assertTrue(no_call["passed"], no_call["failures"])
+        unexpected_call = evaluator.score_turn(spec, self.reply, self.before, self.before,
+                                               None, [{"tool": "get_price_history", "args": {}}])
+        self.assertIn("unexpected_model_tool_selection:get_price_history", unexpected_call["failures"])
 
     def test_필요한_도구를_실행하지_않으면_실패(self):
         result = evaluator.score_turn(self.normal, {"status": "OK", "tool_results": []},

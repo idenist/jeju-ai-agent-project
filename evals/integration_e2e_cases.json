@@ -345,5 +345,156 @@
         "preserve_scenario": true
       }
     ]
+  },
+  {
+    "id": "INT-16",
+    "title": "줄바꿈으로 이어 쓴 과거 조회 5kg과 판매 상자 4kg 분리",
+    "category": "상자 단가와 미래 출하 비교",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "감귤 3톤을 2026년 11월 15일부터 보관해서 사흘 뒤와 열흘 뒤 출하를 비교해 주세요. 가격은 수수료 차감 전이고 A안 감모율은 1%, B안은 4%, 하루 보관비는 각각 1만원, 기타 비용은 각각 5천원, 수수료는 A안 5%, B안 7%입니다. A안은 한 박스 2만원이에요. B안의 과거 시세는 가락시장,\n조생귤 특 소 5kg 상자로 봐 주세요.",
+        "expect": [{"tool": "compare_future_pair", "status": "NEEDS_INPUT", "fields": {"source_status": "BOX_PRICE_CONFIRMATION", "message": "A안 상자당 20,000원에서 실제 판매할 상자 한 개의 감귤은 정확히 몇 kg인가요?"}}],
+        "future_pair_has_result": false,
+        "preserve_scenario": true
+      },
+      {
+        "user": "실제 판매 상자는 4kg이에요.",
+        "expect": [{"tool": "compare_future_pair", "status": "NEEDS_INPUT", "model_selected": false,"fields": {"source_status": "BOX_PRICE_CONFIRMATION", "message": "A안 상자당 20,000원 ÷ 4kg = **5,000원/kg**입니다. A안 단가로 적용할까요? 맞으면 ‘네’, 무게가 다르면 정확한 kg을 알려주세요."}}],
+        "future_pair_has_result": false,
+        "preserve_scenario": true
+      },
+      {
+        "user": "네, 맞아요.",
+        "expect": [{"tool": "compare_future_pair", "status": "OK", "model_selected": false,"fields": {"confirmed_box_price": 5000,"option_a.price_per_kg": 5000,"options_b.1.price_per_kg": 4818.74,"evidence.past_median_7d.clean_pairs": 20}}],
+        "future_pair_has_result": true,
+        "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-17",
+    "title": "한 문장의 불확실한 판매 무게는 다시 확인",
+    "category": "상자 단가와 미래 출하 비교",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "감귤 3톤을 2026년 11월 15일부터 보관해서 사흘 뒤와 열흘 뒤 출하를 비교해 주세요. 가격은 수수료 차감 전이고 A안 감모율은 1%, B안은 4%, 하루 보관비는 각각 1만원, 기타 비용은 각각 5천원, 수수료는 A안 5%, B안 7%입니다. A안은 5kg 상자에 12,500원인데 10kg인지 헷갈리고 B안 과거 시세는 조생귤 특 소 5kg 상자로 봐 주세요.",
+        "expect": [{"tool": "compare_future_pair", "status": "NEEDS_INPUT", "fields": {"source_status": "BOX_PRICE_CONFIRMATION", "message": "A안 상자당 12,500원에서 실제 판매할 상자 한 개의 감귤은 정확히 몇 kg인가요?"}}],
+        "future_pair_has_result": false,
+        "preserve_scenario": true
+      },
+      {
+        "user": "확인해 봤어요. 판매 상자는 정확히 5kg이에요.",
+        "expect": [{"tool": "compare_future_pair", "status": "NEEDS_INPUT", "model_selected": false,"fields": {"source_status": "BOX_PRICE_CONFIRMATION", "message": "A안 상자당 12,500원 ÷ 5kg = **2,500원/kg**입니다. A안 단가로 적용할까요? 맞으면 ‘네’, 무게가 다르면 정확한 kg을 알려주세요."}}],
+        "future_pair_has_result": false,
+        "preserve_scenario": true
+      },
+      {
+        "user": "맞습니다.",
+        "expect": [{"tool": "compare_future_pair", "status": "OK", "model_selected": false,"fields": {"confirmed_box_price": 2500,"option_a.price_per_kg": 2500,"options_b.1.price_per_kg": 2409.37}}],
+        "future_pair_has_result": true,
+        "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-18",
+    "title": "과거 조회 규격을 먼저 말한 뒤 명시한 판매 상자만 환산",
+    "category": "상자 단가와 미래 출하 비교",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "감귤 3톤을 2026년 11월 15일부터 보관해서 사흘 뒤와 열흘 뒤 출하를 비교해 주세요. 가격은 수수료 차감 전이고 A안 감모율은 1%, B안은 4%, 하루 보관비는 각각 1만원, 기타 비용은 각각 5천원, 수수료는 A안 5%, B안 7%입니다. B안의 과거 시세는 가락시장 조생귤 특 소 10kg 상자로 보고, A안 판매가는 5kg 상자 12,500원이에요.",
+        "expect": [{"tool": "compare_future_pair", "status": "NEEDS_INPUT", "fields": {"source_status": "BOX_PRICE_CONFIRMATION", "message": "A안 상자당 12,500원 ÷ 5kg = **2,500원/kg**입니다. A안 단가로 적용할까요? 맞으면 ‘네’, 무게가 다르면 정확한 kg을 알려주세요."}}],
+        "future_pair_has_result": false,
+        "preserve_scenario": true
+      },
+      {
+        "user": "네.",
+        "expect": [{"tool": "compare_future_pair", "status": "NO_DATA", "model_selected": false,"fields": {"source_status": "NO_CLEAN_COMPARISON", "manual_price_required": true,"confirmed_box_price": 2500}}],
+        "future_pair_has_result": false,
+        "future_pair_manual_pending": true,
+        "preserve_scenario": true
+      },
+      {
+        "user": "그럼 B안만 kg당 2,750원으로 직접 입력해 다시 비교해 주세요.",
+        "expect": [{"tool": "compare_future_pair", "status": "OK", "fields": {"option_a.price_per_kg": 2500,"options_b.0.price_per_kg": 2750,"options_b.0.difference_vs_a_krw": 241850}}],
+        "future_pair_has_result": true,
+        "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-19",
+    "title": "짧게 조건을 쓰는 농가의 A안 상자 가격과 B안 kg당 직접 입력",
+    "category": "상자 단가와 미래 출하 비교",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "귤 3톤, 보관 시작 2026년 11월 15일, 사흘 뒤랑 열흘 뒤 손익 비교해줘. 수수료 빼기 전이야. A안 5kg 상자 12,500원, B안은 kg당 2,750원 바로 넣어. 줄어드는 양은 각각 1%, 4%, 하루 보관비 각각 1만원, 기타 비용 각각 5천원, 수수료 각각 5%, 7%.",
+        "expect": [{"tool": "compare_future_pair", "status": "NEEDS_INPUT", "fields": {"source_status": "BOX_PRICE_CONFIRMATION", "message": "A안 상자당 12,500원 ÷ 5kg = **2,500원/kg**입니다. A안 단가로 적용할까요? 맞으면 ‘네’, 무게가 다르면 정확한 kg을 알려주세요."}}],
+        "future_pair_has_result": false,
+        "preserve_scenario": true
+      },
+      {
+        "user": "응.",
+        "expect": [{"tool": "compare_future_pair", "status": "OK", "model_selected": false,"fields": {"confirmed_box_price": 2500,"options_b.0.price_per_kg": 2750,"options_b.0.difference_vs_a_krw": 241850}}],
+        "future_pair_has_result": true,
+        "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-20",
+    "title": "환산 확인 중 실제 판매 무게를 수정하고 확인",
+    "category": "상자 단가와 미래 출하 비교",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "감귤 3톤을 2026년 11월 15일부터 보관해서 사흘 뒤와 열흘 뒤 출하를 비교해 주세요. 가격은 수수료 차감 전이고 A안 감모율은 1%, B안은 4%, 하루 보관비는 각각 1만원, 기타 비용은 각각 5천원, 수수료는 A안 5%, B안 7%입니다. A안은 5kg 상자에 12,500원입니다. B안 단가는 2,750원/kg으로 직접 넣겠습니다.",
+        "expect": [{"tool": "compare_future_pair", "status": "NEEDS_INPUT", "fields": {"source_status": "BOX_PRICE_CONFIRMATION", "message": "A안 상자당 12,500원 ÷ 5kg = **2,500원/kg**입니다. A안 단가로 적용할까요? 맞으면 ‘네’, 무게가 다르면 정확한 kg을 알려주세요."}}],
+        "future_pair_has_result": false,
+        "preserve_scenario": true
+      },
+      {
+        "user": "아니요, 상자 한 개에 4kg이에요.",
+        "expect": [{"tool": "compare_future_pair", "status": "NEEDS_INPUT", "model_selected": false,"fields": {"source_status": "BOX_PRICE_CONFIRMATION", "message": "A안 상자당 12,500원 ÷ 4kg = **3,125원/kg**입니다. A안 단가로 적용할까요? 맞으면 ‘네’, 무게가 다르면 정확한 kg을 알려주세요."}}],
+        "future_pair_has_result": false,
+        "preserve_scenario": true
+      },
+      {
+        "user": "적용해 주세요.",
+        "expect": [{"tool": "compare_future_pair", "status": "OK", "model_selected": false,"fields": {"confirmed_box_price": 3125,"option_a.price_per_kg": 3125,"options_b.0.price_per_kg": 2750}}],
+        "future_pair_has_result": true,
+        "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-21",
+    "title": "A안 단가가 확정된 상태에서 B안 상자 가격의 무게를 보완",
+    "category": "상자 단가와 미래 출하 비교",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "감귤 3톤을 2026년 11월 15일부터 보관해서 사흘 뒤와 열흘 뒤 출하를 비교해 주세요. 가격은 수수료 차감 전이고 A안 감모율은 1%, B안은 4%, 하루 보관비는 각각 1만원, 기타 비용은 각각 5천원, 수수료는 A안 5%, B안 7%입니다. A안은 kg당 2,500원이고 B안은 한 박스 2만 원이에요. B안은 제가 받은 가격으로 비교할게요.",
+        "expect": [{"tool": "compare_future_pair", "status": "NEEDS_INPUT", "fields": {"source_status": "BOX_PRICE_CONFIRMATION", "message": "B안 상자당 20,000원에서 실제 판매할 상자 한 개의 감귤은 정확히 몇 kg인가요?"}}],
+        "future_pair_has_result": false,
+        "preserve_scenario": true
+      },
+      {
+        "user": "5kg이에요.",
+        "expect": [{"tool": "compare_future_pair", "status": "NEEDS_INPUT", "model_selected": false,"fields": {"source_status": "BOX_PRICE_CONFIRMATION", "message": "B안 상자당 20,000원 ÷ 5kg = **4,000원/kg**입니다. B안 단가로 적용할까요? 맞으면 ‘네’, 무게가 다르면 정확한 kg을 알려주세요."}}],
+        "future_pair_has_result": false,
+        "preserve_scenario": true
+      },
+      {
+        "user": "확인했어요.",
+        "expect": [{"tool": "compare_future_pair", "status": "OK", "model_selected": false,"fields": {"confirmed_box_price": 4000,"confirmed_box_side": "B", "option_a.price_per_kg": 2500,"options_b.0.price_per_kg": 4000,"options_b.0.difference_vs_a_krw": 3589850}}],
+        "future_pair_has_result": true,
+        "preserve_scenario": true
+      }
+    ]
   }
 ]
