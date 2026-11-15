@@ -15,10 +15,15 @@ _BOX_PRICE = re.compile(
     rf"(?:{_PACK_WITH_WEIGHT}(?:당|에)?|{_PACK}\s*(?:한\s*개\s*)?(?:당|에)|한\s*{_PACK}(?:당|에)?)"
     rf"\s*(?:가격\s*(?:은|이)?\s*)?{_PRICED_AMOUNT}|{_PRICED_AMOUNT}\s*/\s*{_PACK}", re.I,
 )
-_CLAUSE_BREAK = re.compile(r"[!?。;；\n]|(?<!\d)[.,]|[.,](?!\d)")
+_SENTENCE_BREAK = re.compile(r"[!?。;；\n]|(?<!\d)\.|\.(?!\d)")
+_LIST_BREAK = re.compile(r"[，、]|(?<!\d),|,(?!\d)")
 _HISTORY_CONTEXT = re.compile(
     r"(?:과거|예전)\s*(?:경락\s*)?(?:가격|시세|경락가|자료|데이터|거래)"
     r"|(?:시세|경락\s*가격|가격)\s*조회|조회\s*(?:용|규격|조건)"
+)
+_SALE_WEIGHT_CONTEXT = re.compile(
+    rf"(?:실제\s*(?:(?:판매|출하)(?:용|할)?\s*)?|(?:판매|출하)(?:용|할)?\s*|[AB]\s*안(?:의)?\s*)"
+    rf"(?:{_PACK}|무게|중량)", re.I,
 )
 _SIDE_A = re.compile(r"(?:a\s*안|먼저\s*(?:출하|팔))", re.I)
 _SIDE_B = re.compile(r"(?:b\s*안|나중\s*(?:출하|팔))", re.I)
@@ -39,12 +44,18 @@ def mentions_box_price(text):
 
 
 def _sale_weight_text(text):
-    """In a historical lookup clause, only keep weights attached to the quoted price."""
-    return "\n".join(
-        " ".join(match.group() for match in _BOX_PRICE.finditer(clause))
-        if _HISTORY_CONTEXT.search(clause) else clause
-        for clause in _CLAUSE_BREAK.split(text)
-    ).strip()
+    """Keep a historical lookup's comma-separated filters out of sales weight."""
+    sales = []
+    for sentence in _SENTENCE_BREAK.split(text):
+        in_history = False
+        for clause in _LIST_BREAK.split(sentence):
+            if _HISTORY_CONTEXT.search(clause):
+                in_history = True
+                sales.extend(match.group() for match in _BOX_PRICE.finditer(clause))
+            elif not in_history or _SALE_WEIGHT_CONTEXT.search(clause):
+                in_history = False
+                sales.append(clause)
+    return "\n".join(sales).strip()
 
 
 def _weight(text, *, reply=False):

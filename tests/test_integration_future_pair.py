@@ -88,6 +88,8 @@ class FuturePairTests(unittest.TestCase):
         for message in (
             "A안은 한 박스 2만원이에요. 과거 경락가격은 5kg 상자 규격으로 봐 주세요.",
             "A안은 한 박스 2만원이고 5kg 상자 기준으로 과거 시세를 찾아 주세요.",
+            "A안은 한 박스 2만원이에요. 과거 시세 조회는 가락시장, 조생귤 특 소 5kg 상자 기준으로 부탁해요.",
+            "A안은 한 박스 2만원이에요. 과거 시세는 가락시장, 조생귤 특 소, 5kg 상자로 봐 주세요.",
         ):
             with self.subTest(message=message):
                 pair = FuturePairState()
@@ -96,7 +98,7 @@ class FuturePairTests(unittest.TestCase):
                 initial = pair.apply("new", pair.version, {**COMMON, "price_a": None, "option_b": OPTION_B,
                                      "price_mode": "history", "history_filters": filters}, box_price=quote)
                 self.assertIn("정확히 몇 kg", initial["message"])
-                self.assertIsNone(pair.follow_up_box_price("과거 시세는 5kg 상자로 봐 주세요."))
+                self.assertIsNone(pair.follow_up_box_price("과거 시세는 가락시장, 5kg 상자로 봐 주세요."))
                 pair.follow_up_box_price("네, 맞아요.")
                 self.assertIsNone(pair.inputs["price_a"])
                 self.assertIsNone(pair.current_result())
@@ -107,6 +109,16 @@ class FuturePairTests(unittest.TestCase):
                 confirmed = pair.follow_up_box_price("네, 맞아요.")
                 self.assertEqual(Decimal(confirmed["confirmed_box_price"]), 5000)
                 self.assertEqual(pair.inputs["history_filters"], filters)
+
+    def test_box_quote_accepts_explicit_sales_weight_after_history_filters(self):
+        from agents.juneok.box_price import proposed_box_price
+
+        quote = proposed_box_price(
+            "A안은 한 박스 2만원이에요. 과거 시세는 가락시장, 조생귤 특 소 5kg 상자로 보고, 실제 판매 상자는 4kg이에요.",
+            {"side": "A", "phrase": "한 박스 2만원"},
+        )
+        self.assertEqual(quote.weight, Decimal(4))
+        self.assertEqual(quote.unit_price, Decimal(5000))
 
     def test_clear_future_shipment_choice_keeps_the_reported_quantity(self):
         from agents.juneok.agent import AgentSession
