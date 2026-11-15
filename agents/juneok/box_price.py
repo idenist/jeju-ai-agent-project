@@ -9,9 +9,11 @@ _NUMBER = r"[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?"
 _AMOUNT = re.compile(rf"(?<![\d,.])({_NUMBER})\s*(만\s*)?원")
 _MASS = re.compile(rf"(?<![\d,.])({_NUMBER})\s*(?:kg|킬로그램)", re.I)
 _PACK = r"(?:상자|박스|포장)"
+_PACK_WITH_WEIGHT = rf"{_NUMBER}\s*(?:kg|킬로그램)\s*(?:짜리\s*)?{_PACK}"
+_PRICED_AMOUNT = rf"(?<![\d,.]){_NUMBER}\s*(?:만\s*)?원"
 _BOX_PRICE = re.compile(
-    rf"(?:{_PACK}\s*(?:한\s*개\s*)?(?:당|에)|한\s*{_PACK}에)\s*(?:가격\s*(?:은|이)?\s*)?"
-    rf"(?<![\d,.]){_NUMBER}\s*(?:만\s*)?원|{_NUMBER}\s*원\s*/\s*{_PACK}"
+    rf"(?:{_PACK}\s*(?:한\s*개\s*)?(?:당|에)|한\s*{_PACK}(?:당|에)?|{_PACK_WITH_WEIGHT})"
+    rf"\s*(?:가격\s*(?:은|이)?\s*)?{_PRICED_AMOUNT}|{_PRICED_AMOUNT}\s*/\s*{_PACK}", re.I,
 )
 _SIDE_A = re.compile(r"(?:a\s*안|먼저\s*(?:출하|팔))", re.I)
 _SIDE_B = re.compile(r"(?:b\s*안|나중\s*(?:출하|팔))", re.I)

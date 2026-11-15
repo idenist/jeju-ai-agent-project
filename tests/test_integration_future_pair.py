@@ -46,6 +46,27 @@ class FuturePairTests(unittest.TestCase):
                 self.assertEqual(agent.future_pair.current_result()["option_a"]["price_per_kg"], "2500")
                 self.assertIn("2,500원/kg", confirmed["text"])
 
+    def test_box_quotes_without_a_particle_require_confirmation(self):
+        from agents.juneok.agent import AgentSession
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        for quote, entered_amount, unit_price in (("5kg 상자 12,500원", 12500, 2500),
+                                                 ("한 박스 2만원, 5kg 상자", 20000, 4000)):
+            with self.subTest(quote=quote):
+                client = 모의_대화_클라이언트("compare_future_pair", {
+                    "action": "new", "expected_version": 0,
+                    "patch": {**COMMON, "price_a": entered_amount, "option_b": OPTION_B,
+                              "price_mode": "history", "history_filters": FILTERS},
+                })
+                agent = AgentSession(client=client)
+                first = agent.run(f"감귤 3톤을 사흘 뒤와 열흘 뒤에 출하할 때를 비교해 주세요. A안은 {quote}예요.")
+                self.assertIn(f"{unit_price:,}원/kg", first["text"])
+                self.assertIsNone(agent.future_pair.inputs["price_a"])
+                self.assertIsNone(agent.future_pair.current_result())
+
+                agent.run("네, 맞아요.")
+                self.assertEqual(agent.future_pair.current_result()["option_a"]["price_per_kg"], str(unit_price))
+
     def test_box_price_confirmation_preserves_the_separate_history_package(self):
         from agents.juneok.box_price import proposed_box_price
         from agents.juneok.future_pair_state import FuturePairState
