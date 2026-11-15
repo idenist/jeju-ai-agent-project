@@ -342,6 +342,7 @@ class SharedWorkspace:
 
     def clear_conversation(self, preserve_conditions=True, preserve_manual_pair=False):
         self.session.messages = []
+        self.session._sale_window_state = None
         self.session._current_semantic_active = False
         self.session._current_prompt_field = None
         self.session._current_unanswered = 0

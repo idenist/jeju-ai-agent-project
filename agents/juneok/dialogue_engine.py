@@ -11,11 +11,14 @@ from uuid import uuid4
 from decimal import Decimal, InvalidOperation
 import json
 import time
+from datetime import datetime, timedelta, timezone
 
 # Strictly defined field names, not a list of sentences or keyword templates.
 _FIELDS = ("quantity_kg", "current_price_per_kg", "price_basis", "delay_days",
            "loss_percent", "daily_storage_cost", "current_fee_percent", "fee_percent",
-           "cost_policy", "included_costs", "future_price_per_kg")
+           "cost_policy", "included_costs", "future_price_per_kg",
+           "earliest_sale_date", "latest_sale_date", "candidate_a_date",
+           "candidate_b_date", "quoted_price_per_kg")
 _COST_KINDS = ("commission", "sorting", "packaging", "transport", "storage", "other")
 
 def _nullable(t, **kwargs):
@@ -23,7 +26,7 @@ def _nullable(t, **kwargs):
 
 _SCHEMA = {"type": "object", "additionalProperties": False,
            "properties": {
-               "task": {"type": "string", "enum": ["current_comparison", "other"]},
+               "task": {"type": "string", "enum": ["current_comparison", "sale_window", "future_pair", "market_lookup", "settlement", "explanation", "other"]},
                "intent": {"type": "string", "enum": ["provide", "unknown", "clarify", "other"]},
                "unknown_fields": {"type": "array", "items": {"type": "string", "enum": list(_FIELDS)}},
                "evidence": {"type": "array", "items": {"type": "object", "additionalProperties": False,
@@ -41,6 +44,11 @@ _SCHEMA = {"type": "object", "additionalProperties": False,
                "included_costs": {"type": ["array", "null"],
                                   "items": {"type": "string", "enum": list(_COST_KINDS)}},
                "future_price_per_kg": _nullable("number"),
+               "earliest_sale_date": _nullable("string"),
+               "latest_sale_date": _nullable("string"),
+               "candidate_a_date": _nullable("string"),
+               "candidate_b_date": _nullable("string"),
+               "quoted_price_per_kg": _nullable("number"),
            }}
 _SCHEMA["required"] = list(_SCHEMA["properties"])
 _PARSE_TOOL = {"type": "function", "name": "interpret_current_shipment_turn", "strict": True,
@@ -48,9 +56,18 @@ _PARSE_TOOL = {"type": "function", "name": "interpret_current_shipment_turn", "s
                "parameters": _SCHEMA}
 
 _INSTRUCTIONS = """당신은 제주 감귤 출하 도우미의 입력 해석기입니다. 결론이나 대답을 하지 말고 함수만 호출하세요.
-현재 목적: '지금 파는 것'과 '나중에 보관 후 파는 것'을 비교할 조건을 수집합니다.
+사용자의 출하 의도와 제약을 먼저 파악하고, 확실히 말한 값만 추출합니다.
+- current_comparison: 오늘 판매가 가능하고, 지금 vs 보관 후 출하를 비교합니다.
+- sale_window: 출하 가능한 시작일·종료일이 있거나 오늘 출하할 수 없고 특정 기간 이후에만 출하하는 경우입니다. 사용자가 특정 날짜 이후에만 출하할 수 있다면 이 작업을 우선합니다.
+- 두 개의 미래 출하일을 비교하려는 경우는 future_pair, 과거 가격·통계 조회는 market_lookup, 정산 검산은 settlement, 용어 설명은 explanation입니다.
+- 이처럼 명확하게 다른 기능으로 전환한 경우에만 기존 전문 도구 경로에 위임합니다. 그 외 모호하거나 맥락이 빠진 답변은 other로 두고 현재 작업을 유지하세요.
+- 이어지는 대화에서는 'sale_window' 상태가 활성화되어 있다면 그 제약을 유지합니다. 사용자가 명시적으로 다른 작업을 시작한 경우만 작업을 바꿉니다.
 의미를 해석하되 문장·단어 패턴에 의존하지 마세요. 같은 뜻의 다양한 표현을 같은 필드로 정규화하세요.
-- 최초 '며칠 뒤 출하할까', '언제 팔까', '보관이 나을까', 두 선택 비교는 current_comparison입니다.
+- 오늘 출하가 가능한지 모르는 일반적인 보관 질문은 current_comparison입니다. 하지만 출하 가능 시작일이 제시됐다면 sale_window가 우선합니다.
+- earliest_sale_date/latest_sale_date는 실제 출하 가능 경계입니다. candidate_a_date/candidate_b_date는 비교할 구체적인 출하 예정일이며, 둘을 절대로 혼동하지 마세요.
+- 날짜는 사용자 표현과 오늘(KST)을 고려하여 YYYY-MM-DD로 정규화하고, 원문 근거를 evidence에 첨부하세요. 상대 날짜가 명확하지 않으면 null로 둡니다.
+- sale_window에서 사용자가 말한 kg당 가격은 quoted_price_per_kg으로 기록합니다. 이는 오늘의 현재 판매단가가 아닙니다. current_price_per_kg로 저장하지 마세요.
+- 날짜가 특정되지 않은 단가는 해당 출하일의 실제 확정가격으로 취급하지 마세요.
 - 이전 비교가 진행 중인 동안 짧은 숫자·답변·정정은 그 흐름을 이어갑니다. 다른 주제(과거 거래자료만 조회, 정산, 두 개의 서로 다른 미래 출하일 A/B 등)는 other입니다.
 - quantity_kg은 전체 물량(톤→1000kg), current_price_per_kg은 지금 판매 제시단가(원/kg)입니다. 상자 단가나 미래 단가는 절대로 현재 단가로 바꾸지 마세요.
 - delay_days는 지금 즉시 출하와 비교할 '추가 보관기간'입니다. 정확한 일주일=7일. '다음 주'처럼 정확한 일수가 모호하면 null로 둡니다. '오늘'은 0일 추가 보관 대안이 아니라 이미 존재하는 지금 판매 기준입니다.
@@ -99,7 +116,10 @@ def _interpret(session, question, active, waiting):
                          if key != "options" and value is not None},
                "options": session.store.scenario["options"],
                "deferred": sorted(getattr(session, "_deferred_current_fields", set())),
-               "user": question}
+               "user": question,
+               "today_kst": datetime.now(timezone(timedelta(hours=9))).date().isoformat(),
+               "sale_window": (getattr(session, "_sale_window_state", None).__dict__.copy()
+                               if getattr(session, "_sale_window_state", None) else None)}
     started = time.monotonic()
     client = _make_client(session)
     if hasattr(client, "with_options"):
@@ -117,7 +137,7 @@ def _interpret(session, question, active, waiting):
     result = json.loads(item.arguments)
     if not isinstance(result, dict) or set(result) != set(_SCHEMA["required"]):
         raise ValueError("대화 입력 계약이 맞지 않습니다.")
-    if result["task"] not in ("current_comparison", "other") or result["intent"] not in ("provide", "unknown", "clarify", "other"):
+    if result["task"] not in ("current_comparison", "sale_window", "future_pair", "market_lookup", "settlement", "explanation", "other") or result["intent"] not in ("provide", "unknown", "clarify", "other"):
         raise ValueError("대화 의도 값이 유효하지 않습니다.")
     # Every asserted non-null value must have literal user-message evidence.
     citations = result.get("evidence")
@@ -259,6 +279,26 @@ def _response(session, result, message, elapsed, usage, *, success=True):
                             "tool_calls_executed": 0}}
 
 
+def _interpretation_failure(session, reason: str):
+    """An explicit safe stop instead of an invisible fallback to the legacy router."""
+    return {"status": "INVALID_INPUT",
+            "text": "입력 의미를 확실히 확인하지 못했습니다. 조건은 변경하지 않았습니다. "
+                    "가능하면 출하 가능 날짜와 물량·가격을 다시 알려주세요.",
+            "tool_results": [], "visible_results": [], "events": [],
+            "report": "", "state": session.store.snapshot(),
+            "metrics": {"model_requests": 1, "semantic_error": reason}}
+
+
+def _plain_response(session, message, elapsed, usage, *, success=True):
+    return {"status": "OK" if success else "INVALID_INPUT", "text": message,
+            "report": "", "visible_results": [], "tool_results": [], "events": [],
+            "state": session.store.snapshot(),
+            "task_context": session.task_context.snapshot(),
+            "metrics": {"model_requests": 1, "input_tokens": getattr(usage, "input_tokens", 0) or 0,
+                        "output_tokens": getattr(usage, "output_tokens", 0) or 0,
+                        "elapsed_seconds": round(elapsed, 3)}}
+
+
 def route_turn(session, question: str):
     """Return a complete reply for a now-vs-storage conversation; else None.
 
@@ -286,7 +326,7 @@ def route_turn(session, question: str):
         ("quantity_kg", "current_price_per_kg")) and before.get("status") == "NEEDS_INPUT")
     try:
         intent, elapsed, usage = _interpret(session, question, active, waiting)
-    except Exception:
+    except Exception as exc:
         # During an active comparison, a failed semantic parse must never
         # resurrect the old unconstrained tool-selection path. Keep state.
         if active:
@@ -294,13 +334,49 @@ def route_turn(session, question: str):
             return _response(session, before,
                              "이번 답변의 뜻을 확실히 판단하지 못해 조건을 변경하지 않았습니다.\n\n"
                              + (advice or "확인한 입력값을 한 번 더 알려주세요."), 0, None, success=False)
-        # Outside this workflow, the existing specialist tools remain in charge.
+        # Do not silently hand unparsed user input to a different workflow.
+        return _interpretation_failure(session, str(exc))
+
+    # An explicitly selected specialist route can use its existing verified tool.
+    # Ambiguous replies cannot silently escape a running workflow.
+    specialist = {"future_pair", "market_lookup", "settlement", "explanation"}
+    if intent["task"] in specialist:
         return None
+    if intent["task"] == "sale_window" or getattr(session, "_sale_window_state", None) is not None:
+        from .sale_window import SaleWindowState
+        window = getattr(session, "_sale_window_state", None) or SaleWindowState()
+        # These facts are not current-market quotes; keep them isolated from ScenarioStore.
+        facts = {key: intent.get(key) for key in (
+            "earliest_sale_date", "latest_sale_date", "candidate_a_date", "candidate_b_date",
+            "quantity_kg", "quoted_price_per_kg", "price_basis")}
+        if facts["quoted_price_per_kg"] is None and intent.get("current_price_per_kg") is not None:
+            facts["quoted_price_per_kg"] = intent["current_price_per_kg"]
+        if intent["intent"] in ("clarify", "other", "unknown"):
+            # Never mistake the model's guessed numbers for user confirmation.
+            facts = {}
+        try:
+            window.apply(facts, today=datetime.now(timezone(timedelta(hours=9))).date())
+        except ValueError as exc:
+            return _plain_response(session, f"조건을 변경하지 않았습니다: {exc}\n\n" + window.reply(), elapsed, usage,
+                                    success=False)
+        session._sale_window_state = window
+        return _plain_response(session, window.reply(clarify=intent["intent"] == "clarify"), elapsed, usage)
 
     if intent["task"] != "current_comparison":
-        return None
+        if not active:
+            return _plain_response(session,
+                "요청을 출하 비교 조건으로 확실히 분류하지 못했습니다. "
+                "출하 가능한 시점이나 비교할 날짜를 조금 더 알려주세요. "
+                "확정되지 않은 조건은 저장하지 않았습니다.", elapsed, usage)
+        # Keep the state, do not launch the old tool loop on an ambiguous answer.
+        guidance = current_comparison_guidance(before, deferred_fields=deferred)
+        return _response(session, before,
+                         "현재 출하 비교 조건을 계속 확인 중입니다. 이번 답변에서는 확정된 변경사항을 찾지 못했습니다.\n\n"
+                         + (guidance or "조건을 조금 더 구체적으로 알려주세요."), elapsed, usage)
     if intent["intent"] == "other" and not active:
-        return None
+        return _plain_response(session,
+            "비교에 사용할 조건이 아직 확인되지 않았습니다. 출하 가능 날짜와 알고 계신 물량을 알려주세요.",
+            elapsed, usage)
     try:
         # Unknown is an explicit refusal to provide a value. Even if the
         # model simultaneously returns a conflicting numeric/basis value,

@@ -81,7 +81,7 @@ class SemanticWorkflowTests(unittest.TestCase):
 
     def test_hallucinated_value_without_literal_user_evidence_cannot_change_state(self):
         agent, _ = self.session(extraction(quantity_kg=3000, quotes={"quantity_kg": "3톤"}))
-        self.assertIsNone(route_turn(agent, "감귤 언제 출하할까요?"))
+        self.assertEqual(route_turn(agent, "감귤 언제 출하할까요?")["status"], "INVALID_INPUT")
         self.assertIsNone(agent.store.scenario["quantity_kg"])
         self.assertEqual(agent.store.version, 0)
 
@@ -118,7 +118,7 @@ class SemanticWorkflowTests(unittest.TestCase):
 
     def test_unrelated_workflow_is_not_intercepted(self):
         agent, _ = self.session(extraction(task="other", intent="other"))
-        self.assertIsNone(route_turn(agent, "정산 기록 검산해주세요"))
+        self.assertIn("확실히 분류하지 못했습니다", route_turn(agent, "정산 기록 검산해주세요")["text"])
         self.assertEqual(agent.store.version, 0)
 
 if __name__ == "__main__":
