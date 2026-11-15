@@ -358,6 +358,13 @@ class FuturePairTests(unittest.TestCase):
         self.assertIsNone(pair.current_result())
         self.assertEqual(len(client.requests[-1]["input"]), 1)
 
+        # A new case with identical unknown conditions also gets its own confirmation.
+        previous_version = pair.version
+        client.arguments = {"action": "edit", "expected_version": previous_version, "patch": conditions}
+        fresh = agent.run("새 비교입니다. 먼저 2,500원/kg, 나중은 직접 입력 2,750원/kg입니다.")
+        self.assertIn(LABELS["price_basis"], fresh["visible_results"][0]["result"]["missing_fields"])
+        self.assertGreater(pair.version, previous_version)
+
         client.arguments = {"action": "edit", "expected_version": pair.version, "patch": conditions}
         stated = agent.run("새 출하 비교입니다. 수수료를 빼기 전 2,500원/kg으로 비교해 주세요.")
         self.assertEqual(stated["visible_results"][0]["result"]["status"], "OK")

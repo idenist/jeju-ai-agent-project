@@ -206,8 +206,8 @@ class FuturePairState:
             self.clear_result()
         return deepcopy(self.result)
 
-    def replace(self, inputs):
-        if inputs != self.inputs:
+    def replace(self, inputs, *, start_new=False):
+        if start_new or inputs != self.inputs:
             self.inputs = deepcopy(inputs)
             self.version += 1
             self.clear_result()
@@ -310,7 +310,7 @@ class FuturePairState:
             self._validate(candidate)
         except ValueError as exc:
             return self._response("INVALID_INPUT", str(exc))
-        self.replace(candidate)
+        self.replace(candidate, start_new=action == "new")
         if action == "new":
             self.costs_deferred = False
             self.specs_deferred = False
