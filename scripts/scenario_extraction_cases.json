@@ -305,5 +305,75 @@
         ]
       }
     ]
+  },
+  {
+    "id": "box-price-not-per-kg",
+    "turns": [
+      {
+        "question": "조생귤 특 소 상자 5kg, 지금 팔면 5kg 상자에 12,500원 받는데 일주일 뒤에 팔면 B안 단가는?",
+        "tool": "get_price_scenarios",
+        "expected": {
+          "variety": "조생귤",
+          "grade": "특",
+          "size": "소",
+          "package": "상자",
+          "package_kg": 5,
+          "option_a_days_from_today": 0,
+          "days_after_option_a": 7
+        },
+        "reply_includes": [
+          "단가 미입력",
+          "A안 단가(원/kg)를 알려 주세요"
+        ],
+        "reply_excludes": [
+          "12,500.00원/kg",
+          "2,500.00원/kg",
+          "[가정]"
+        ]
+      },
+      {
+        "question": "kg당으로는 2,500원이야.",
+        "tool": "get_price_scenarios",
+        "expected": {
+          "variety": "조생귤",
+          "grade": "특",
+          "size": "소",
+          "package": "상자",
+          "package_kg": 5,
+          "option_a_days_from_today": 0,
+          "option_a_price_per_kg": 2500,
+          "days_after_option_a": 7
+        },
+        "reply_includes": [
+          "B안 2,409.37원/kg [가정]"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "box-price-bak-su",
+    "turns": [
+      {
+        "question": "조생귤 특 소 5kg 상자인데 한 박스 2만원이야. 3일 뒤에 파는 거랑 10일 뒤에 파는 거 B안 단가 비교해줘",
+        "tool": "get_price_scenarios",
+        "expected": {
+          "variety": "조생귤",
+          "grade": "특",
+          "size": "소",
+          "package": "상자",
+          "package_kg": 5,
+          "option_a_days_from_today": 3,
+          "option_b_days_from_today": 10
+        },
+        "reply_includes": [
+          "단가 미입력"
+        ],
+        "reply_excludes": [
+          "20,000.00원/kg",
+          "4,000.00원/kg",
+          "[가정]"
+        ]
+      }
+    ]
   }
 ]
