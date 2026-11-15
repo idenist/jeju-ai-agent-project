@@ -91,6 +91,7 @@ class BundleTest(unittest.TestCase):
         from io import BytesIO
         reader = PdfReader(BytesIO(pdf))
         self.assertGreaterEqual(len(reader.pages), 1)
+        self.assertIn("B안 - A안(톤)", "\n".join(page.extract_text() for page in reader.pages))
 
 
 class ChatReportPipelineTest(unittest.TestCase):
@@ -122,11 +123,12 @@ class ChatReportPipelineTest(unittest.TestCase):
         self.assertEqual(len(result["entries"]), 2)
         self.assertEqual(json.loads(result["json"])["status"], "INTEGRATED")
         messages = [{"reply": {"chat_report": result}}]
-        self.assertEqual(namespace["_latest_chat_report"](messages, 42, None, 7)[0], 0)
-        self.assertEqual(namespace["_latest_chat_report"](messages, 42, None, 8), (None, None))
-        self.assertEqual(namespace["_latest_chat_report"](messages, 41, None, 7), (None, None))
+        self.assertEqual(namespace["_latest_chat_report"](messages, 42, fake_economic(), 7)[0], 0)
+        self.assertEqual(namespace["_latest_chat_report"](messages, 42, None, 7), (None, None))
+        self.assertEqual(namespace["_latest_chat_report"](messages, 42, fake_economic(), 8), (None, None))
+        self.assertEqual(namespace["_latest_chat_report"](messages, 41, fake_economic(), 7), (None, None))
         with patch("agents.seunghyuk.shipment_timing_bundle.source_fingerprint", return_value=("x", "y")):
-            self.assertEqual(namespace["_latest_chat_report"](messages, 42, None, 7), (None, None))
+            self.assertEqual(namespace["_latest_chat_report"](messages, 42, fake_economic(), 7), (None, None))
 
 
 class AttrState(dict):
@@ -234,6 +236,34 @@ class UIPipelineTest(unittest.TestCase):
             ui.render_shipment_timing_panel({"start_date": None})
             self.assertTrue(any(x[0] == "info" for x in fake.display))
             self.assertFalse(any(x[0] == "download" for x in fake.display))
+            sys.modules.pop(name, None)
+
+    def test_keyless_panel_shows_matching_economics_and_both_downloads(self):
+        name = "agents.seunghyuk.shipment_timing_ui"
+        import streamlit
+        from streamlit.testing.v1 import AppTest
+
+        script = """
+from agents.seunghyuk.shipment_timing_ui import render_shipment_timing_panel
+from test_shipment_timing_unified import fake_economic
+
+class Pair:
+    inputs = {"start_date": "2026-11-17", "option_a": {"delay_days": 3}, "option_b": {"delay_days": 10}}
+
+    def current_result(self):
+        return fake_economic()
+
+render_shipment_timing_panel(Pair())
+"""
+        with patch.dict(sys.modules, {"streamlit": streamlit}):
+            sys.modules.pop(name, None)
+            app = AppTest.from_string(script, default_timeout=30).run()
+            app.selectbox(key="timing_variety").select("노지온주").run()
+            app.button(key="timing_run").click().run()
+            self.assertFalse(app.exception)
+            self.assertTrue(any("700,000원" in item.value for item in app.markdown))
+            self.assertEqual({button.label for button in app.get("download_button")},
+                             {"출하 시기·경제성 통합 PDF 저장", "출하 시기·경제성 통합 JSON 저장"})
             sys.modules.pop(name, None)
 
 

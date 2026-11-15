@@ -74,7 +74,7 @@ class UiTests(unittest.TestCase):
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             app.run()
             self.assertEqual(list(app.error), [])
-            self.assertTrue(any(b.label == "PDF 보고서 내려받기" for b in app.get("download_button")))
+            self.assertTrue(any(b.label == "출하 비교 PDF 저장" for b in app.get("download_button")))
 
     def test_csv_preview_apply_is_explicit_and_resets_only_chat(self):
         import io
@@ -127,7 +127,7 @@ class UiTests(unittest.TestCase):
             app.run()
             self.assertEqual(list(app.exception), [])
             self.assertTrue(any("3,109원/kg" in str(x.value) for x in app.markdown))
-            self.assertIn("PDF 보고서 내려받기", {b.label for b in app.get("download_button")})
+            self.assertIn("출하 비교 PDF 저장", {b.label for b in app.get("download_button")})
             self.assertTrue(any(x.label == "보고서 미리보기" for x in app.expander))
             self.assertTrue(any(x.label == "상세 · JSON" for x in app.expander))
             self.assertEqual(app.session_state.agent_messages[-1]["reply"]["chat_report"], saved_report)
@@ -149,7 +149,26 @@ class UiTests(unittest.TestCase):
                 app.button(key="shipment_send").click().run()
             self.assertFalse(app.exception)
             self.assertEqual(app.session_state.agent_messages[-1]["reply"]["chat_report"], before)
-            self.assertEqual(sum(b.label == "PDF 보고서 내려받기" for b in app.get("download_button")), 1)
+            self.assertEqual(sum(b.label == "출하 비교 PDF 저장" for b in app.get("download_button")), 1)
+
+    def test_glossary_download_has_its_own_label_and_document(self):
+        from io import BytesIO
+        from pypdf import PdfReader
+        import streamlit as st
+
+        app = self.make_app()
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}), \
+                patch("streamlit.download_button", wraps=st.download_button) as download:
+            next(b for b in app.button if b.label == "용어 이해").click().run()
+            self.assertFalse(app.exception)
+            self.assertTrue(any(b.label == "용어 설명 PDF 저장" for b in app.get("download_button")))
+            self.assertFalse(any(b.label == "출하 비교 PDF 저장" for b in app.get("download_button")))
+            args, kwargs = next((call.args, call.kwargs) for call in download.call_args_list
+                                if call.args[0] == "용어 설명 PDF 저장")
+            self.assertEqual(kwargs["file_name"], "제주감귤_용어설명.pdf")
+            pdf = PdfReader(BytesIO(args[1]))
+            self.assertEqual(pdf.metadata.title, "제주 감귤 출하 용어 설명")
+            self.assertIn("제주 감귤 출하 용어 설명", pdf.pages[0].extract_text())
 
     def make_app(self):
         # Blank OS override makes tests independent of the developer's product .env.
@@ -203,7 +222,7 @@ class UiTests(unittest.TestCase):
             next(b for b in app.button if b.label == "가상 예시 조건 불러오기").click().run()
             next(b for b in app.button if b.label == "입력 조건 비교").click().run()
             self.assertEqual(app.session_state.workspace.store.version, 1)
-            self.assertEqual({b.label for b in app.get("download_button")}, {"PDF 보고서 내려받기", "MD 내려받기", "비교 JSON 내려받기"})
+            self.assertEqual({b.label for b in app.get("download_button")}, {"출하 비교 PDF 저장", "MD 내려받기", "비교 JSON 내려받기"})
             next(x for x in app.text_input if x.key == "loss_0").set_value("4").run()
             self.assertTrue(any("입력 조건이 바뀌었습니다" in x.value for x in app.warning))
             self.assertFalse(any("3,109원/kg" in str(x.value) for x in app.markdown))

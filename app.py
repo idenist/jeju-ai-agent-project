@@ -24,6 +24,7 @@ _REPORT_REQUEST = re.compile(
     r"(?:다시\s*)?(?:줘(?:요)?|주세요|보여\s*줘(?:요)?|보여\s*주세요|받을\s*수\s*있나요|다운로드)?[.!?\s]*",
     re.IGNORECASE,
 )
+_BASIS_CHOICES = {"빼기 전": "gross", "뺀 뒤": "commission_net", "잘 모르겠어요": None}
 
 
 def _workspace():
@@ -386,7 +387,7 @@ _SHIPMENT_STEP_DETAILS = {
 
 
 def _shipment_progress_state(status):
-    return "complete" if status in {None, "OK", "NEEDS_INPUT", "NO_DATA"} else "error"
+    return "complete" if status in {None, "OK", "NEEDS_INPUT", "NO_DATA", "INSUFFICIENT_DATA"} else "error"
 
 
 def _shipment_work_label(elapsed):
@@ -452,26 +453,16 @@ def _shipment_timer_html(started):
     </script>"""
 
 
-def _apply_future_pair_chat_edit(ws, messages, version, patch, user_text):
-    with st.chat_message("assistant"):
-        result, steps, elapsed = _run_with_shipment_progress(
-            lambda report: ws.session.future_pair.apply("edit", version, patch, on_progress=report)
-        )
-    if result["status"] == "INVALID_INPUT":
-        st.warning(result["message"])
-        return
+def _reply_to_future_pair_edit(ws, version, patch, *, on_progress=None):
+    pair = ws.session.future_pair
+    result = pair.apply("edit", version, patch, on_progress=on_progress)
     entry = {"tool": "compare_future_pair", "result": result}
-    reply = {"state": ws.store.snapshot(), "text": render_dialogue([entry]), "visible_results": [entry],
-             "progress_steps": steps, "progress_elapsed": elapsed, "status": result["status"]}
-    reply["chat_report"] = _chat_report(ws, reply)
-    messages.extend([
-        {"role": "user", "content": user_text},
-        {"role": "assistant", "reply": reply},
-    ])
-    st.rerun()
+    return {"state": ws.store.snapshot(), "status": result["status"], "visible_results": [entry],
+            "text": render_dialogue([entry], pair_costs_deferred=pair.costs_deferred,
+                                    pair_specs_deferred=pair.specs_deferred)}
 
 
-def _render_later_shipment_edit(ws, messages, pair, version):
+def _render_later_shipment_edit(ws, pair, version):
     start = date.fromisoformat(pair["start_date"])
     earlier = date.fromisoformat(pair["option_a"]["sale_date"])
     later = date.fromisoformat(pair["options_b"][0]["sale_date"])
@@ -487,15 +478,17 @@ def _render_later_shipment_edit(ws, messages, pair, version):
                 st.info("현재와 다른 출하일을 골라주세요.")
             else:
                 days = (changed - start).days
-                _apply_future_pair_chat_edit(ws, messages, version, {"option_b": {"delay_days": days}},
-                                             f"나중 출하일만 {changed}로 변경 · {days}일 보관")
+                _submit_shipment_question(f"나중 출하일만 {changed}로 변경 · {days}일 보관",
+                                          pair_edit=(version, {"option_b": {"delay_days": days}}))
+                st.rerun()
 
 
-def _submit_shipment_question(example=None):
+def _submit_shipment_question(example=None, *, timing_lookup=None, pair_edit=None, basis_choice=None):
     question = example if example is not None else st.session_state.get("shipment_question", "")
     messages = st.session_state.setdefault("agent_messages", [])
     if question.strip() and not (messages and messages[-1].get("pending")):
-        messages.append({"role": "user", "content": question.strip(), "pending": True, "started": monotonic()})
+        messages.append({"role": "user", "content": question.strip(), "pending": True, "started": monotonic(),
+                         "timing_lookup": timing_lookup, "pair_edit": pair_edit, "basis_choice": basis_choice})
         if latency_logging_enabled():
             messages[-1]["submitted_ms"] = int(time() * 1000)
 
@@ -525,21 +518,218 @@ def _render_shipment_composer(disabled, show_examples, *, busy=False):
             )
 
 
-def _render_chat_pair_actions(ws, messages, pair, current_pair, latest_message):
-    if pair["status"] == "OK" and current_pair is not None:
-        _render_later_shipment_edit(ws, messages, current_pair, pair["future_pair_version"])
-    elif pair.get("manual_price_required") and latest_message:
-        key = f"future_pair_chat_manual_{pair['future_pair_version']}"
+_SHIPMENT_SCROLL_SCRIPT = """
+<script>
+(() => {
+    const app = document.querySelector('.stApp');
+    if (!app || app.dataset.shipmentScrollReady) return;
+    app.dataset.shipmentScrollReady = 'true';
+
+    let transcript, turn, frame;
+    let follow = true;
+    let previousTop = 0;
+    const nearEnd = () => transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop <= 16;
+
+    function sync() {
+        frame = undefined;
+        const view = app.querySelector('.st-key-shipment_transcript');
+        const footer = app.querySelector('[data-testid="stBottom"] .st-key-shipment_footer');
+        const button = footer?.querySelector('.shipment-latest');
+        if (!view || !button) {
+            transcript = undefined;
+            return;
+        }
+        if (view !== transcript || button.dataset.turn !== turn) {
+            transcript = view;
+            turn = button.dataset.turn;
+            follow = true;
+        }
+        if (!transcript.clientHeight) return;
+        if (follow) {
+            if (!nearEnd()) transcript.scrollTop = transcript.scrollHeight;
+            // Focusing the composer can also scroll the outer Streamlit page.
+            const bottom = footer.closest('[data-testid="stBottom"]');
+            const main = bottom?.closest('[data-testid="stMain"]');
+            if (main && bottom.clientHeight) {
+                const gap = bottom.getBoundingClientRect().top - transcript.getBoundingClientRect().bottom;
+                const delta = Math.round(8 - gap);
+                if (Math.abs(delta) > 24) main.scrollTop += delta;
+            }
+        }
+        previousTop = transcript.scrollTop;
+
+        const running = !!footer.querySelector('.st-key-shipment_composer_busy');
+        button.dataset.running = String(running);
+        button.setAttribute('aria-label', running ? '답변 생성 중. 최신 답변으로 이동' : '최신 답변으로 이동');
+        button.hidden = !running && nearEnd();
+    }
+
+    function schedule() {
+        if (frame === undefined) frame = requestAnimationFrame(sync);
+    }
+
+    app.addEventListener('scroll', event => {
+        if (event.target !== transcript || !transcript.clientHeight) return;
+        if (nearEnd()) follow = true;
+        else if (transcript.scrollTop < previousTop) follow = false;
+        previousTop = transcript.scrollTop;
+        schedule();
+    }, true);
+    app.addEventListener('click', event => {
+        if (!transcript || !event.target.closest('.shipment-latest')) return;
+        follow = true;
+        if (event.detail === 0) {
+            transcript.tabIndex = -1;
+            transcript.focus({preventScroll: true});
+        }
+        schedule();
+    });
+    new MutationObserver(schedule).observe(app, {
+        childList: true, subtree: true, attributes: true, attributeFilter: ['data-turn', 'aria-selected'],
+    });
+    window.addEventListener('resize', schedule);
+    schedule();
+})();
+</script>
+"""
+
+
+def _render_chat_timing_action(version, earlier, later):
+    from agents.seunghyuk.shipment_timing import CATEGORIES
+
+    with st.expander("같은 날짜의 과거 출하량 보기"):
+        st.caption(f"{earlier} · {later} 출하 기준")
+        with st.form(f"chat_timing_{version}", border=False):
+            variety = st.selectbox("출하통계 품종", list(CATEGORIES), index=None,
+                                   key=f"chat_timing_variety_{version}",
+                                   placeholder="품종을 선택하세요",
+                                   help="제주데이터허브 출하통계에 기록된 품종을 선택해 주세요.")
+            submitted = st.form_submit_button("과거 출하량 조회")
+        if submitted and variety is None:
+            st.warning("출하통계 품종을 선택해 주세요.")
+        elif submitted:
+            _submit_shipment_question(f"{variety}의 같은 날짜 과거 출하량을 비교해 주세요.",
+                                      timing_lookup=(variety, version))
+            st.rerun()
+
+
+def _render_chat_pair_actions(ws, current_pair, *, timing_already_shown=False):
+    version = ws.session.future_pair.version
+    if not timing_already_shown:
+        _render_chat_timing_action(version, current_pair["option_a"]["sale_date"], current_pair["options_b"][0]["sale_date"])
+    _render_later_shipment_edit(ws, current_pair, version)
+
+
+def _chat_basis_target(ws, reply):
+    from agents.juneok.future_pair_state import LABELS
+
+    pair = ws.session.future_pair
+    if pending := pair.pending:
+        latest_pair = _chat_pair(reply)
+        if latest_pair and latest_pair.get("future_pair_version") == pair.version:
+            if (pending["status"] == "NEEDS_INPUT" and pair.inputs["price_a"] is not None
+                    and LABELS["price_basis"] in pending.get("missing_fields", ())
+                    and not pending.get("manual_price_required")):
+                return "future_pair", pair.version
+            return None
+    if reply.get("state", {}).get("version") == ws.store.version and ws.store.scenario["current_price_per_kg"] is not None:
+        for entry in reply.get("visible_results", ()):
+            result = entry["result"]
+            if (entry["tool"] == "compare_shipment_options" and result["status"] == "NEEDS_INPUT"
+                    and "price_basis" in result.get("missing_fields", ())):
+                return "comparison", ws.store.version
+    return None
+
+
+def _render_chat_basis(ws, messages):
+    reply = messages[-1].get("reply", {})
+    target = _chat_basis_target(ws, reply)
+    if target is None:
+        return
+    if any(message.get("reply", {}).get("deferred_basis") == target for message in messages):
+        return
+    subject = "먼저 출하할 때 단가" if target[0] == "future_pair" else "지금 출하할 때 단가"
+    answers = (f"{subject}는 수수료를 빼기 전 금액이에요.", f"{subject}는 수수료를 뺀 뒤 금액이에요.",
+               "수수료를 뺀 뒤의 단가인지 잘 모르겠어요.")
+    with st.container(horizontal=True, gap="small", key="shipment_basis_choices"):
+        for (label, basis), answer in zip(_BASIS_CHOICES.items(), answers):
+            st.button(label, key=f"chat_basis_{target[0]}_{target[1]}_{basis}",
+                      on_click=_submit_shipment_question, args=(answer,), kwargs={"basis_choice": (*target, basis)})
+
+
+def _reply_to_chat_basis(ws, scope, version, basis, *, on_progress=None):
+    from agents.juneok.future_pair_state import SUGGEST_TIMING
+    from agents.seunghyuk.shipment_timing import resolve_pair_dates
+
+    pair = ws.session.future_pair
+    current_version = pair.version if scope == "future_pair" else ws.store.version
+    if version != current_version:
+        return {"status": "INVALID_INPUT", "state": ws.store.snapshot(),
+                "text": "비교 조건이 바뀌었어요. 현재 조건에서 다시 선택해 주세요."}
+    if basis is None:
+        if scope == "future_pair" and resolve_pair_dates(pair.inputs)[0]:
+            text = SUGGEST_TIMING
+        else:
+            text = "과거 출하량부터 볼까요? 품종과 비교하고 싶은 날짜를 알려주세요."
+        return {"status": "OK", "state": ws.store.snapshot(), "text": text, "deferred_basis": (scope, version)}
+    if scope == "future_pair":
+        return _reply_to_future_pair_edit(ws, version, {"price_basis": basis}, on_progress=on_progress)
+    ws.store.origin_turn_id = None
+    update = ws.store.update({"price_basis": basis}, version)
+    if update["status"] != "OK":
+        return {"status": update["status"], "state": ws.store.snapshot(), "text": update["message"]}
+    if on_progress:
+        on_progress("compare")
+    result = ws.calculate(["수수료 차감 전·후 기준"], channel="대화와 공유 조건")
+    entries = [{"tool": "compare_shipment_options", "result": result}]
+    return {"status": result["status"], "state": ws.store.snapshot(), "visible_results": entries,
+            "text": render_dialogue(entries)}
+
+
+def _render_pending_pair_price(ws, messages):
+    from agents.seunghyuk.shipment_timing import resolve_pair_dates
+
+    state = ws.session.future_pair
+    pair = state.pending
+    if not pair or pair["future_pair_version"] != state.version:
+        return
+    basis_deferred = any(message.get("reply", {}).get("deferred_basis") == ("future_pair", state.version)
+                         for message in messages)
+    if not pair.get("manual_price_required") and (state.specs_deferred or state.costs_deferred or basis_deferred):
+        earlier, later = resolve_pair_dates(state.inputs)
+        _, active_report = _latest_chat_report(messages, ws.store.version, None, state.version)
+        if earlier and not (active_report and active_report["kind"] == "shipment_timing"):
+            _render_chat_timing_action(state.version, earlier, later)
+    blocked_spec = state.specs_deferred and pair.get("source_status") == "NEEDS_CLARIFICATION"
+    if not pair.get("manual_price_required") and not blocked_spec:
+        return
+    key = f"future_pair_chat_manual_{state.version}"
+    with st.expander("나중 단가 직접 입력", expanded=st.session_state.get(key) is not None) if blocked_spec else st.container(border=True):
         price = st.number_input("나중 출하의 가정 단가 (원/kg)", min_value=0.01, value=None, key=key)
-        if warning := manual_price_warning(ws.session.future_pair.inputs["price_a"], price):
+        if warning := manual_price_warning(state.inputs["price_a"], price):
             st.warning(warning)
         if st.button("이 단가로 비교", key=f"{key}_submit"):
             if price is None:
                 st.warning("나중 출하의 가정 단가를 입력해 주세요.")
             else:
-                _apply_future_pair_chat_edit(ws, messages, pair["future_pair_version"],
-                                             {"price_mode": "manual", "price_b": price},
-                                             f"나중 출하 단가를 kg당 {price:,.12g}원으로 비교")
+                _submit_shipment_question(f"나중 출하 단가를 kg당 {price:,.12g}원으로 비교",
+                                          pair_edit=(state.version, {"price_mode": "manual", "price_b": price}))
+                st.rerun()
+
+
+def _render_box_price_actions(pair):
+    quote = pair.box_price
+    if quote is None or quote.side is None or quote.weight is None or quote.unit_price <= 0:
+        return
+    st.button("이 단가로 적용", type="primary", key=f"chat_confirm_box_price_{pair.version}",
+              on_click=_submit_shipment_question, args=("네, 맞아요.",))
+    with st.expander("무게 수정"):
+        with st.form(f"chat_box_weight_{pair.version}", border=False):
+            weight = st.number_input("상자 하나의 감귤 무게 (kg)", min_value=0.001, max_value=1000.0,
+                                     value=float(quote.weight), format="%.3f")
+            if st.form_submit_button("이 무게로 다시 환산"):
+                _submit_shipment_question(f"상자 한 개에 {weight:g}kg이에요.")
+                st.rerun()
 
 
 def _chat_pair(reply):
@@ -592,8 +782,11 @@ def _latest_chat_report(messages, version, current_pair, pair_version=None):
                 current = current_pair == report["entries"][0]["result"]
             elif report["kind"] == "shipment_timing":
                 from agents.seunghyuk.shipment_timing_bundle import source_fingerprint
+                economic = next((entry["result"] for entry in report["entries"]
+                                 if entry["tool"] == "compare_future_pair"), None)
                 current = (version == report["version"] and pair_version == report["pair_version"]
-                           and tuple(report["source_fingerprint"]) == source_fingerprint())
+                           and tuple(report["source_fingerprint"]) == source_fingerprint()
+                           and (economic is None or economic == current_pair))
             else:
                 current = version == report["version"]
             return (index, report) if current else (None, None)
@@ -636,7 +829,7 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
     previous_pair_actions = None
     previous_report_slot = None
     report_index, previous_report = _latest_chat_report(messages, ws.store.version, current_pair, ws.session.future_pair.version)
-    transcript = st.container(key="shipment_transcript", height=640, border=False, autoscroll=True) if messages else None
+    transcript = st.container(key="shipment_transcript", height=640, border=False, autoscroll=False) if messages else None
     for index, message in enumerate(messages):
         with transcript.chat_message(message["role"]):
             reply = message.get("reply")
@@ -659,17 +852,29 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                     _render_chat_report(previous_report)
                 else:
                     previous_report_slot = st.empty()
-            if pair is None or past_pair or index != latest_pair_message or draft_pending or settlement_dirty:
+            if (pair is None or pair["status"] != "OK" or past_pair or index != latest_pair_message
+                    or draft_pending or settlement_dirty):
                 continue
             if pending is not None:
-                if pair["status"] == "OK":
-                    previous_pair_actions = (st.empty(), pair)
+                previous_pair_actions = (st.empty(), pair)
                 continue
-            _render_chat_pair_actions(ws, messages, pair, current_pair, index == len(messages) - 1)
+            _render_chat_pair_actions(ws, current_pair,
+                                      timing_already_shown=bool(previous_report and previous_report["kind"] == "shipment_timing"))
 
     composer_slot = getattr(st, "bottom", None) if messages else None
     with composer_slot if composer_slot is not None else st.container(key="shipment_welcome_input"):
-        composer = st.empty()
+        with st.container(key="shipment_footer"):
+            if messages:
+                turn = sum(message["role"] == "user" for message in messages)
+                working = pending is not None
+                label = "답변 생성 중. 최신 답변으로 이동" if working else "최신 답변으로 이동"
+                st.html(f'''<button class="shipment-latest" type="button" data-turn="{turn}"
+                    data-running="{str(working).lower()}" aria-label="{label}" title="최신 답변으로 이동"
+                    {'' if working else 'hidden'}>
+                    <span class="shipment-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                    <span class="shipment-arrow" aria-hidden="true">↓</span>
+                </button>''')
+            composer = st.empty()
     if pending is not None:
         with composer.container():
             _render_shipment_composer(disabled=True, show_examples=False, busy=True)
@@ -677,9 +882,26 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
             pending.pop("pending")
             started = pending.pop("started", None)
             submitted_ms = pending.pop("submitted_ms", None)
+            choice = pending.pop("basis_choice", None)
+            short_answer = pending["content"].rstrip(".!? ")
+            if choice is None and len(messages) > 1 and short_answer in _BASIS_CHOICES:
+                if target := _chat_basis_target(ws, messages[-2].get("reply", {})):
+                    choice = (*target, _BASIS_CHOICES[short_answer])
             if started is not None:
                 log_latency("submit_to_agent", started)
-            if _REPORT_REQUEST.fullmatch(pending["content"]):
+            if lookup := pending.pop("timing_lookup", None):
+                reply, steps, elapsed = _run_with_shipment_progress(
+                    lambda report: ws.lookup_shipment_timing(*lookup, on_progress=report), started
+                )
+            elif edit := pending.pop("pair_edit", None):
+                reply, steps, elapsed = _run_with_shipment_progress(
+                    lambda report: _reply_to_future_pair_edit(ws, *edit, on_progress=report), started
+                )
+            elif choice is not None:
+                reply, steps, elapsed = _run_with_shipment_progress(
+                    lambda report: _reply_to_chat_basis(ws, *choice, on_progress=report), started
+                )
+            elif _REPORT_REQUEST.fullmatch(pending["content"]):
                 message = "방금 비교한 결과의 보고서입니다." if previous_report else "내려받을 최근 출하 비교 결과가 없습니다. 출하 조건을 비교한 뒤 다시 요청해 주세요."
                 reply = {"status": "OK", "text": message, "state": ws.store.snapshot(), "chat_report": previous_report}
                 steps, elapsed = [], None
@@ -687,8 +909,11 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                 reply, steps, elapsed = _run_with_shipment_progress(
                     lambda report: ws.run(pending["content"], on_progress=report), started
                 )
+                metrics = reply.get("metrics", {})
+                if reply["status"] != "OK" or metrics.get("model_requests"):
+                    st.session_state.last_agent_reply = {"status": reply["status"], "metrics": metrics}
+            if "chat_report" not in reply:
                 reply["chat_report"] = _chat_report(ws, reply)
-                st.session_state.last_agent_reply = {"status": reply.get("status"), "metrics": reply.get("metrics", {})}
             ready = monotonic()
             messages.append({"role": "assistant", "reply": {**reply, "progress_steps": steps,
                                                             "progress_elapsed": elapsed}})
@@ -709,17 +934,26 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
             if report := reply.get("chat_report"):
                 _render_chat_report(report)
             pair = _chat_pair(reply)
-            if pair is not None and pair.get("future_pair_version") == pair_state.version:
-                _render_chat_pair_actions(ws, messages, pair, pair_state.current_result(), True)
+            new_current_pair = pair_state.current_result()
+            if pair is not None and pair["status"] == "OK" and new_current_pair is not None:
+                _render_chat_pair_actions(ws, new_current_pair)
+        active_report_index, active_report = _latest_chat_report(
+            messages, ws.store.version, new_current_pair, pair_state.version
+        )
         if pair is None and previous_pair_actions is not None:
             slot, previous_pair = previous_pair_actions
-            if previous_pair.get("future_pair_version") == pair_state.version:
+            if previous_pair["future_pair_version"] == pair_state.version and new_current_pair is not None:
                 with slot.container():
-                    _render_chat_pair_actions(ws, messages, previous_pair, pair_state.current_result(), False)
-        active_report_index, _ = _latest_chat_report(messages, ws.store.version, pair_state.current_result(), pair_state.version)
+                    _render_chat_pair_actions(ws, new_current_pair,
+                                              timing_already_shown=bool(active_report and active_report["kind"] == "shipment_timing"))
         if previous_report_slot is not None and active_report_index == report_index:
             with previous_report_slot.container():
                 _render_chat_report(previous_report)
+    if transcript is not None and not (draft_pending or settlement_dirty):
+        with transcript:
+            _render_chat_basis(ws, messages)
+            _render_pending_pair_price(ws, messages)
+            _render_box_price_actions(pair_state)
     with composer.container():
         _render_shipment_composer(draft_pending or settlement_dirty, show_examples=not messages)
 
@@ -727,6 +961,13 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
 def _render_report(entries, *, chat_json=None):
     if not entries:
         return
+    tools = {entry["tool"] for entry in entries}
+    if tools == {"explain_term"}:
+        pdf_label, pdf_name = "용어 설명 PDF 저장", "제주감귤_용어설명.pdf"
+    elif "compare_shipment_options" in tools:
+        pdf_label, pdf_name = "출하 비교 PDF 저장", "제주감귤_비교보고서.pdf"
+    else:
+        pdf_label, pdf_name = "PDF 보고서 내려받기", "제주감귤_비교보고서.pdf"
     markdown = render_report(entries)
     # Cache bytes by the frozen report, not by mutable widget state.
     stamp = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
@@ -742,7 +983,7 @@ def _render_report(entries, *, chat_json=None):
         with st.container(border=True):
             st.markdown("**감귤 출하 비교 보고서**")
             if cached:
-                st.download_button("PDF 보고서 내려받기", cached[1], "제주감귤_비교보고서.pdf", "application/pdf",
+                st.download_button(pdf_label, cached[1], pdf_name, "application/pdf",
                                    key="download_chat_pdf", on_click="ignore")
             else:
                 st.warning("PDF를 만들지 못했습니다. 보고서 미리보기와 JSON은 확인할 수 있습니다.")
@@ -758,7 +999,8 @@ def _render_report(entries, *, chat_json=None):
     st.subheader("결과와 보고서 미리보기")
     st.markdown(markdown)
     if cached:
-        st.download_button("PDF 보고서 내려받기", cached[1], file_name="제주감귤_비교보고서.pdf", mime="application/pdf", key="download_pdf")
+        st.download_button(pdf_label, cached[1], file_name=pdf_name, mime="application/pdf", key="download_pdf",
+                           on_click="ignore")
     else:
         st.error("PDF를 만들지 못했습니다. 미리보기와 입력 조건은 보존했습니다. 설치와 한글 글꼴 파일을 확인한 뒤 다시 시도하세요.")
     with st.expander("보조 형식 · Markdown"):
@@ -924,6 +1166,74 @@ def main():
         }
         .st-key-shipment_transcript {
             max-height: max(10rem, calc(100dvh - 20rem));
+            overflow-anchor: none;
+            overscroll-behavior-y: contain;
+        }
+        .st-key-shipment_footer {
+            position: relative;
+        }
+        .st-key-shipment_footer [data-testid="stElementContainer"]:has(.shipment-latest) {
+            position: absolute;
+            top: 0;
+            width: 100%;
+            z-index: 2;
+            pointer-events: none;
+        }
+        .shipment-latest {
+            position: absolute;
+            bottom: .25rem;
+            left: 50%;
+            transform: translateX(-50%);
+            display: grid;
+            place-items: center;
+            min-width: 2.75rem;
+            height: 2.75rem;
+            padding-inline: .625rem;
+            border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+            border-radius: 2rem;
+            color: inherit;
+            background: var(--st-background-color, Canvas);
+            pointer-events: auto;
+            cursor: pointer;
+        }
+        .shipment-latest[hidden], .shipment-dots,
+        .shipment-latest[data-running="true"] .shipment-arrow {
+            display: none;
+        }
+        .shipment-latest[data-running="true"] .shipment-dots {
+            display: flex;
+            align-items: center;
+            gap: .25rem;
+        }
+        .shipment-latest[data-running="true"]:is(:hover, :focus-visible) .shipment-dots {
+            display: none;
+        }
+        .shipment-latest[data-running="true"]:is(:hover, :focus-visible) .shipment-arrow {
+            display: block;
+        }
+        .shipment-arrow {
+            font-size: 1.4rem;
+            line-height: 1;
+        }
+        .shipment-latest:focus-visible {
+            outline: 2px solid #c85c2c;
+            outline-offset: 2px;
+        }
+        .shipment-dots i {
+            width: .3rem;
+            height: .3rem;
+            border-radius: 50%;
+            background: currentColor;
+            animation: shipment-dot-wave 1s ease-in-out infinite;
+        }
+        .shipment-dots i:nth-child(2) { animation-delay: .13s; }
+        .shipment-dots i:nth-child(3) { animation-delay: .26s; }
+        @keyframes shipment-dot-wave {
+            0%, 60%, 100% { transform: translateY(0); opacity: .65; }
+            30% { transform: translateY(-.24rem); opacity: 1; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .shipment-dots i { animation: none; }
         }
         .stApp:has([data-testid="stBottom"] .st-key-shipment_composer_busy) .st-key-shipment_welcome_input {
             display: none;
@@ -979,6 +1289,7 @@ def main():
         }
         </style>
     """)
+    st.html(_SHIPMENT_SCROLL_SCRIPT, unsafe_allow_javascript=True)
     settings = Settings.load()
     if settings.api_key:
         _preload_model_sdk()
@@ -1090,8 +1401,12 @@ def main():
             "get_price_history", "get_historical_shipment_context", "get_market_evidence", "explore_data"
         }:
             report_slot = data_report
-        if report_slot is not chat_report or not any(entry["tool"] == "compare_shipment_options" and
-                                                     entry["result"]["status"] == "OK" for entry in entries):
+        has_chat_card = any(
+            (entry["tool"] == "compare_shipment_options" and entry["result"]["status"] in {"OK", "NEEDS_INPUT"})
+            or (entry["tool"] == "analyze_shipment_timing" and entry["result"]["status"] in {"OK", "INSUFFICIENT_DATA"})
+            for entry in entries
+        )
+        if report_slot is not chat_report or not has_chat_card:
             with report_slot.container():
                 _render_report(entries)
     # 직접 조회·손익 계산 이후 확정된 결과로 사이드바 JSON 다운로드를 생성합니다.

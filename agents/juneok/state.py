@@ -41,7 +41,7 @@ class ScenarioStore:
     def snapshot(self) -> dict:
         return {"version": self.version, "scenario": deepcopy(self.scenario), "provenance": deepcopy(self.provenance)}
 
-    def update(self, patch: dict, expected_version: int, clear_fields: list[str] | None = None) -> dict:
+    def update(self, patch: dict, expected_version: int, clear_fields: list[str] | None = None, *, start_new=False) -> dict:
         if type(expected_version) is not int or expected_version != self.version:
             return {"status": "INVALID_INPUT", "message": "시나리오 버전이 일치하지 않습니다.", "current": self.snapshot()}
         if not isinstance(patch, dict) or set(patch) - TOP_FIELDS:
@@ -51,12 +51,13 @@ class ScenarioStore:
                 or len(set(clear_fields)) != len(clear_fields)
                 or any(patch.get(k) is not None for k in clear_fields)):
             return {"status": "INVALID_INPUT", "message": "미확인으로 초기화할 필드를 확인하세요.", "current": self.snapshot()}
-        candidate = deepcopy(self.scenario)
+        base = empty_scenario() if start_new else self.scenario
+        candidate = deepcopy(base)
         changes = {k: deepcopy(v) for k, v in patch.items() if v is not None}
         candidate.update(changes)
         for name in clear_fields:
             candidate[name] = None
-        old_options = {o["id"]: o for o in self.scenario["options"]}
+        old_options = {o["id"]: o for o in base["options"]}
         reset = []
         if isinstance(candidate.get("options"), list):
             for option in candidate["options"]:
@@ -80,8 +81,8 @@ class ScenarioStore:
             values.update({f"options.{o['id']}.{k}": v for o in scenario["options"]
                            for k, v in o.items() if k not in {"id", "loss_confirmed_for_period"}})
             return values
-        before, after = flattened(self.scenario), flattened(candidate)
-        self.provenance = {k: v for k, v in self.provenance.items() if k in after}
+        before, after = flattened(base), flattened(candidate)
+        self.provenance = {} if start_new else {k: v for k, v in self.provenance.items() if k in after}
         for name, value in after.items():
             if before.get(name) != value:
                 reason = "period_change_requires_confirmation" if name in {f"options.{i}.loss_percent" for i in reset} else (

@@ -244,7 +244,7 @@ def _render_future_pair_pdf(entries, location):
     except Exception:
         st.warning("미래 A/B PDF를 생성하지 못했습니다. 화면과 JSON으로 결과를 확인할 수 있습니다.")
     else:
-        st.download_button("미래 A/B PDF 내려받기", pdf, "미래출하비교.pdf", "application/pdf",
+        st.download_button("두 출하일 비교 PDF 저장", pdf, "미래출하비교.pdf", "application/pdf",
                            key=f"future_pair_pdf_{location}", on_click="ignore")
 
 

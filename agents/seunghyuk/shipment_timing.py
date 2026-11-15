@@ -239,7 +239,7 @@ def analyze_shipment_timing(args: dict, root: Path = ROOT) -> dict:
         return _response("DATA_ERROR", "출하량 CSV·품질보고서를 읽거나 검증하지 못했습니다.", error_kind=type(exc).__name__)
 
 
-def format_timing_report(result: dict) -> str:
+def format_timing_report(result: dict, *, details: bool = True) -> str:
     """화면/Agent 보고서에 동일 문구와 표를 재사용합니다."""
     if not isinstance(result, dict):
         return "출하 시기 분석 결과의 형식이 올바르지 않습니다."
@@ -253,15 +253,28 @@ def format_timing_report(result: dict) -> str:
              f"과거 {result['paired_year_count']}개 연도 비교 (기준: 2018~2024, 날짜 전후 3일 포함 7일)"]
     if status == "OK":
         s = result["summary"]
+        if not details:
+            lines += [
+                "",
+                f"**7일 출하량 중앙값 · A안 {Decimal(s['a_median_7day_tons']):,.2f}톤 · "
+                f"B안 {Decimal(s['b_median_7day_tons']):,.2f}톤**",
+                f"B안 날짜 주변의 출하량이 더 많았던 해는 {result['paired_year_count']}개 중 {s['b_higher_years']}개입니다.",
+                "",
+                f"[제주데이터허브 #855]({SOURCE_URL})의 과거 신고 출하량입니다. 이 수치로 미래 가격을 예측할 수 없습니다.",
+            ]
+            return "\n".join(lines)
         lines += ["", f"- A 주변 7일 출하량 중앙값: **{Decimal(s['a_median_7day_tons']):,.2f}톤**",
                   f"- B 주변 7일 출하량 중앙값: **{Decimal(s['b_median_7day_tons']):,.2f}톤**",
                   f"- B가 더 많았던 해: **{s['b_higher_years']}/{result['paired_year_count']}개**",
-                  f"- 같은 연도의 B−A 출하량 차이 중앙값: **{Decimal(s['paired_median_b_minus_a_tons']):+,.2f}톤**"]
+                  f"- 같은 연도의 출하량 차이 중앙값(B안 - A안): **{Decimal(s['paired_median_b_minus_a_tons']):+,.2f}톤**"]
         if s["paired_median_change_pct"] is not None:
             lines.append(f"- 같은 연도 대비 증감률 중앙값: **{Decimal(s['paired_median_change_pct']):+,.2f}%**")
     else:
         lines += ["", f"**비교 보류:** {result['message']}"]
-    lines += ["", "| 비교 연도 | A 주변 7일(톤) | B 주변 7일(톤) | B−A(톤) |",
+        if not details:
+            lines += ["", f"[제주데이터허브 #855]({SOURCE_URL})의 과거 신고 출하량입니다."]
+            return "\n".join(lines)
+    lines += ["", "| 비교 연도 | A 주변 7일(톤) | B 주변 7일(톤) | B안 - A안(톤) |",
               "| --- | ---: | ---: | ---: |"]
     for row in result["years"]:
         lines.append(f"| {row['reference_year']} | {Decimal(row['a_tons']):,.2f} | "

@@ -45,6 +45,15 @@ def tool(name: str, description: str, properties: dict) -> dict:
             "strict": True, "parameters": object_schema(properties)}
 
 
+def with_box_price(tool_definition):
+    params = tool_definition["parameters"]["properties"]
+    quote = object_schema({
+        "side": nullable("string", enum=["A", "B", None], description="먼저 출하 A, 나중 출하 B, 불분명하면 null"),
+        "phrase": {"type": "string", "description": "상자당 가격과 단위를 포함하는 사용자 원문을 그대로 복사"},
+    })
+    return {**tool_definition, "parameters": object_schema({**params, "box_price": {"anyOf": [quote, {"type": "null"}]}})}
+
+
 TOOLS = [
     tool("compare_future_pair", "두 미래 출하일을 비교합니다. 새 비교는 new, 기존 P2 조건 수정은 edit. B안 단가는 직접 입력(manual) 또는 과거 동일규격 변동 가정(history). history는 감모율·보관비가 없어도 과거 근거를 먼저 조회합니다. 사용자가 말한 값만 보내고 변경 없는 값은 null. 날짜 변경 시 새 기간 전체 감모를 확인한 경우에만 같이 전달합니다.",
          {"action": {"type": "string", "enum": ["new", "edit"]}, "expected_version": {"type": "integer"},
@@ -126,7 +135,7 @@ TIMING_TOOL = tool("analyze_shipment_timing", "제주데이터허브 #855의 과
 
 HELP = {
     "price_basis": "수수료 차감 후 단가는 판매수수료를 이미 뺀 가격입니다. 수수료를 다시 차감하지 않습니다. 선별·포장·운송·보관비까지 포함됐는지는 따로 확인해야 합니다. 차감 전 단가라면 수수료율을 별도로 입력합니다.",
-    "loss_rate": "기간 전체 감모율은 보관을 마친 뒤 판매할 수 없게 줄어드는 물량의 비율입니다. 하루 비율과 다릅니다. 보관기간을 바꾸면 새 기간의 감모를 다시 확인해야 하며, 모르는 값은 실제 값처럼 채우지 않습니다.",
+    "loss_rate": "감모율은 보관하는 동안 팔 수 있는 감귤이 얼마나 줄었는지를 나타내요. 100kg을 보관해 끝날 때 96kg을 팔 수 있다면, 그 보관기간 전체의 감모율은 4%예요.",
     "cost_policy": "보관비 외 고정비가 양쪽에서 동일하다고 확인한 경우에만 비교에서 제외합니다. 다른 비용은 항목별로 입력하고 단가에 이미 포함된 비용은 다시 빼지 않습니다. 빈칸은 비용 없음이 아니라 미확인입니다.",
     "data_scope": "시장자료는 실제 관측일의 경락가격이며 농가 실수취 단가가 아닙니다. 제주 출하통계는 과거 신고 출하량입니다. 조회 결과의 출처·기간·품종·단위를 확인하고 서로 다른 분류나 기간을 자동 연결하지 않습니다.",
     "forecast_limits": "현재 확보자료만으로 미래가격이나 최적 출하일을 확정하지 않습니다. 사용자 조건에서 기다리려면 필요한 최소 단가를 계산하거나, 사용자가 정한 미래 단가 가정에서 금액을 비교할 수 있습니다.",
@@ -139,7 +148,7 @@ def explain_term(topic: str) -> dict:
     return {"status": "OK", "topic": topic, "explanation": HELP[topic]}
 
 
-def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=None, task_context=None, input_context=None, shipment=None, future_pair=None, *, on_progress=None) -> dict:
+def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=None, task_context=None, input_context=None, shipment=None, future_pair=None, *, on_progress=None, box_price=None, unresolved_box_price=False, start_new_comparison=False) -> dict:
     if not isinstance(args, dict):
         return {"status": "INVALID_INPUT", "message": "도구 입력은 객체여야 합니다."}
     schemas = {t["name"]: t["parameters"] for t in (*TOOLS, TIMING_TOOL)}
@@ -156,7 +165,8 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
             if future_pair is None:
                 return {"status": "INVALID_INPUT", "message": "미래 출하 비교 조건을 확인할 수 없습니다."}
             return future_pair.apply(args.get("action"), args.get("expected_version"), args.get("patch"),
-                                     args.get("clear_fields"), on_progress=on_progress)
+                                     args.get("clear_fields"), on_progress=on_progress, box_price=box_price,
+                                     unresolved_box_price=unresolved_box_price)
         if name == "reconcile_settlement":
             from .settlement import reconcile
             if shipment is not None and args.get("expected_record_revision") is not None and (type(args["expected_record_revision"]) is not int or args["expected_record_revision"] != shipment.revision):
@@ -169,7 +179,8 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
             from .task_context import data_revision
             return compare_cases(reference_case, store.snapshot(), task_context or {}, data_revision(), input_context)
         if name == "update_scenario":
-            return store.update(args.get("patch"), args.get("expected_version"), args.get("clear_fields"))
+            return store.update(args.get("patch"), args.get("expected_version"), args.get("clear_fields"),
+                                start_new=start_new_comparison)
         if name == "explain_term":
             return explain_term(args.get("topic"))
         if name == "explore_data":

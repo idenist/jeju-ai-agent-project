@@ -215,5 +215,135 @@
         "forbid_tools": ["update_scenario"]
       }
     ]
+  },
+  {
+    "id": "INT-13",
+    "title": "두 미래 출하일의 가격 근거 조회부터 직접 단가로 재비교까지",
+    "category": "미래 출하 비교",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "감귤 3톤을 2026년 11월 15일부터 보관해서 사흘 뒤에 팔지 열흘 뒤에 팔지 고민이에요. 조생귤 특 등급, 소 크기, 상자당 5kg이고 먼저 팔 때 kg당 2,500원(판매수수료 차감 전)으로 비교해 주세요. 나중에 팔 때 단가는 과거 자료부터 봐주세요.",
+        "expect": [{"tool": "compare_future_pair", "status": "NEEDS_INPUT", "fields": {
+          "source_status": "HISTORY_READY", "history_preview.interval_days": 7, "history_preview.clean_pairs": 20,
+          "history_preview.scenarios.1.option_b_price_per_kg": 2409.37
+        }, "missing_contains": ["A안 기간 전체 감모율(%)", "B안 기간 전체 감모율(%)"]}],
+        "future_pair_has_result": false,
+        "preserve_scenario": true,
+        "forbid_tools": ["update_scenario", "compare_shipment_options", "get_price_history"]
+      },
+      {
+        "user": "사흘 동안은 전체 물량의 1%, 열흘 동안은 전체의 4%가 줄어요. 감귤 전체 하루 보관비는 두 경우 다 1만 원이고 그 밖의 비용은 각각 5천 원이에요. 판매 수수료는 사흘 뒤 5%, 열흘 뒤 7%예요. 앞서 본 과거 단가 가정으로 비교해 주세요.",
+        "expect": [{"tool": "compare_future_pair", "status": "OK", "fields": {
+          "interval_days": 7, "option_a.sale_date": "2026-11-18", "option_a.proceeds_krw": 7018750,
+          "options_b.1.id": "past_median_7d", "options_b.1.difference_vs_a_krw": -670493.392,
+          "minimum_whole_krw_per_kg": 2660
+        }}],
+        "future_pair_has_result": true,
+        "preserve_scenario": true
+      },
+      {
+        "user": "나중 출하일만 12월 2일, 보관 시작일에서 17일 뒤로 바꿔 주세요. 새 기간의 감모율은 아직 몰라요.",
+        "expect": [{"tool": "compare_future_pair", "status": "NEEDS_INPUT", "fields": {
+          "source_status": "HISTORY_READY", "history_preview.interval_days": 14, "history_preview.clean_pairs": 15,
+          "missing_fields": ["B안 기간 전체 감모율(%)"]
+        }}],
+        "future_pair_has_result": false,
+        "preserve_scenario": true
+      },
+      {
+        "user": "17일 보관하는 동안 줄어드는 양은 전체의 7%예요. 나머지 비용은 그대로 적용해서 다시 비교해 주세요.",
+        "expect": [{"tool": "compare_future_pair", "status": "OK", "fields": {
+          "interval_days": 14, "options_b.1.id": "past_median_14d", "options_b.1.sale_date": "2026-12-02",
+          "options_b.1.loss_percent": 7, "options_b.1.difference_vs_a_krw": -391069.328,
+          "evidence.past_median_14d.clean_pairs": 15, "minimum_whole_krw_per_kg": 2773
+        }, "same_fields_as_turn": {"option_a": 2}}],
+        "future_pair_has_result": true,
+        "preserve_scenario": true
+      },
+      {
+        "user": "이번에는 나중 출하일만 11월 23일, 보관 시작일에서 8일 뒤로 바꿔 주세요. 이 8일 동안에는 전체 물량의 4%가 줄고, 나중 단가에는 과거 가격 변동을 적용하고 싶어요.",
+        "expect": [{"tool": "compare_future_pair", "status": "NO_DATA", "fields": {
+          "source_status": "INTERVAL_NOT_AVAILABLE", "manual_price_required": true
+        }}],
+        "future_pair_has_result": false,
+        "preserve_scenario": true,
+        "forbid_success": ["compare_future_pair"]
+      },
+      {
+        "user": "그럼 나중 출하 단가는 kg당 2,750원으로 직접 입력해서 비교해 주세요. 먼저 출하 조건과 나머지 비용은 그대로예요.",
+        "expect": [{"tool": "compare_future_pair", "status": "OK", "fields": {
+          "interval_days": 5, "options_b.0.id": "manual_b", "options_b.0.sale_date": "2026-11-23",
+          "options_b.0.price_per_kg": 2750, "options_b.0.proceeds_krw": 7280600,
+          "options_b.0.difference_vs_a_krw": 261850
+        }, "same_fields_as_turn": {"option_a": 2}}],
+        "future_pair_has_result": true,
+        "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-14",
+    "title": "5일 가격 자료 없음 뒤 용어를 확인하고 직접 단가 비교 재개",
+    "category": "미래 출하 비교",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "2026년 11월 15일부터 감귤 3톤을 보관해 3일 후와 8일 후의 출하 손익을 비교해 주세요. 먼저 출하 단가는 수수료 차감 전 2,500원/kg, 나중 단가는 조생귤 특 소 5kg 상자 과거 경락가격을 적용하고 싶어요. 전체 감모율은 A안 1%, B안 4%, 하루 보관비는 양쪽 각각 1만 원, 기타 비용은 각각 5천 원, 판매 수수료는 양쪽 각각 5%예요.",
+        "expect": [{"tool": "compare_future_pair", "status": "NO_DATA", "fields": {
+          "source_status": "INTERVAL_NOT_AVAILABLE", "manual_price_required": true
+        }}],
+        "future_pair_manual_pending": true,
+        "future_pair_has_result": false,
+        "preserve_scenario": true
+      },
+      {
+        "user": "잠깐, 감모율이 무슨 뜻인지 설명해 주세요.",
+        "expect": [{"tool": "explain_term", "status": "OK", "fields": {"topic": "loss_rate"}}],
+        "forbid_tools": ["compare_future_pair", "update_scenario"],
+        "future_pair_manual_pending": true,
+        "future_pair_has_result": false,
+        "preserve_scenario": true
+      },
+      {
+        "user": "아까 비교에서 나중 출하 단가만 2,750원/kg으로 직접 입력해서 계산해 주세요.",
+        "expect": [{"tool": "compare_future_pair", "status": "OK", "fields": {
+          "quantity_kg": 3000, "interval_days": 5, "option_a.price_per_kg": 2500,
+          "option_a.proceeds_krw": 7018750, "options_b.0.price_per_kg": 2750,
+          "options_b.0.difference_vs_a_krw": 420250
+        }}],
+        "future_pair_manual_pending": false,
+        "future_pair_has_result": true,
+        "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-15",
+    "title": "직전 손익 비교와 같은 날짜의 제주데이터허브 #855 출하량 조회",
+    "category": "출하 시기 분석",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "감귤 3톤을 2026년 11월 15일부터 보관해서 3일 후와 10일 후 출하 손익을 비교해 주세요. 수수료 차감 전 A안 2,500원/kg, B안 2,750원/kg을 직접 입력할게요. 전체 감모율은 A안 1%, B안 4%, 하루 보관비는 양쪽 각각 1만 원, 기타 비용은 각각 5천 원, 판매 수수료는 A안 5%, B안 7%예요.",
+        "expect": [{"tool": "compare_future_pair", "status": "OK", "fields": {
+          "option_a.sale_date": "2026-11-18", "options_b.0.sale_date": "2026-11-25",
+          "options_b.0.difference_vs_a_krw": 241850
+        }}],
+        "future_pair_has_result": true,
+        "preserve_scenario": true
+      },
+      {
+        "user": "같은 두 출하일 주변의 제주데이터허브 #855 과거 출하량도 보여주세요. 출하통계 품종은 노지온주입니다.",
+        "expect": [{"tool": "analyze_shipment_timing", "status": "OK", "fields": {
+          "input.shipment_variety": "노지온주", "input.option_a_date": "2026-11-18",
+          "input.option_b_date": "2026-11-25", "paired_year_count": 7,
+          "summary.a_median_7day_tons": 13530.23, "summary.b_median_7day_tons": 13414.83
+        }}],
+        "forbid_tools": ["compare_future_pair", "compare_shipment_options", "update_scenario"],
+        "future_pair_has_result": true,
+        "preserve_scenario": true
+      }
+    ]
   }
 ]

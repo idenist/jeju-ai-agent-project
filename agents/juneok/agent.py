@@ -6,9 +6,14 @@ import time
 from copy import deepcopy
 from uuid import uuid4
 from .config import Settings
+from .box_price import mentions_box_price, pending_box_arguments
+from .future_pair_intent import (
+    continues_comparison, explicit_shipment_quantity, is_future_pair_request, requests_manual_price,
+    starts_new_comparison, states_price_basis,
+)
 from .latency import log_latency
-from .state import ScenarioStore
-from .tools import TOOLS, TIMING_TOOL, execute_tool, explain_term
+from .state import ScenarioStore, empty_scenario
+from .tools import TOOLS, TIMING_TOOL, execute_tool, explain_term, with_box_price
 from .task_context import TaskContext, data_revision
 from .harness import ExecutionPolicy, RunStopped, RepeatGuard, bound_history, encoded_size, user_starts, classify_failure, FAILURE_GUIDANCE
 
@@ -47,6 +52,7 @@ update의 patch에서 변경하지 않을 항목은 null. options를 바꾸면 �
 사용자가 B안에 과거 변동을 반영해 달라고 하면 price_mode=history로 선택하고 명시한 동일 거래규격만 history_filters에 넣으세요. 과거 모드의 날짜 수정은 모드와 규격을 유지합니다. 과거자료가 없거나 검증에 실패하면 도구 안내를 표시하고 사용자가 B 단가를 직접 제공한 경우에만 manual로 전환합니다. A 단가는 사용자가 정합니다. 과거 가격 가정과 직접 단가를 같은 요청에서 섞거나 후보를 임의 선택하지 마세요.
 두 미래 출하안에서 과거 가격을 먼저 보고 싶거나 B안 가격을 과거 변동으로 가정하려면, 감모율·보관비·수수료·A 단가가 미확인이어도 compare_future_pair를 price_mode=history로 호출하세요. 이미 저장된 과거 모드의 후속 답변은 edit로 이번에 알려준 값만 반영하세요. 모르는 값은 null로 두며, 0은 사용자가 확인한 경우에만 넣으세요. 도구가 가격 근거와 누락 조건을 표시하므로 HISTORY_READY, NEEDS_INPUT, NO_DATA가 나오면 그 응답으로 턴을 끝내세요.
 새 미래 출하안 비교에서 나중 단가를 모른다고 말하면 동일 규격의 과거 근거를 먼저 확인하세요. 직접 입력을 명시한 경우 그 방식을 사용하세요. 사용자가 비용을 두 안에 공통으로 적용한다고 말하면, 한 번 말한 보관비·별도 비용·수수료율을 option_a와 option_b의 해당 항목에 함께 넣으세요. 안별 값도 명시했으면 해당 안에 그 값을 사용하세요. 특정 안에만 말한 비용은 그 안에만 반영하세요. 감모율은 각각의 보관기간에 해당하는 값만 반영하세요.
+확인 중인 비교에서 사용자가 규격이나 비용을 모른다고 답하면, 이번에 새로 알려준 조건만 기존 비교에 반영하고 완료하세요. 확인된 물량·날짜·단가를 지우거나 누락값을 추정하지 마세요. 사용자가 출하량 조회를 요청하면 해당 도구를 사용하세요. 모르는 값을 말하는 것과 용어의 뜻을 묻는 것을 구분하고, 뜻이나 자료 해석을 요청할 때만 explain_term을 사용하세요.
 두 미래 출하안 비교가 확인을 기다릴 때 규격을 모르겠거나 확인 방법을 묻는 답변은 현재 비교의 후속입니다. 사용자가 새 비교나 다른 도구를 명시하지 않으면 현재 비교를 이어가세요. 새로 확인된 값이 있으면 compare_future_pair의 edit에 넣고, 확인 방법만 물으면 비교 조건을 변경하지 않습니다.
 새 기간 감모를 사용자가 명시 확인한 경우에만 loss_confirmed_for_period=true.
 현재 단가가 있으면 손익계산에 시장 등급·크기·포장을 요구하지 않습니다.
@@ -96,12 +102,20 @@ class AgentSession:
     def run(self, question: str, *, on_progress=None) -> dict:
         from .data_refresh import kst_today
         from .presentation import select_results, render_dialogue, report_for
+        from .future_pair_state import resume_pair_inputs, unavailable_cost, unavailable_pair_inputs
         settings = self.settings or Settings.load()
         if not isinstance(question, str) or not question.strip() or len(question) > 6000:
             return {"status": "INVALID_INPUT", "text": "질문은 1~6,000자로 입력하세요.", "tool_results": [], "events": [], "state": self.store.snapshot()}
         if self.client is None and not settings.api_key:
             return {"status": "KEY_REQUIRED", "text": "프로젝트 .env에 OPENAI_API_KEY를 입력하세요. 직접 조건 비교와 과거 출하통계는 키 없이 사용할 수 있습니다.",
                     "tool_results": [], "events": [], "state": self.store.snapshot()}
+        new_comparison = starts_new_comparison(question)
+        if not new_comparison and (box_result := self.future_pair.follow_up_box_price(question, on_progress=on_progress)) is not None:
+            entry = {"tool": "compare_future_pair", "result": box_result}
+            return {"status": "OK", "text": render_dialogue([entry], question=question,
+                                                           pair_costs_deferred=self.future_pair.costs_deferred),
+                    "report": report_for([entry]), "tool_results": [entry], "visible_results": [entry],
+                    "events": [], "state": self.store.snapshot(), "metrics": {"model_requests": 0}}
         if self.client is None:
             import_started = time.monotonic()
             OpenAI = load_model_sdk()
@@ -120,7 +134,7 @@ class AgentSession:
         phase = "context"
         guard = RepeatGuard(self.policy.identical_calls)
         source_revision = data_revision()
-        today = kst_today().isoformat()
+        today = kst_today()
         if self.price_history_query is not None and self.price_history_revision != source_revision:
             self.price_history_query = None
             self.price_history_revision = None
@@ -153,6 +167,39 @@ class AgentSession:
                 experimental_tools = ([EXPERIMENTAL_TOOL] if forced_forecast
                                       else [*TOOLS, TIMING_TOOL, EXPERIMENTAL_TOOL])
                 experimental_prompt = SYSTEM_PROMPT + EXPERIMENTAL_PROMPT
+        future_pair_route = not forced_forecast and is_future_pair_request(question, today)
+        new_comparison = new_comparison and not forced_forecast
+        comparison_started = False
+        basis_stated = states_price_basis(question)
+        keep_pair = not new_comparison and self.future_pair.inputs["price_a"] is not None and continues_comparison(question)
+        has_box_price = not forced_forecast and mentions_box_price(question)
+        quantity = explicit_shipment_quantity(question) if future_pair_route else None
+        allow_price_history = future_pair_route and not requests_manual_price(question)
+        forced_tool = "compare_experimental_forecast" if forced_forecast else None
+        if future_pair_route:
+            forced_tool = "compare_future_pair"
+            experimental_prompt += (
+                "\n이번 요청은 서로 다른 두 미래 출하일의 단일 비교입니다. 총 물량은 kg으로 반영하세요. "
+                "'며칠 뒤'의 기준일이 따로 없으면 위 오늘 날짜를 사용하고, 달력 날짜는 보관 시작일과 구분하세요. "
+                "명시된 날짜·기간·단가를 사용하고 불분명한 값만 확인하세요. "
+                "나중 단가와 직접 입력 의사가 없으면 price_mode=history로 과거 근거부터 확인하세요."
+            )
+        if new_comparison:
+            experimental_prompt += (
+                "\n이번 요청은 새 출하 비교입니다. 이번 메시지에서 확인된 조건으로 시작하세요. "
+                "두 미래 출하안은 action=new, 오늘과 나중은 update_scenario를 호출하세요. "
+                "수수료율이 있어도 수수료 차감 전·후 기준이 명시되지 않았다면 price_basis는 null입니다."
+            )
+        if has_box_price:
+            experimental_tools = [with_box_price(tool) if tool["name"] == "compare_future_pair" else tool
+                                  for tool in experimental_tools]
+            experimental_prompt += (
+                "\n두 미래 출하일의 상자당 단가에는 box_price를 사용하세요. phrase에 상자당 가격 부분의 원문을 그대로 복사하고 "
+                "side에는 해당하는 A 또는 B를 넣으세요. 어느 안인지 불분명하면 null입니다. "
+                "상자 가격을 kg 단가로 넣지 마세요. 환산용 무게와 과거 조회 규격을 사용자가 따로 지정하면 "
+                "history_filters에는 조회 규격만 넣으세요. 나머지 명시한 조건은 함께 저장하세요."
+            )
+        tool_choice = {"type": "function", "name": forced_tool} if forced_tool else "auto"
         start_context_version = self.task_context.snapshot()["version"]
         try:
             for _ in range(self.policy.model_requests):
@@ -167,18 +214,22 @@ class AgentSession:
                     "연구용 ML 가격 실험 조건: " + json.dumps(
                         self.experimental_forecast_draft.snapshot(), ensure_ascii=False) + "\n"
                 ) if self.experimental_forecast else ""
+                starting = new_comparison and not comparison_started
+                scenario = ({"version": self.store.version, "scenario": empty_scenario(), "provenance": {}}
+                            if starting else self.store.snapshot())
                 self.messages[latest_user]["content"] = (
-                    f"현재 확인된 조건: {json.dumps(self.store.snapshot(), ensure_ascii=False)}\n"
+                    f"현재 확인된 조건: {json.dumps(scenario, ensure_ascii=False)}\n"
                     f"이번 검토의 과업 맥락(선택 기록·현재 수치 아님): {json.dumps(self.task_context.snapshot(), ensure_ascii=False)}\n"
                     f"이전 과거 경락가격 조회 인수(자동 적용값·후보 제외): {json.dumps(self.price_history_query, ensure_ascii=False)}\n"
-                    f"오늘(KST): {today}\n"
-                    f"두 미래 출하안 비교 조건: {json.dumps(self.future_pair.snapshot(), ensure_ascii=False)}\n"
-                    f"두 미래 출하안에서 확인 중인 항목: {json.dumps((self.future_pair.pending or {}).get('missing_fields', []), ensure_ascii=False)}\n"
+                    f"오늘(KST): {today.isoformat()}\n"
+                    f"두 미래 출하안 비교 조건: {json.dumps(self.future_pair.snapshot(start_new=starting), ensure_ascii=False)}\n"
+                    f"두 미래 출하안에서 확인 중인 항목: {json.dumps([] if starting else (self.future_pair.pending or {}).get('missing_fields', []), ensure_ascii=False)}\n"
                     f"{experimental_context}"
                     f"정산 기록: {json.dumps({'available': bool(self.shipment and self.shipment.revision), 'revision': self.shipment.revision if self.shipment else None, 'details': 'local_only'}, ensure_ascii=False)}\n"
                     f"사용자: {question.strip()}")
                 metrics["trimmed_history_turns"] += bound_history(self.messages, self.policy.history_turns, self.policy.input_characters)
-                metrics["request_input_characters"].append(encoded_size(self.messages))
+                model_messages = self.messages[user_starts(self.messages)[-1]:] if new_comparison else self.messages
+                metrics["request_input_characters"].append(encoded_size(model_messages))
                 phase = "model_request"
                 if on_progress and results:
                     on_progress("response")
@@ -187,9 +238,9 @@ class AgentSession:
                 client = self.client.with_options(timeout=min(30, remaining), max_retries=0) if hasattr(self.client, "with_options") else self.client
                 try:
                     response = client.responses.create(
-                        model=settings.model, instructions=experimental_prompt, input=deepcopy(self.messages),
+                        model=settings.model, instructions=experimental_prompt, input=deepcopy(model_messages),
                         tools=experimental_tools,
-                        tool_choice={"type": "function", "name": "compare_experimental_forecast"} if forced_forecast else "auto",
+                        tool_choice=tool_choice,
                         parallel_tool_calls=False,
                         store=False, max_output_tokens=4000,
                     )
@@ -259,8 +310,43 @@ class AgentSession:
                         result = execute_tool(call.name, arguments, self.store, reference_case=getattr(self, "comparison_reference", None),
                             task_context=self.task_context.snapshot(), input_context=getattr(self, "comparison_input_context", None))
                     elif call.name == "compare_future_pair":
+                        box_price = None
+                        if isinstance(arguments, dict) and isinstance(arguments.get("patch"), dict):
+                            patch = dict(arguments["patch"])
+                            action = arguments.get("action")
+                            if new_comparison:
+                                action = "edit" if comparison_started else "new"
+                                if not basis_stated:
+                                    patch.pop("price_basis", None)
+                            elif keep_pair:
+                                action = "edit"
+                                if not basis_stated and "수수료" not in question:
+                                    patch.pop("price_basis", None)
+                                    if isinstance(arguments.get("clear_fields"), list):
+                                        arguments = {**arguments, "clear_fields": [
+                                            field for field in arguments["clear_fields"] if field != "price_basis"
+                                        ]}
+                            if quantity is not None:
+                                patch["quantity"] = quantity
+                            if allow_price_history and action == "new" and patch.get("price_b") is None:
+                                patch["price_mode"] = "history"
+                            arguments = {**arguments, "action": action, "patch": patch}
+                            if future_pair_route:
+                                arguments["finish_turn"] = True
+                            recorded_arguments = arguments
+                        if has_box_price and isinstance(arguments, dict) and isinstance(arguments.get("patch"), dict):
+                            arguments, box_price = pending_box_arguments(question, arguments)
                         result = execute_tool(call.name, arguments, self.store, future_pair=self.future_pair,
-                                              on_progress=on_progress)
+                                              on_progress=on_progress, box_price=box_price,
+                                              unresolved_box_price=has_box_price and box_price is None)
+                        comparison_started |= result["status"] != "INVALID_INPUT"
+                    elif call.name == "update_scenario" and new_comparison and isinstance(arguments, dict) and isinstance(arguments.get("patch"), dict):
+                        patch = dict(arguments["patch"])
+                        if not basis_stated:
+                            patch.pop("price_basis", None)
+                        recorded_arguments = arguments = {**arguments, "patch": patch}
+                        result = execute_tool(call.name, arguments, self.store, start_new_comparison=not comparison_started)
+                        comparison_started |= result["status"] == "OK"
                     elif call.name == "analyze_shipment_timing":
                         result = execute_tool(call.name, arguments, self.store, future_pair=self.future_pair,
                                               on_progress=on_progress)
@@ -287,6 +373,8 @@ class AgentSession:
                                 arguments = {**arguments, "action": "edit"}
                                 recorded_arguments = arguments
                         result = self.experimental_forecast_draft.apply(arguments)
+                    elif call.name == "compare_shipment_options" and new_comparison and not comparison_started:
+                        result = {"status": "INVALID_INPUT", "message": "새 비교에 사용할 출하 조건을 먼저 확인해 주세요."}
                     elif on_progress and call.name in {"compare_shipment_options", "explore_data", "build_review_brief",
                                                        "get_historical_shipment_context", "get_market_evidence"}:
                         result = execute_tool(call.name, arguments, self.store, on_progress=on_progress)
@@ -342,6 +430,8 @@ class AgentSession:
             starts = user_starts(self.messages)
             if starts:
                 del self.messages[starts[-1]:]
+        elif new_comparison and comparison_started:
+            del self.messages[:user_starts(self.messages)[-1]]
         comparisons = [x for x in results if x["tool"] == "compare_shipment_options"]
         updated = any(x["tool"] == "update_scenario" and x["result"]["status"] == "OK" for x in results)
         if (comparisons and comparisons[-1]["result"].get("scenario_version") != self.store.version) or (
@@ -355,15 +445,19 @@ class AgentSession:
             events.append({"tool": "compare_shipment_options", "status": refreshed["status"],
                            "scenario_version": self.store.version, "origin": "application_refresh"})
         visible = select_results(results, self.store.version)
-        if not visible:
+        if not visible and not (new_comparison and not comparison_started):
             # A free-form final response cannot establish market facts or money.
             # Missing-field guidance is generated from application state too.
             from agents.common.calculation_service import compare_shipment_options
             topics = [("price_basis", ("수수료", "실수취", "차감")), ("loss_rate", ("감모",)),
                       ("cost_policy", ("비용",)), ("data_scope", ("자료 범위", "관측", "출하량")),
                       ("forecast_limits", ("예측", "다음 주", "미래가격"))]
-            help_intent = any(x in question for x in ("뜻", "뭐", "무엇", "설명", "의미", "예측", "다음 주"))
-            topic = next((t for t, words in topics if help_intent and any(w in question for w in words)), None)
+            asks_meaning = any(x in question for x in ("뜻", "설명", "의미")) or (
+                not unavailable_cost(question) and any(x in question for x in ("뭐예요", "뭔가요", "무엇"))
+            )
+            topic = next((t for t, words in topics if asks_meaning and any(w in question for w in words)), None)
+            if topic is None and self.future_pair.pending is None and any(x in question for x in ("예측", "다음 주", "미래가격")):
+                topic = "forecast_limits"
             if topic:
                 entry = {"tool": "explain_term", "result": explain_term(topic)}
                 results.append(entry)
@@ -373,7 +467,24 @@ class AgentSession:
             else:
                 missing = compare_shipment_options(self.store.scenario)
                 visible = [{"tool": "compare_shipment_options", "result": missing}] if missing["status"] == "NEEDS_INPUT" else []
-        text = render_dialogue(visible, question=question) if visible else "비교·조회할 조건을 말씀해 주세요. 확인된 조회·계산 결과가 없으면 수치를 제시하지 않습니다."
+        if self.future_pair.pending is not None and any(
+            entry["tool"] == "compare_future_pair" for entry in visible
+        ):
+            if resume_pair_inputs(question):
+                self.future_pair.costs_deferred = False
+                self.future_pair.specs_deferred = False
+            if unavailable_cost(question):
+                self.future_pair.costs_deferred = True
+            pending = self.future_pair.pending
+            if pending.get("source_status") == "NEEDS_CLARIFICATION" and unavailable_pair_inputs(pending, question):
+                self.future_pair.specs_deferred = True
+        if visible:
+            text = render_dialogue(visible, question=question, pair_costs_deferred=self.future_pair.costs_deferred,
+                                   pair_specs_deferred=self.future_pair.specs_deferred)
+        elif new_comparison:
+            text = "새로 비교할 출하일과 알고 계신 단가를 알려주세요."
+        else:
+            text = "비교·조회할 조건을 말씀해 주세요. 확인된 조회·계산 결과가 없으면 수치를 제시하지 않습니다."
         report = report_for(visible)
         if self.experimental_forecast and visible and visible[-1]["tool"] == "compare_experimental_forecast":
             # [출력 경로] 준억님 출하 상담의 화면/PDF 렌더링은 그대로 유지합니다.
