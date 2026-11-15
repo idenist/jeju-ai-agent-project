@@ -82,9 +82,78 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         self._run(app, "보내기", key=True)
         self.assertEqual(client.requests[0]["tool_choice"], "auto")
         labels = [button.label for button in app.get("download_button")]
-        self.assertEqual(labels.count("출하 시기·경제성 통합 PDF"), 1)
-        self.assertIn("출하 시기·경제성 통합 JSON", labels)
+        self.assertEqual(labels.count("과거 출하량 PDF 저장"), 1)
+        self.assertIn("과거 출하량 JSON 저장", labels)
         self.assertNotIn("PDF 보고서 내려받기", labels)
+
+    def test_pending_price_survives_term_help_and_the_same_dates_feed_hub_855(self):
+        from test_integration_future_pair import COMMON, FILTERS, OPTION_B
+
+        app = self._app(key=True)
+        ws = app.session_state.workspace
+        client = 모의_대화_클라이언트("compare_future_pair", {
+            "action": "new", "expected_version": 0,
+            "patch": {**COMMON, "start_date": "2026-11-15", "option_b": {**OPTION_B, "delay_days": 8},
+                      "price_mode": "history", "history_filters": FILTERS},
+        })
+        ws.session.client = client
+        app.text_input(key="shipment_question").set_value("두 미래 출하안 손익 비교해 주세요.")
+        self._run(app, "보내기", key=True)
+        manual_key = f"future_pair_chat_manual_{ws.session.future_pair.version}"
+        self.assertEqual(app.number_input(key=manual_key).label, "나중 출하의 가정 단가 (원/kg)")
+        self.assertEqual(sum("두 판매일 간격 5일의 과거 비교는 없습니다" in item.value for item in app.markdown), 1)
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "TEST_ONLY_NOT_REAL_KEY"}):
+            app.number_input(key=manual_key).set_value(2750).run()
+        client.name, client.arguments = "explain_term", {"topic": "loss_rate"}
+        app.text_input(key="shipment_question").set_value("감모율이 뭐예요?")
+        self._run(app, "보내기", key=True)
+        self.assertEqual(app.number_input(key=manual_key).value, 2750)
+        self._run(app, "이 단가로 비교", key=True)
+        self.assertFalse(any(w.key == manual_key for w in app.number_input))
+
+        pair = ws.session.future_pair
+        economic = pair.current_result()
+        self.assertEqual(economic["options_b"][0]["sale_date"], "2026-11-23")
+        self.assertIn("같은 날짜의 과거 출하량 보기", [x.label for x in app.expander])
+        variety_box = app.selectbox(key=f"chat_timing_variety_{pair.version}")
+        self.assertIsNone(variety_box.value)
+        variety_box.select("노지온주")
+        self._run(app, "과거 출하량 조회", key=True)
+        self.assertEqual(len(client.requests), 2)
+        self.assertEqual(pair.current_result(), economic)
+        messages = app.session_state.agent_messages
+        report = json.loads(messages[-1]["reply"]["chat_report"]["json"])
+        self.assertEqual(report["status"], "INTEGRATED")
+        self.assertEqual(report["shipment_analysis"]["input"]["option_a_date"], "2026-11-18")
+        self.assertEqual(report["shipment_analysis"]["input"]["option_b_date"], "2026-11-23")
+        self.assertIn("출하 시기·경제성 통합 PDF 저장", [x.label for x in app.get("download_button")])
+
+    def test_chat_box_price_actions_requote_before_applying(self):
+        from decimal import Decimal
+        from test_integration_future_pair import COMMON, FILTERS, OPTION_B
+
+        app = self._app(key=True)
+        ws = app.session_state.workspace
+        client = 모의_대화_클라이언트("compare_future_pair", {
+            "action": "new", "expected_version": 0,
+            "patch": {**COMMON, "option_b": OPTION_B, "price_mode": "history", "history_filters": FILTERS},
+            "box_price": {"side": "A", "phrase": "상자당 12,500원"},
+        })
+        ws.session.client = client
+        app.text_input(key="shipment_question").set_value(
+            "감귤 3톤, 사흘 뒤와 열흘 뒤 출하 손익을 비교해 주세요. A안 상자당 12,500원, 상자는 5kg이에요."
+        )
+        self._run(app, "보내기", key=True)
+        pair = ws.session.future_pair
+        next(x for x in app.number_input if x.label == "상자 하나의 감귤 무게 (kg)").set_value(10.0)
+        self._run(app, "이 무게로 다시 환산", key=True)
+        self.assertIsNone(pair.inputs["price_a"])
+        self.assertTrue(any("1,250원/kg" in item.value for item in app.markdown))
+        self._run(app, "이 단가로 적용", key=True)
+        self.assertEqual(Decimal(pair.inputs["price_a"]), 1250)
+        self.assertEqual(pair.inputs["history_filters"]["package_kg"], "5")
+        self.assertEqual(len(client.requests), 1)
+        self.assertFalse(any(x.label == "이 단가로 적용" for x in app.button))
 
     def test_키가_없어도_경락가격과_손익계산_진입점이_있음(self):
         app = self._app()

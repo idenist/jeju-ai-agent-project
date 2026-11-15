@@ -2,6 +2,7 @@
 from copy import deepcopy
 from datetime import date
 from decimal import Decimal
+import re
 
 from agents.common.data_contract import PAIR_FILES, PRICE_FILE, REPORT_FILE
 from agents.common.future_pair import compare_future_pair, preview_future_pair_history
@@ -24,6 +25,11 @@ COST_QUESTIONS = {
     OPTION_LABELS["other_cost_krw"]: "그 밖에 드는 비용은 얼마인가요?",
     OPTION_LABELS["fee_percent"]: "판매 수수료는 몇 %인가요?",
 }
+COST_NAMES = dict(zip(COST_QUESTIONS, ("하루 보관비", "별도 비용", "판매 수수료")))
+SUGGEST_TIMING = "같은 날짜의 과거 출하량부터 볼까요?"
+_UNKNOWN_INPUT = re.compile(r"모르|몰라|몰랐|확인\s*(?:못|할\s*수\s*없)|아직\s*(?:정해지지\s*않|안\s*나왔)")
+_UNKNOWN_COST = re.compile(r"비용|보관[비료]|저장[료비]|수수료|감모|감량|줄(?:어|지|는)")
+_UNKNOWN_SPEC = re.compile(r"품종|등급|크기|포장|상자\s*(?:무게|중량)|도매시장|시장코드|거래\s*방식")
 HISTORY_FIELDS = {"variety": "품종", "grade": "등급", "size": "크기", "package": "포장 종류",
                   "package_kg": "포장 중량(kg)", "market_code": "시장코드", "trade_type": "거래방식"}
 HISTORY_STATUSES = {"NEEDS_CLARIFICATION": "NEEDS_INPUT", "INTERVAL_NOT_AVAILABLE": "NO_DATA",
@@ -57,7 +63,32 @@ def _price_revision():
         return None
 
 
-def future_pair_feedback(result):
+def unavailable_input(question, subject):
+    clauses = re.split(r"[.!?\n,]+", question)
+    return any(_UNKNOWN_INPUT.search(clause) and (subject.search(clause) or re.fullmatch(
+        r"\s*(?:아직\s*|잘\s*|그건\s*|그건요\s*)*(?:모르\S*|몰라\S*|확인\s*못\S*)\s*", clause
+    )) for clause in clauses)
+
+
+def unavailable_cost(question):
+    return unavailable_input(question, _UNKNOWN_COST)
+
+
+def unavailable_pair_inputs(result, question):
+    if result.get("source_status") == "NEEDS_CLARIFICATION":
+        return unavailable_input(question, _UNKNOWN_SPEC)
+    return bool(result.get("history_preview") or result.get("comparison_inputs_pending")) and unavailable_cost(question)
+
+
+def resume_pair_inputs(question):
+    return any(phrase in question for phrase in ("남은 조건", "빠진 조건", "더 필요한 값", "더 필요한 정보"))
+
+
+def asks_where_to_check(question):
+    return any(phrase in question for phrase in ("어디", "어떻게 확인", "확인하면"))
+
+
+def future_pair_feedback(result, *, pause_costs=False):
     message = result.get("message") or "비교 조건을 확인해 주세요."
     if preview := result.get("history_preview"):
         start, end = preview["base_date_range"]
@@ -70,11 +101,19 @@ def future_pair_feedback(result):
                       for row in preview["scenarios"]]
             lines.append(f"나중 출하 가정 단가(원/kg) · 최저 {prices[0]} · 중앙 {prices[1]} · 최고 {prices[2]}")
         lines.append("과거 가격 변동을 참고한 가정입니다.")
-        return "\n\n".join([*lines, _missing_questions(result["missing_fields"], result.get("storage_days", {}))])
+        if pause_costs:
+            return "\n\n".join([SUGGEST_TIMING, *lines, "손익은 보관비와 줄어드는 양을 확인한 뒤 계산할게요."])
+        next_step = _missing_questions(result["missing_fields"], result.get("storage_days", {}))
+        return "\n\n".join([*lines, next_step])
     fields = result.get("missing_fields", [])
     if not fields:
         return message
     if result.get("comparison_inputs_pending"):
+        if pause_costs:
+            if LABELS["price_basis"] in fields and LABELS["price_a"] not in fields:
+                return ("먼저 출하 단가는 판매 수수료를 빼기 전인가요, 뺀 뒤인가요? "
+                        "입력하신 단가는 그대로 둘게요.")
+            return f"{SUGGEST_TIMING} 입력하신 조건은 그대로 둘게요."
         return _missing_questions(fields, result.get("storage_days", {}))
     lines = [message, "", "확인할 항목: " + ", ".join(HISTORY_FIELDS.get(field, field) for field in fields)]
     for field, choices in result.get("choices", {}).items():
@@ -83,7 +122,7 @@ def future_pair_feedback(result):
     return "\n".join(lines)
 
 
-def history_clarification(result, question=""):
+def history_clarification(result, question="", *, pause_specs=False):
     fields = [field for field in result.get("missing_fields", ()) if field in HISTORY_QUESTIONS]
     if not fields:
         return None
@@ -91,9 +130,11 @@ def history_clarification(result, question=""):
     mentioned = [field for field in fields if HISTORY_FIELDS[field] in question]
     if "package_kg" in fields and "package_kg" not in mentioned and ("상자 무게" in question or "상자 중량" in question):
         mentioned.append("package_kg")
-    asks_for_help = any(word in question for word in ("어디", "어떻게", "확인하면"))
-    unknown_field = mentioned and any(word in question for word in ("모르", "몰라"))
-    if asks_for_help or unknown_field:
+    asks_for_help = asks_where_to_check(question)
+    if pause_specs or unavailable_input(question, _UNKNOWN_SPEC):
+        guidance = " ".join(HISTORY_HELP[field] for field in (mentioned or [first])) if asks_for_help else ""
+        return f"{SUGGEST_TIMING}\n\n{guidance}" if guidance else SUGGEST_TIMING
+    if asks_for_help:
         guidance = " ".join(HISTORY_HELP[field] for field in (mentioned or [first]))
         if next_field := next((field for field in fields if field not in (mentioned or [first])), None):
             return f"{guidance}\n\n{HISTORY_QUESTIONS[next_field]}"
@@ -106,26 +147,32 @@ def history_clarification(result, question=""):
 
 def _missing_questions(fields, storage_days):
     labels = {"A안": "먼저 출하", "B안": "나중 출하"}
-    common_costs = {label for label in COST_QUESTIONS
-                    if f"A안 {label}" in fields and f"B안 {label}" in fields}
+    common_costs = [label for label in COST_QUESTIONS
+                    if f"A안 {label}" in fields and f"B안 {label}" in fields]
     questions = []
     for field in fields:
         side, _, label = field.partition(" ")
         if label in common_costs:
-            if side == "A안":
-                questions.append(COST_QUESTIONS[label])
+            continue
         elif label == OPTION_LABELS["loss_percent"] and (days := storage_days.get(side)):
             questions.append(f"{labels[side]} · {days}일 보관하는 동안 판매 가능한 양이 몇 % 줄어드나요?")
         elif label in COST_QUESTIONS and side in labels:
             questions.append(f"{labels[side]} · {COST_QUESTIONS[label]}")
+        elif field == LABELS["price_basis"] and LABELS["price_a"] not in fields:
+            questions.append("먼저 출하 단가는 판매 수수료를 빼기 전인가요, 뺀 뒤인가요?")
         else:
             questions.append(f"{labels[side]} · {label}" if side in labels else field)
+    if len(common_costs) == 1:
+        questions.append(COST_QUESTIONS[common_costs[0]])
+    elif common_costs:
+        names = "·".join(COST_NAMES[label] for label in common_costs)
+        questions.append(f"두 출하일에 드는 비용을 알려주세요 ({names}).")
     if len(questions) == 1 and questions[0].endswith("?"):
         text = questions[0]
     else:
         text = "\n".join(["**아직 확인할 조건**", "", *(f"- {question}" for question in questions)])
     if common_costs:
-        text += "\n\n두 안의 비용이 같으면 한 번만 알려주세요."
+        text += "\n\n두 안의 비용이 같으면 한 번만 알려주세요. 다른 항목만 먼저·나중을 나눠 적어 주세요."
     return text
 
 
@@ -137,14 +184,16 @@ class FuturePairState:
         self.source_revision = None
         self.pending = None
         self.box_price = None
+        self.costs_deferred = False
+        self.specs_deferred = False
 
     @staticmethod
     def _empty():
         return {**dict.fromkeys(INPUT_FIELDS), "option_a": dict.fromkeys(OPTION_FIELDS),
                 "option_b": dict.fromkeys(OPTION_FIELDS)}
 
-    def snapshot(self):
-        return {"version": self.version, "inputs": deepcopy(self.inputs)}
+    def snapshot(self, *, start_new=False):
+        return {"version": self.version, "inputs": self._empty() if start_new else deepcopy(self.inputs)}
 
     def clear_result(self):
         self.result = None
@@ -166,6 +215,8 @@ class FuturePairState:
     def reset(self):
         self.replace(self._empty())
         self.clear_result()
+        self.costs_deferred = False
+        self.specs_deferred = False
 
     def _response(self, status, message, **details):
         return {"analysis_type": "future_pair", "status": status, "message": message,
@@ -221,6 +272,9 @@ class FuturePairState:
             return result
         normalized = HISTORY_STATUSES.get(status, status)
         message = result.get("message")
+        if status == "NO_CLEAN_COMPARISON":
+            message = ("같은 규격의 과거 기록은 있지만 품질 기준을 통과한 가격쌍이 없어요. "
+                       "나중 출하 단가를 직접 입력해 주세요.")
         if status == "ERROR":
             normalized = "INVALID_INPUT" if result.get("error_kind") == "INVALID_INPUT" else "DATA_ERROR"
             if normalized == "INVALID_INPUT":
@@ -257,6 +311,9 @@ class FuturePairState:
         except ValueError as exc:
             return self._response("INVALID_INPUT", str(exc))
         self.replace(candidate)
+        if action == "new":
+            self.costs_deferred = False
+            self.specs_deferred = False
         if box_price is not None or unresolved_box_price:
             self.clear_result()
             self.box_price = box_price
@@ -265,8 +322,12 @@ class FuturePairState:
             self.pending = deepcopy(result)
             return result
         result = self.calculate(preview_history=True, on_progress=on_progress)
-        if result["status"] in {"NEEDS_INPUT", "NO_DATA"}:
+        if result.get("source_status") != "NEEDS_CLARIFICATION":
+            self.specs_deferred = False
+        if result["status"] in {"NEEDS_INPUT", "NO_DATA"} or result.get("manual_price_required"):
             self.pending = deepcopy(result)
+        elif result["status"] == "OK":
+            self.costs_deferred = False
         return result
 
     def follow_up_box_price(self, question, *, on_progress=None):

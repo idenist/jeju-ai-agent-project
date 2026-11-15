@@ -25,10 +25,33 @@ _PACK_BEFORE = re.compile(
     r"(?:(?:의\s*)?(?:감귤\s*)?무게\s*)?(?:당|에는|에|은|는|이|가)?\s*$")
 _PACK_AFTER = re.compile(r"\s*(?:짜리|당|씩|상자|박스|포장|봉지|포대|팩)")
 _STORAGE_START = re.compile(r"(?:보관\s*시작(?:일|은|이|을)?|입고일)\s*(?:은|는|이|가|을|를)?\s*$")
+_NEW_COMPARISON = re.compile(
+    r"(?:^|[.!?\n])\s*(?:(?:이번엔|이번에는|그럼|이제|이전과\s*별개로|기존과\s*별개로|아까와\s*별개로)\s*)*"
+    r"(?:새(?:로운|로)?\s*(?:(?:출하|손익)\s*)?비교|비교를\s*새로|처음부터\s*(?:다시\s*)?(?:출하\s*)?비교)"
+    r"(?!(?:는|를|가)?\s*(?:말고|아니|하지\s*말|결과|뜻|방법))"
+)
+_PRICE_BASIS = re.compile(
+    r"수수료\s*(?:(?:를|는|가)\s*)?(?:이미\s*)?"
+    r"(?:(?:차감|공제|제외|빼기|떼기)\s*(?:(?:하기|한)\s*)?(?:전|후|뒤)|뺀|빼고|떼고|뗀|빠진|포함|제외한)|실수취\s*(?:단가|가격|금액)"
+)
+_PRICE_BASIS_UNCERTAIN = re.compile(r"^\s*(?:(?:금액|단가|가격)\s*)?(?:인지|일지|이냐|또는|/|·)")
+_CONTINUE_COMPARISON = re.compile(r"(?:기존|현재|직전|아까(?:의)?)\s*(?:출하\s*)?비교|(?:나중\s*출하일|B안\s*(?:날짜|단가))만")
 
 
 def requests_manual_price(question: str) -> bool:
     return any(word in question for word in ("직접 입력", "직접입력", "직접 넣", "정한 단가", "내가 입력"))
+
+
+def starts_new_comparison(question: str) -> bool:
+    return _NEW_COMPARISON.search(question) is not None
+
+
+def states_price_basis(question: str) -> bool:
+    return any(not _PRICE_BASIS_UNCERTAIN.match(question[match.end():]) for match in _PRICE_BASIS.finditer(question))
+
+
+def continues_comparison(question: str) -> bool:
+    return _CONTINUE_COMPARISON.search(question) is not None
 
 
 def is_future_pair_request(question: str, today: date) -> bool:

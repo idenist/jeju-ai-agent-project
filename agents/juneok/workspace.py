@@ -137,11 +137,11 @@ class SharedWorkspace:
         self.data_revision = current
         return True
 
-    def calculate(self, changed_fields=None, preserve_task_goal=False):
+    def calculate(self, changed_fields=None, preserve_task_goal=False, *, channel="공유 조건"):
         revision = data_revision()
         result = execute_tool("compare_shipment_options", {"expected_version": self.store.version}, self.store)
         self.session.task_context.record("compare_shipment_options", {}, result, set_goal=not preserve_task_goal, scenario=self.store.scenario)
-        self._freeze([{"tool": "compare_shipment_options", "result": result}], "공유 조건", changed_fields, expected_data_revision=revision)
+        self._freeze([{"tool": "compare_shipment_options", "result": result}], channel, changed_fields, expected_data_revision=revision)
         return result
 
     def sensitivity(self, option_id, losses, prices):
@@ -325,10 +325,27 @@ class SharedWorkspace:
             self._freeze(entries, "대화와 공유 조건", execution_status=reply.get("status", "ERROR"), expected_data_revision=revision)
         return reply
 
+    def lookup_shipment_timing(self, variety, pair_version, *, on_progress=None):
+        from agents.seunghyuk.shipment_timing import resolve_pair_dates
+        from .presentation import render_dialogue
+
+        pair = self.session.future_pair
+        earlier, later = resolve_pair_dates(pair.inputs)
+        if pair.version != pair_version or earlier is None:
+            return {"status": "INVALID_INPUT", "state": self.store.snapshot(),
+                    "text": "출하 비교가 바뀌었습니다. 최신 결과에서 과거 출하량을 다시 확인해 주세요."}
+        args = {"shipment_variety": variety, "option_a_date": earlier, "option_b_date": later}
+        result = execute_tool("analyze_shipment_timing", args, self.store, future_pair=pair, on_progress=on_progress)
+        entry = {"tool": "analyze_shipment_timing", "result": result}
+        return {"status": result["status"], "state": self.store.snapshot(),
+                "text": render_dialogue([entry]), "visible_results": [entry]}
+
     def clear_conversation(self, preserve_conditions=True, preserve_manual_pair=False):
         self.session.messages = []
         self.session.price_history_query = None
         self.session.price_history_revision = None
+        self.session.future_pair.costs_deferred = False
+        self.session.future_pair.specs_deferred = False
         if not preserve_manual_pair or self.session.future_pair.inputs["history_filters"] is not None:
             self.session.future_pair.clear_result()
         self.entries = []

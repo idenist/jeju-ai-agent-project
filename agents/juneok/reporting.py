@@ -458,6 +458,10 @@ def render_report(results: list[dict]) -> str:
     settlement_only = bool(results) and all(x.get('result', x).get('analysis_type') == 'settlement' for x in results)
     if results and all(x.get("tool") == "explain_term" for x in results):
         title = "제주 감귤 출하 용어 설명"
+    elif results and all(x.get("tool") == "analyze_shipment_timing" for x in results):
+        title = "제주 감귤 과거 출하량 보고서"
+    elif any(x.get("tool") == "analyze_shipment_timing" for x in results):
+        title = "제주 감귤 출하 시기·경제성 통합 보고서"
     elif settlement_only:
         title = "제주 감귤 출하·정산 검산 보고서"
     else:

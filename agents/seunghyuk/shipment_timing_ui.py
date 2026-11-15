@@ -5,13 +5,11 @@ No API key, model prediction, or implicit category mapping is required.
 """
 from __future__ import annotations
 
-import json
-
 import streamlit as st
 
 from .shipment_timing import CATEGORIES, analyze_shipment_timing, format_timing_report, resolve_pair_dates
 from .shipment_timing_bundle import (
-    aligned_economic, export_json, report_entries, source_fingerprint, shipment_source_is_current,
+    aligned_economic, export_json, report_entries, source_fingerprint,
 )
 
 
@@ -30,28 +28,32 @@ def render_integrated_downloads(entries: list[dict], report_json: str, context: 
     """One PDF/JSON pair based on the same entries; used by direct UI and chat."""
     from agents.juneok.reporting import render_report
 
-    with st.expander("통합 보고서 미리보기", expanded=False):
-        st.markdown(render_report(entries))
+    if any(entry["tool"] == "compare_future_pair" for entry in entries):
+        label, filename = "출하 시기·경제성 통합", "제주감귤_출하시기_경제성_통합"
+    else:
+        label, filename = "과거 출하량", "제주감귤_과거출하량"
     try:
         from agents.juneok.pdf_report import render_pdf_report
         pdf = render_pdf_report(entries)
     except Exception:
-        st.warning("통합 PDF 생성에 실패했습니다. JSON과 화면 결과는 확인할 수 있습니다.")
+        st.warning("PDF 생성에 실패했습니다. JSON과 화면 결과는 확인할 수 있습니다.")
     else:
-        st.download_button("출하 시기·경제성 통합 PDF", pdf,
-                           "제주감귤_출하시기_경제성_통합.pdf", "application/pdf",
+        st.download_button(f"{label} PDF 저장", pdf, f"{filename}.pdf", "application/pdf",
                            key=f"timing_unified_pdf_{context}", on_click="ignore")
-    st.download_button("출하 시기·경제성 통합 JSON", report_json,
-                       "제주감귤_출하시기_경제성_통합.json", "application/json",
-                       key=f"timing_unified_json_{context}", on_click="ignore")
+    with st.expander("보고서 미리보기 · 연도별 출하량", expanded=False):
+        st.markdown(render_report(entries))
+    with st.expander("상세 · JSON"):
+        st.download_button(f"{label} JSON 저장", report_json, f"{filename}.json", "application/json",
+                           key=f"timing_unified_json_{context}", on_click="ignore")
 
 
 def render_integrated_chat_report(report: dict) -> None:
     """Chat export uses the same canonical entries as the direct-entry panel."""
     with st.container(border=True):
-        st.markdown("**제주데이터허브 출하 시기·경제성 통합 보고서**")
         if len(report["entries"]) == 1:
-            st.caption("경제성 입력·계산이 없거나 출하일이 달라 출하량 분석만 포함했습니다.")
+            st.markdown("**제주 감귤 과거 출하량 보고서**")
+        else:
+            st.markdown("**제주 감귤 출하 시기·경제성 통합 보고서**")
         render_integrated_downloads(report["entries"], report["json"], "chat")
 
 
@@ -101,8 +103,10 @@ def render_shipment_timing_panel(pair_state_or_inputs=None):
             st.caption("현재 출하량 분석은 완료됐습니다. 위쪽 경제성 비교 조건까지 입력·계산하면 같은 날짜의 경제성 결과도 함께 저장됩니다.")
         else:
             from agents.juneok.reporting import future_pair_summary
-            conclusion, minimum = future_pair_summary(economic)
-            st.markdown(f"**현재 A/B 경제성 계산과 함께 보기** · {conclusion}\n\n{minimum}")
+            conclusion, minimum, favorable = future_pair_summary(economic)
+            st.markdown("\n\n".join(part for part in
+                                      (f"**현재 A/B 경제성 계산과 함께 보기** · {conclusion}", minimum, favorable)
+                                      if part))
             st.caption("경제성은 입력한 가정 단가·감모·비용에 따른 계산이며 출하량으로 추정한 미래수익이 아닙니다.")
         render_integrated_downloads(entries, export_json(result, economic), "direct")
         return result
