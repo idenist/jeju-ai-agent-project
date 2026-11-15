@@ -73,7 +73,7 @@ def worker(mode):
         else:
             from streamlit.testing.v1 import AppTest
             app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=30).run()
-            assert not list(app.exception) and app.chat_input[0].disabled
+            assert not list(app.exception) and app.text_input(key="shipment_question").disabled
             next(b for b in app.button if b.label == "가상 예시 조건 불러오기").click().run()
             next(b for b in app.button if b.label == "입력 조건 비교").click().run()
             next(b for b in app.button if b.label == "과거 출하량 조회").click().run()
@@ -87,6 +87,29 @@ def worker(mode):
             pdf = app.session_state.pdf_cache[1]
             assert pdf.startswith(b"%PDF-")
             assert "조건 버전" in "\n".join(p.extract_text() for p in PdfReader(BytesIO(pdf)).pages)
+            pair = app.session_state.workspace.session.future_pair
+            result = pair.apply("new", pair.version, {
+                "start_date": "2026-11-15", "quantity": 3000, "price_basis": "gross",
+                "price_a": 2500, "price_b": 2750, "price_mode": "manual",
+                "option_a": {"delay_days": 3, "loss_percent": 1, "daily_storage_cost": 10000,
+                             "other_cost_krw": 5000, "fee_percent": 5},
+                "option_b": {"delay_days": 10, "loss_percent": 4, "daily_storage_cost": 10000,
+                             "other_cost_krw": 5000, "fee_percent": 7},
+            })
+            assert result["status"] == "OK"
+            app.run()
+            app.selectbox(key="timing_variety").select("노지온주").run()
+            import streamlit as st
+            with patch.object(st, "download_button", wraps=st.download_button) as download:
+                app.button(key="timing_run").click().run()
+            assert not list(app.exception)
+            outputs = {call.args[0]: call.args[1] for call in download.call_args_list}
+            timing = json.loads(outputs["출하 시기·경제성 통합 JSON 저장"])
+            assert timing["status"] == "INTEGRATED"
+            assert timing["shipment_analysis"]["input"]["option_b_date"] == "2026-11-25"
+            pdf_pages = PdfReader(BytesIO(outputs["출하 시기·경제성 통합 PDF 저장"])).pages
+            combined = " ".join(page.extract_text() for page in pdf_pages)
+            assert "241,850원" in combined and "#855" in combined
     return {"mode": mode, "passed": True, "single_logical_cpu": single_cpu,
             "http_clients_blocked": True, "keys_blank": not os.environ.get("OPENAI_API_KEY") and not os.environ.get("DATA_GO_KR_KEY"),
             "elapsed_seconds": round(time.perf_counter() - started, 3), "memory": peak_memory()}

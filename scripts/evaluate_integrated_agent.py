@@ -36,8 +36,11 @@ SOURCE_PATHS = (
     "agents/common/calculation_service.py", "agents/common/price_history_service.py",
     "agents/common/price_history_followup.py", "agents/jeonghyeon/price_history.py",
     "agents/jeonghyeon/comparison_input.py", "agents/jeonghyeon/price_scenario.py",
+    "agents/seunghyuk/shipment_timing.py", "agents/seunghyuk/shipment_timing_bundle.py",
+    "agents/seunghyuk/shipment_timing_ui.py",
     "data/processed/daily_prices.csv", "data/processed/price_comparison_availability.csv",
     "data/processed/price_comparisons.csv", "data/metadata/juneok_manifest.json",
+    "data/processed/daily_shipments.csv", "data/reports/shipment_quality_report.json",
     "data/reports/price_comparison_report.json", "evals/integration_e2e_cases.json",
     "scripts/evaluate_integrated_agent.py",
 )
@@ -82,6 +85,8 @@ def load_cases(path: Path = CASES_FILE) -> list[dict]:
                     raise ValueError(f"{case['id']} {index}턴: 비교할 이전 턴 참조가 잘못됐습니다.")
             if "future_pair_has_result" in turn and type(turn["future_pair_has_result"]) is not bool:
                 raise ValueError(f"{case['id']} {index}턴: 현재 미래 출하 결과 기대값이 잘못됐습니다.")
+            if "future_pair_manual_pending" in turn and type(turn["future_pair_manual_pending"]) is not bool:
+                raise ValueError(f"{case['id']} {index}턴: 직접 단가 입력 대기 기대값이 잘못됐습니다.")
             for field in ("history_fields", "model_args"):
                 if not isinstance(turn.get(field, {}), dict):
                     raise ValueError(f"{case['id']} {index}턴: {field} 형식이 잘못됐습니다.")
@@ -299,6 +304,10 @@ def run_case(case: dict, settings) -> dict:
             current = workspace.session.future_pair.current_result()
             if (current is not None) != spec["future_pair_has_result"]:
                 verdict["failures"].append("unexpected_current_future_pair_result")
+        if "future_pair_manual_pending" in spec:
+            pending = workspace.session.future_pair.pending or {}
+            if bool(pending.get("manual_price_required")) != spec["future_pair_manual_pending"]:
+                verdict["failures"].append("unexpected_future_pair_manual_pending")
         verdict["passed"] = not verdict["failures"]
         row = {"turn_index": index, "user": spec["user"], **verdict, "quality": quality,
                "run_status": reply.get("status"), "text": reply.get("text"), "response_seconds": elapsed,
@@ -317,6 +326,11 @@ def run_case(case: dict, settings) -> dict:
             "abort_reason": aborted_status, "turns": outcome}
 
 
+def timing_summary(samples):
+    return {"samples": samples, "median": round(median(samples), 3) if samples else None,
+            "max": max(samples, default=None)}
+
+
 def summarize(cases: list[dict], reports: list[dict], repeats: int, model: str) -> dict:
     completed = len(reports)
     passed = sum(item["passed"] for item in reports)
@@ -328,17 +342,28 @@ def summarize(cases: list[dict], reports: list[dict], repeats: int, model: str) 
     metrics = {key: sum(turn.get("metrics", {}).get(key, 0) or 0 for item in reports for turn in item["turns"])
                for key in ("model_requests", "input_tokens", "output_tokens", "cached_input_tokens")}
     first_response = {}
+    by_case = {}
     for case in cases:
-        samples = [item["turns"][0]["response_seconds"] for item in reports
-                   if item.get("id") == case["id"] and item["turns"] and item["turns"][0].get("passed")]
+        case_id = case["id"]
+        runs = [item for item in reports if item["id"] == case_id]
+        first_turns = [item["turns"][0] for item in runs if item["turns"]]
+        samples = [turn["response_seconds"] for turn in first_turns if turn["passed"]]
         if samples:
-            first_response[case["id"]] = {"samples": samples, "median": round(median(samples), 3), "max": max(samples)}
+            first_response[case_id] = timing_summary(samples)
+        failed_turns = [turn for item in runs for turn in item["turns"] if not turn["passed"]]
+        by_case[case_id] = {
+            "planned": repeats, "completed": len(runs), "passed": sum(item["passed"] for item in runs),
+            "aborts": dict(Counter(item["abort_reason"] for item in runs if item.get("abort_reason"))),
+            "first_response_all": timing_summary([turn["response_seconds"] for turn in first_turns]),
+            "failed_turn_response": timing_summary([turn["response_seconds"] for turn in failed_turns]),
+            "failed_turn_statuses": dict(Counter(turn.get("run_status") or "UNKNOWN" for turn in failed_turns)),
+        }
     return {"model": model, "planned_runs": len(cases) * repeats,
             "completed_runs": completed, "passed_runs": passed,
             "pass_rate": round(passed / completed, 4) if completed else None,
             "complete": completed == len(cases) * repeats,
             "categories": categories, "failure_counts": dict(failures), "usage": metrics,
-            "first_response_seconds": first_response,
+            "first_response_seconds": first_response, "case_metrics": by_case,
             "estimated_cost_usd": None,
             "note": "API 요금 추정 불가: 모델별 실제 가격 정보 미입력. 실제 청구액은 서비스 사용량에서 확인하세요."}
 
@@ -456,8 +481,15 @@ def main(argv: list[str] | None = None) -> int:
     _save_json(folder / "summary.json", summary)
     print(f"평가 결과: {summary['passed_runs']}/{summary['completed_runs']}회 통과 "
           f"(계획 {summary['planned_runs']}회) · 기록: {folder}")
-    for case_id, timing in summary["first_response_seconds"].items():
-        print(f"{case_id} 첫 응답 · {len(timing['samples'])}개 · 중앙값 {timing['median']:.3f}초 · 최대 {timing['max']:.3f}초")
+    for case_id, row in summary["case_metrics"].items():
+        timing = row["first_response_all"]
+        if timing["samples"]:
+            print(f"{case_id} {row['passed']}/{row['completed']} 통과 · 첫 응답 중앙값 {timing['median']:.3f}초 · 최대 {timing['max']:.3f}초")
+        if row["failed_turn_statuses"]:
+            failed = row["failed_turn_response"]
+            print(f"  실패/중단 {row['failed_turn_statuses']} · 최대 {failed['max']:.3f}초")
+        if row["aborts"]:
+            print(f"  문항 중단 {row['aborts']}")
     if stop_reason:
         print("평가가 중단됐습니다: " + stop_reason, file=sys.stderr)
         return 2

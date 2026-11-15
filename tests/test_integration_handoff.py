@@ -19,7 +19,7 @@ class 인수증빙검수(unittest.TestCase):
         self.evidence = self.root / "artifacts/integration-e2e/전체평가"
         self.evidence.mkdir(parents=True)
         ids = list(검수.EXPECTED_IDS)
-        turn_counts = [1, 2, 2, 1, 1, 1, 2, 1, 1, 1, 1, 2]
+        turn_counts = [1, 2, 2, 1, 1, 1, 2, 1, 1, 1, 1, 2, 6, 3, 2]
         self.assertEqual(sum(turn_counts), 검수.EXPECTED_TURNS)
         cases = [{"id": name, "turns": [{"user": "평가 질문"}] * count}
                  for name, count in zip(ids, turn_counts)]
@@ -27,6 +27,8 @@ class 인수증빙검수(unittest.TestCase):
         required = ["app.py", "agents/juneok/agent.py", "agents/juneok/tools.py",
                     "agents/juneok/workspace.py", "agents/common/price_history_service.py",
                     "data/processed/daily_prices.csv", "data/processed/price_comparison_availability.csv",
+                    "agents/seunghyuk/shipment_timing.py", "data/processed/daily_shipments.csv",
+                    "data/reports/shipment_quality_report.json",
                     "evals/integration_e2e_cases.json", "scripts/evaluate_integrated_agent.py"]
         for path in required:
             p = self.root / path
@@ -35,11 +37,11 @@ class 인수증빙검수(unittest.TestCase):
                 p.write_text("통합 코드 또는 자료", encoding="utf-8")
         source = {p: hashlib.sha256((self.root / p).read_bytes()).hexdigest() for p in required}
         self.metadata = {"model": "검수모델", "cases": ids, "repeats": 1,
-                         "expected_turns_per_repeat": 16, "actual_model_api_called": True,
+                         "expected_turns_per_repeat": sum(turn_counts), "actual_model_api_called": True,
                          "preflight": {"status": "OK", "verified_availability_rows": 4776,
                                        "activated_scenario_tool": False}, "source_sha256": source}
-        self.summary = {"model": "검수모델", "planned_runs": 12, "completed_runs": 12,
-                        "passed_runs": 12, "complete": True, "stop_reason": None, "failure_counts": {}}
+        self.summary = {"model": "검수모델", "planned_runs": len(ids), "completed_runs": len(ids),
+                        "passed_runs": len(ids), "complete": True, "stop_reason": None, "failure_counts": {}}
         self.rows = [{"id": name, "passed": True, "completed_turns": count, "expected_turns": count,
                       "abort_reason": None, "turns": [{"passed": True, "run_status": "OK", "failures": []}
                                                     for _ in range(count)]}
@@ -62,7 +64,7 @@ class 인수증빙검수(unittest.TestCase):
     def test_정상_전체_평가와_코드_해시는_통과(self):
         result = self.check()
         self.assertEqual(result["status"], "OK", result["issues"])
-        self.assertEqual((result["passed_cases"], result["passed_turns"]), (12, 16))
+        self.assertEqual((result["passed_cases"], result["passed_turns"]), (15, 27))
         self.assertEqual(검수._test_count("Ran 543 tests in 99.0s\nOK"), 543)
         self.assertIsNone(검수._test_count("진단 결과만 출력"))
 
@@ -71,7 +73,7 @@ class 인수증빙검수(unittest.TestCase):
         self.assertEqual(self.check()["status"], "FAIL")
 
     def test_일부_평가만_통과하면_실패(self):
-        self.summary["passed_runs"] = 11
+        self.summary["passed_runs"] -= 1
         self.save()
         self.assertEqual(self.check()["status"], "FAIL")
 

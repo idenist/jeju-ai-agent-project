@@ -14,8 +14,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_IDS = tuple(f"INT-{n:02d}" for n in range(1, 13))
-EXPECTED_TURNS = 16
+EXPECTED_IDS = tuple(f"INT-{n:02d}" for n in range(1, 16))
+EXPECTED_TURNS = 27
 
 
 def _json(path: Path):
@@ -35,11 +35,14 @@ def _case_definitions(root: Path) -> tuple[tuple[str, ...], int]:
         raise ValueError("평가 문항 ID 또는 순서가 검수 계약과 다릅니다.")
     if any(not isinstance(c.get("turns"), list) or not c["turns"] for c in cases):
         raise ValueError("평가 문항의 사용자 턴이 누락됐습니다.")
-    return ids, sum(len(c["turns"]) for c in cases)
+    turns = sum(len(c["turns"]) for c in cases)
+    if turns != EXPECTED_TURNS:
+        raise ValueError("평가 문항의 전체 턴 수가 검수 계약과 다릅니다.")
+    return ids, turns
 
 
 def find_latest_full_evidence(root: Path) -> Path | None:
-    """단건 또는 부분 평가가 아니라 전체 12문항 평가 디렉터리만 자동 선택합니다."""
+    """전체 통합 평가에 해당하는 기록 디렉터리를 자동 선택합니다."""
     base = root / "artifacts/integration-e2e"
     if not base.is_dir():
         return None
@@ -108,6 +111,8 @@ def verify_live_evidence(folder: Path, root: Path = ROOT) -> dict:
         required = {"app.py", "agents/juneok/agent.py", "agents/juneok/tools.py",
                     "agents/juneok/workspace.py", "agents/common/price_history_service.py",
                     "data/processed/daily_prices.csv", "data/processed/price_comparison_availability.csv",
+                    "agents/seunghyuk/shipment_timing.py", "data/processed/daily_shipments.csv",
+                    "data/reports/shipment_quality_report.json",
                     "evals/integration_e2e_cases.json", "scripts/evaluate_integrated_agent.py"}
         if not isinstance(source, dict) or not required.issubset(source):
             issues.append("평가 당시 핵심 소스 해시 목록이 누락됐습니다.")
