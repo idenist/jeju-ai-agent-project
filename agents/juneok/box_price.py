@@ -15,15 +15,15 @@ _BOX_PRICE = re.compile(
     rf"(?:{_PACK_WITH_WEIGHT}(?:당|에)?|{_PACK}\s*(?:한\s*개\s*)?(?:당|에)|한\s*{_PACK}(?:당|에)?)"
     rf"\s*(?:가격\s*(?:은|이)?\s*)?{_PRICED_AMOUNT}|{_PRICED_AMOUNT}\s*/\s*{_PACK}", re.I,
 )
-_SENTENCE_BREAK = re.compile(r"[!?。;；\n]|(?<!\d)\.|\.(?!\d)")
-_LIST_BREAK = re.compile(r"[，、]|(?<!\d),|,(?!\d)")
+_SENTENCE_BREAK = re.compile(r"[!?。;；]|(?<!\d)\.|\.(?!\d)")
+_LIST_BREAK = re.compile(r"[，、\n]|(?<!\d),|,(?!\d)")
 _HISTORY_CONTEXT = re.compile(
     r"(?:과거|예전)\s*(?:경락\s*)?(?:가격|시세|경락가|자료|데이터|거래)"
     r"|(?:시세|경락\s*가격|가격)\s*조회|조회\s*(?:용|규격|조건)"
 )
 _SALE_WEIGHT_CONTEXT = re.compile(
-    rf"(?:실제\s*(?:(?:판매|출하)(?:용|할)?\s*)?|(?:판매|출하)(?:용|할)?\s*|[AB]\s*안(?:의)?\s*)"
-    rf"(?:{_PACK}|무게|중량)", re.I,
+    rf"(?:실제\s*(?:(?:판매|출하)(?:용|할)?\s*)?|(?:판매|출하)(?:용|할)?\s*|[AB]\s*안(?:의|은|는)?\s*)"
+    rf"(?:{_PACK}|무게|중량|판매가|출하\s*단가)", re.I,
 )
 _SIDE_A = re.compile(r"(?:a\s*안|먼저\s*(?:출하|팔))", re.I)
 _SIDE_B = re.compile(r"(?:b\s*안|나중\s*(?:출하|팔))", re.I)
@@ -34,7 +34,7 @@ _PACK_WEIGHT = (
 _WEIGHT_REPLY = re.compile(rf"{_PACK}|^(?:아니요[, ]*)?\s*{_NUMBER}\s*(?:kg|킬로그램)", re.I)
 _ALTERNATE_WEIGHT = re.compile(rf"(?:kg|킬로그램)\s*(?:인지|이나|또는|아니면|혹은|[~/～–-])\s*({_NUMBER})\s*(?:kg|킬로그램)", re.I)
 _WEIGHT_RANGE = re.compile(rf"{_NUMBER}\s*[-~～–]\s*{_NUMBER}\s*(?:kg|킬로그램)", re.I)
-_UNCERTAIN = re.compile(r"모르|몰라|인지|일지|애매|정도|가량|쯤|아마|듯|[~～–]")
+_UNCERTAIN = re.compile(r"모르|몰라|인지|일지|애매|헷갈|정도|가량|쯤|아마|듯|[~～–]")
 _YES = re.compile(r"(?:(?:네|예|응)[, ]*)?(?:맞(?:아(?:요)?|습니다)|그대로(?:\s*(?:계산|비교)(?:해\s*(?:줘|주세요))?)?|확인(?:했어요|했습니다)?|적용해\s*(?:줘|주세요))|네|예|응")
 _NO = re.compile(r"아니(?:요|에요)?|아니에요|아닙니다|취소(?:해\s*(?:줘|주세요))?")
 
@@ -44,15 +44,21 @@ def mentions_box_price(text):
 
 
 def _sale_weight_text(text):
-    """Keep a historical lookup's comma-separated filters out of sales weight."""
+    """Keep lookup lists separate while preserving uncertainty about a quoted sale weight."""
     sales = []
     for sentence in _SENTENCE_BREAK.split(text):
         in_history = False
         for clause in _LIST_BREAK.split(sentence):
-            if _HISTORY_CONTEXT.search(clause):
+            if history := _HISTORY_CONTEXT.search(clause):
                 in_history = True
-                sales.extend(match.group() for match in _BOX_PRICE.finditer(clause))
-            elif not in_history or _SALE_WEIGHT_CONTEXT.search(clause):
+                before_lookup = clause[:history.start()]
+                if _BOX_PRICE.search(before_lookup):
+                    sales.extend(match.group() for match in _BOX_PRICE.finditer(before_lookup))
+                    for pattern in (_UNCERTAIN, _ALTERNATE_WEIGHT, _WEIGHT_RANGE):
+                        if uncertainty := pattern.search(before_lookup):
+                            sales.append(uncertainty.group())
+            elif (not in_history or _SALE_WEIGHT_CONTEXT.search(clause)
+                  or (_BOX_PRICE.search(clause) and (_SIDE_A.search(clause) or _SIDE_B.search(clause)))):
                 in_history = False
                 sales.append(clause)
     return "\n".join(sales).strip()
@@ -143,7 +149,7 @@ class BoxPrice:
         if not self.side:
             return f"상자당 {amount}원은 먼저 출하하는 A안 가격인가요, 나중 출하하는 B안 가격인가요?"
         if self.weight is None:
-            return f"{self.side}안 상자당 {amount}원에서 상자 한 개에 담긴 감귤은 정확히 몇 kg인가요?"
+            return f"{self.side}안 상자당 {amount}원에서 실제 판매할 상자 한 개의 감귤은 정확히 몇 kg인가요?"
         if self.unit_price == 0:
             return f"{self.side}안 환산 단가가 0.01원/kg 미만입니다. 상자 가격과 무게를 다시 알려주세요."
         weight = _number(self.weight)

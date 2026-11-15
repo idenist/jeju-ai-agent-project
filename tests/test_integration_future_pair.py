@@ -90,6 +90,7 @@ class FuturePairTests(unittest.TestCase):
             "A안은 한 박스 2만원이고 5kg 상자 기준으로 과거 시세를 찾아 주세요.",
             "A안은 한 박스 2만원이에요. 과거 시세 조회는 가락시장, 조생귤 특 소 5kg 상자 기준으로 부탁해요.",
             "A안은 한 박스 2만원이에요. 과거 시세는 가락시장, 조생귤 특 소, 5kg 상자로 봐 주세요.",
+            "A안은 한 박스 2만원이에요. 과거 시세는 가락시장,\n조생귤 특 소 5kg 상자로 봐 주세요.",
         ):
             with self.subTest(message=message):
                 pair = FuturePairState()
@@ -113,12 +114,23 @@ class FuturePairTests(unittest.TestCase):
     def test_box_quote_accepts_explicit_sales_weight_after_history_filters(self):
         from agents.juneok.box_price import proposed_box_price
 
-        quote = proposed_box_price(
-            "A안은 한 박스 2만원이에요. 과거 시세는 가락시장, 조생귤 특 소 5kg 상자로 보고, 실제 판매 상자는 4kg이에요.",
-            {"side": "A", "phrase": "한 박스 2만원"},
+        examples = (
+            ("A안은 한 박스 2만원이에요. 과거 시세는 가락시장, 조생귤 특 소 5kg 상자로 보고, 실제 판매 상자는 4kg이에요.", 5000),
+            ("과거 시세는 조생귤 특 소 10kg 상자로 보고, A안 판매가는 5kg 상자 12,500원이에요.", 2500),
         )
-        self.assertEqual(quote.weight, Decimal(4))
-        self.assertEqual(quote.unit_price, Decimal(5000))
+        for question, expected in examples:
+            with self.subTest(question=question):
+                quote = proposed_box_price(question, None)
+                self.assertEqual(quote.unit_price, Decimal(expected))
+
+    def test_ambiguous_sales_weight_still_requires_confirmation_in_history_clause(self):
+        from agents.juneok.box_price import proposed_box_price
+
+        quote = proposed_box_price(
+            "A안은 5kg 상자에 12,500원인데 10kg인지 헷갈리고 B안 과거 시세는 5kg 상자로 봐 주세요.", None,
+        )
+        self.assertIsNone(quote.weight)
+        self.assertIn("실제 판매할 상자", quote.question())
 
     def test_clear_future_shipment_choice_keeps_the_reported_quantity(self):
         from agents.juneok.agent import AgentSession

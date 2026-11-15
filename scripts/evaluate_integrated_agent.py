@@ -77,6 +77,8 @@ def load_cases(path: Path = CASES_FILE) -> list[dict]:
                     raise ValueError(f"{case['id']} {index}턴: 기대 도구 이름이 없습니다.")
                 if not isinstance(expected.get("fields", {}), dict):
                     raise ValueError(f"{case['id']} {index}턴: 기대 결과 필드가 잘못됐습니다.")
+                if type(expected.get("model_selected", True)) is not bool:
+                    raise ValueError(f"{case['id']} {index}턴: 기대 도구의 모델 호출 여부가 잘못됐습니다.")
                 references = expected.get("same_fields_as_turn", {})
                 if not isinstance(references, dict) or any(
                     not field.strip() or type(turn_number) is not int or not 1 <= turn_number < index
@@ -196,8 +198,10 @@ def score_turn(spec: dict, reply: dict, before_state: dict, after_state: dict,
             failures.append("missing_tool:" + expected["tool"])
             continue
         result = matching[-1]
-        if not any(call["tool"] == expected["tool"] for call in calls):
-            failures.append("expected_tool_not_selected_by_model:" + expected["tool"])
+        selected_by_model = any(call["tool"] == expected["tool"] for call in calls)
+        if selected_by_model != expected.get("model_selected", True):
+            reason = "unexpected_model_tool_selection:" if selected_by_model else "expected_tool_not_selected_by_model:"
+            failures.append(reason + expected["tool"])
         if expected.get("status") is not None and result.get("status") != expected["status"]:
             failures.append(f"wrong_status:{expected['tool']}:{result.get('status')}")
         for field, desired in expected.get("fields", {}).items():
