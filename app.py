@@ -1361,6 +1361,8 @@ def main():
                     st.session_state.show_price_history = True
                 if st.button("과거 출하자료", disabled=dirty):
                     st.session_state.show_history = True
+                from agents.juneok.seasonal_prices_ui import render_seasonal_prices
+                render_seasonal_prices()
                 _render_price_history(ws, dirty)
                 _render_history(ws, dirty)
                 _render_discovery(ws, dirty)

@@ -223,19 +223,30 @@ def render_future_pair(state):
 
 
 def render_future_pair_result(result, location, *, report_json=None):
-    entries = [{"tool": "compare_future_pair", "result": result}]
+    # Build the market record before creating download payloads. The market panel
+    # refreshes its local cache when A/B inputs, trade specs, or season files change.
+    from .market_export import export_market_record, report_entries
+    from .seasonal_threshold_ui import render_threshold_evidence
+
+    base_entries = [{"tool": "compare_future_pair", "result": result}]
     if location == "chat":
         with st.container(border=True):
             st.markdown("**감귤 출하 비교 보고서**")
+            render_threshold_evidence(result, location)
+            market = export_market_record(result, st.session_state.get(f"market_decision_latest_{location}"))
+            entries = report_entries(result, market)
             _render_future_pair_pdf(entries, location)
             with st.expander("보고서 미리보기"):
                 st.markdown(render_report(entries))
             with st.expander("상세 · JSON"):
-                _render_future_pair_json(result, location, report_json)
+                _render_future_pair_json(result, location, report_json, market_result=market)
     else:
-        st.markdown(render_report(entries))
+        st.markdown(render_report(base_entries))
+        render_threshold_evidence(result, location)
+        market = export_market_record(result, st.session_state.get(f"market_decision_latest_{location}"))
+        entries = report_entries(result, market)
         _render_future_pair_pdf(entries, location)
-        _render_future_pair_json(result, location)
+        _render_future_pair_json(result, location, market_result=market)
 
 
 def _render_future_pair_pdf(entries, location):
@@ -248,8 +259,11 @@ def _render_future_pair_pdf(entries, location):
                            key=f"future_pair_pdf_{location}", on_click="ignore")
 
 
-def _render_future_pair_json(result, location, content=None):
-    if content is None:
+def _render_future_pair_json(result, location, content=None, *, market_result=None):
+    if market_result is not None:
+        from .market_export import export_json
+        content = export_json(result, market_result, content)
+    elif content is None:
         content = json.dumps({"format": "jeju-future-pair", "version": 1, "result": result}, ensure_ascii=False, indent=2)
     st.download_button("미래 A/B 결과 JSON 내려받기", content, "미래출하비교.json", "application/json",
                        key=f"future_pair_json_{location}", on_click="ignore")

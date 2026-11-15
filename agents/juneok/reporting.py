@@ -24,6 +24,7 @@ TOOL_LABELS.update(explore_data="확보 자료 탐색", solve_offer_limits="제�
 TOOL_LABELS.update(reconcile_settlement="출하 기록·정산 검산", get_price_history="과거 동일규격 경락가격 비교")
 TOOL_LABELS["compare_future_pair"] = "두 미래 출하안 비교"
 TOOL_LABELS["analyze_shipment_timing"] = "제주데이터허브 출하 시기 A/B 분석"
+TOOL_LABELS["market_decision"] = "다년도 시장 근거와 조건부 판단"
 FIELD_NAMES.update(quoted_price_per_kg="제안 단가 또는 미래 단가 가정(원/kg)", option_id="검토할 보관 대안")
 FIELD_NAMES.update(comparison_reference="변경 검토 기준으로 선택한 저장 JSON")
 
@@ -220,6 +221,9 @@ def _render_result_body(result: dict) -> str:
             return _render_future_pair(result)
         from .future_pair_state import future_pair_feedback
         return future_pair_feedback(result)
+    if result.get("analysis_type") == "market_decision":
+        from .market_export import market_markdown
+        return market_markdown(result)
     if result.get("analysis_type") == "price_history":
         from agents.common.price_history_reporting import render_price_history
         return render_price_history(result)
