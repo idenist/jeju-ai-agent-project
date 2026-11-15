@@ -46,19 +46,91 @@ class FuturePairTests(unittest.TestCase):
                 self.assertEqual(agent.future_pair.current_result()["option_a"]["price_per_kg"], "2500")
                 self.assertIn("2,500원/kg", confirmed["text"])
 
+    def test_box_quotes_without_a_particle_require_confirmation(self):
+        from agents.juneok.agent import AgentSession
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        for quote, entered_amount, unit_price in (("5kg 상자 12,500원", 12500, 2500),
+                                                 ("한 박스 2만원, 5kg 상자", 20000, 4000)):
+            with self.subTest(quote=quote):
+                client = 모의_대화_클라이언트("compare_future_pair", {
+                    "action": "new", "expected_version": 0,
+                    "patch": {**COMMON, "price_a": entered_amount, "option_b": OPTION_B,
+                              "price_mode": "history", "history_filters": FILTERS},
+                })
+                agent = AgentSession(client=client)
+                first = agent.run(f"감귤 3톤을 사흘 뒤와 열흘 뒤에 출하할 때를 비교해 주세요. A안은 {quote}예요.")
+                self.assertIn(f"{unit_price:,}원/kg", first["text"])
+                self.assertIsNone(agent.future_pair.inputs["price_a"])
+                self.assertIsNone(agent.future_pair.current_result())
+
+                agent.run("네, 맞아요.")
+                self.assertEqual(agent.future_pair.current_result()["option_a"]["price_per_kg"], str(unit_price))
+
     def test_box_price_confirmation_preserves_the_separate_history_package(self):
         from agents.juneok.box_price import proposed_box_price
         from agents.juneok.future_pair_state import FuturePairState
 
         pair = FuturePairState()
-        quote = proposed_box_price("A안 상자당 12,500원, 상자는 5kg이에요.",
-                                   {"side": "A", "phrase": "상자당 12,500원"})
+        quote = proposed_box_price("A안은 5kg 상자 12,500원이고 과거 경락가격은 10kg 상자 규격으로 봐 주세요.",
+                                   {"side": "A", "phrase": "5kg 상자 12,500원"})
         filters = {**FILTERS, "package_kg": "10"}
         pair.apply("new", pair.version, {**COMMON, "option_b": OPTION_B,
                    "price_mode": "history", "history_filters": filters}, box_price=quote)
         confirmed = pair.follow_up_box_price("네, 맞아요.")
         self.assertEqual(Decimal(confirmed["confirmed_box_price"]), 2500)
         self.assertEqual(pair.inputs["history_filters"], filters)
+
+    def test_box_quote_asks_for_sales_weight_when_only_history_weight_is_given(self):
+        from agents.juneok.box_price import proposed_box_price
+        from agents.juneok.future_pair_state import FuturePairState
+
+        for message in (
+            "A안은 한 박스 2만원이에요. 과거 경락가격은 5kg 상자 규격으로 봐 주세요.",
+            "A안은 한 박스 2만원이고 5kg 상자 기준으로 과거 시세를 찾아 주세요.",
+            "A안은 한 박스 2만원이에요. 과거 시세 조회는 가락시장, 조생귤 특 소 5kg 상자 기준으로 부탁해요.",
+            "A안은 한 박스 2만원이에요. 과거 시세는 가락시장, 조생귤 특 소, 5kg 상자로 봐 주세요.",
+            "A안은 한 박스 2만원이에요. 과거 시세는 가락시장,\n조생귤 특 소 5kg 상자로 봐 주세요.",
+        ):
+            with self.subTest(message=message):
+                pair = FuturePairState()
+                quote = proposed_box_price(message, {"side": "A", "phrase": "한 박스 2만원"})
+                filters = {**FILTERS, "package_kg": "5"}
+                initial = pair.apply("new", pair.version, {**COMMON, "price_a": None, "option_b": OPTION_B,
+                                     "price_mode": "history", "history_filters": filters}, box_price=quote)
+                self.assertIn("정확히 몇 kg", initial["message"])
+                self.assertIsNone(pair.follow_up_box_price("과거 시세는 가락시장, 5kg 상자로 봐 주세요."))
+                pair.follow_up_box_price("네, 맞아요.")
+                self.assertIsNone(pair.inputs["price_a"])
+                self.assertIsNone(pair.current_result())
+
+                correction = pair.follow_up_box_price("판매 상자는 4kg이에요.")
+                self.assertIn("5,000원/kg", correction["message"])
+                self.assertIsNone(pair.inputs["price_a"])
+                confirmed = pair.follow_up_box_price("네, 맞아요.")
+                self.assertEqual(Decimal(confirmed["confirmed_box_price"]), 5000)
+                self.assertEqual(pair.inputs["history_filters"], filters)
+
+    def test_box_quote_accepts_explicit_sales_weight_after_history_filters(self):
+        from agents.juneok.box_price import proposed_box_price
+
+        examples = (
+            ("A안은 한 박스 2만원이에요. 과거 시세는 가락시장, 조생귤 특 소 5kg 상자로 보고, 실제 판매 상자는 4kg이에요.", 5000),
+            ("과거 시세는 조생귤 특 소 10kg 상자로 보고, A안 판매가는 5kg 상자 12,500원이에요.", 2500),
+        )
+        for question, expected in examples:
+            with self.subTest(question=question):
+                quote = proposed_box_price(question, None)
+                self.assertEqual(quote.unit_price, Decimal(expected))
+
+    def test_ambiguous_sales_weight_still_requires_confirmation_in_history_clause(self):
+        from agents.juneok.box_price import proposed_box_price
+
+        quote = proposed_box_price(
+            "A안은 5kg 상자에 12,500원인데 10kg인지 헷갈리고 B안 과거 시세는 5kg 상자로 봐 주세요.", None,
+        )
+        self.assertIsNone(quote.weight)
+        self.assertIn("실제 판매할 상자", quote.question())
 
     def test_clear_future_shipment_choice_keeps_the_reported_quantity(self):
         from agents.juneok.agent import AgentSession

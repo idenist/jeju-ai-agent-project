@@ -39,7 +39,8 @@ SCENARIO_LABELS = {
 SCENARIO_PROPERTIES = {key: PROPERTIES[key] for key in FILTERS}
 SCENARIO_PROPERTIES.update(
     option_a_price_per_kg={"type": ["number", "null"],
-                           "description": "A안(먼저 파는 안) 단가 원/kg. 사용자가 말한 값만"},
+                           "description": "A안(먼저 파는 안) 단가 원/kg. 사용자가 kg당 가격으로 말한 값만. "
+                                          "상자·박스 한 개 가격(예: 5kg 상자 12,500원)이면 나누지 말고 null"},
     option_a_days_from_today={"type": ["integer", "null"],
                               "description": "A안 판매일이 오늘부터 며칠 뒤인지. 오늘·지금=0, 내일=1. 말하지 않았으면 null"},
     option_a_sale_date={"type": ["string", "null"],
@@ -77,6 +78,7 @@ A안: 오늘·지금은 option_a_days_from_today=0, 내일은 1, 3일 뒤는 3�
 B안: A안보다 N일 뒤라고 하거나, 지금 팔지 않고 N일 뒤에 판다고 하면 days_after_option_a=N이다.
 A안과 B안을 둘 다 오늘 기준으로 말하면(예: 3일 뒤에 파는 것과 10일 뒤에 파는 것) option_a_days_from_today=3, option_b_days_from_today=10이다.
 대화에서 사용자가 말한 조건만 채우고 나머지는 null로 둔다.
+A안 단가는 kg당 가격만 넣는다. 상자·박스 한 개 가격만 말했으면 kg당으로 나누지 말고 option_a_price_per_kg를 null로 둔다.
 조생 감귤은 조생귤, 극조생은 극조생감귤로 표준화할 수 있다.
 비교 간격을 지정하면 해당 숫자를 그대로 전달한다.
 예시, 사용자에게 제시한 후보, 이전 조회의 자동 적용 조건은 사용자 선택으로 간주하지 않는다.
