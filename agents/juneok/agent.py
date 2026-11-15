@@ -109,6 +109,22 @@ class AgentSession:
         if self.client is None and not settings.api_key:
             return {"status": "KEY_REQUIRED", "text": "프로젝트 .env에 OPENAI_API_KEY를 입력하세요. 직접 조건 비교와 과거 출하통계는 키 없이 사용할 수 있습니다.",
                     "tool_results": [], "events": [], "state": self.store.snapshot()}
+        if self.client is None and not self.experimental_forecast:
+            from .progressive_dialogue import quickstart_reply
+            if (quick := quickstart_reply(self, question, render_dialogue, report_for)) is not None:
+                return quick
+        if not self.experimental_forecast:
+            from os import getenv
+            if getenv("JEJU_DIALOGUE_ENGINE") == "1":
+                from .dialogue_engine import route_turn
+                if (dialogue_reply := route_turn(self, question)) is not None:
+                    return dialogue_reply
+            from .progressive_dialogue import first_timing_reply
+            if (first := first_timing_reply(self, question, render_dialogue, report_for)) is not None:
+                return first
+            from .progressive_dialogue import current_input_followup
+            if (followup := current_input_followup(self, question, render_dialogue, report_for)) is not None:
+                return followup
         new_comparison = starts_new_comparison(question)
         if not new_comparison and (box_result := self.future_pair.follow_up_box_price(question, on_progress=on_progress)) is not None:
             entry = {"tool": "compare_future_pair", "result": box_result}
@@ -480,7 +496,9 @@ class AgentSession:
                 self.future_pair.specs_deferred = True
         if visible:
             text = render_dialogue(visible, question=question, pair_costs_deferred=self.future_pair.costs_deferred,
-                                   pair_specs_deferred=self.future_pair.specs_deferred)
+                                   pair_specs_deferred=self.future_pair.specs_deferred,
+                                   pair_inputs=self.future_pair.inputs,
+                                   deferred_current_fields=getattr(self, "_deferred_current_fields", set()))
         elif new_comparison:
             text = "새로 비교할 출하일과 알고 계신 단가를 알려주세요."
         else:

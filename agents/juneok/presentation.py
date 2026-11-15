@@ -35,7 +35,8 @@ def select_results(results: list[dict], version: int) -> list[dict]:
 
 
 def render_dialogue(results: list[dict], *, question: str = "", pair_costs_deferred=False,
-                    pair_specs_deferred=False) -> str:
+                    pair_specs_deferred=False, pair_inputs=None,
+                    deferred_current_fields=None) -> str:
     """Concise questions; canonical Python numbers and evidence remain unchanged."""
     sections = []
     for entry in results:
@@ -50,7 +51,9 @@ def render_dialogue(results: list[dict], *, question: str = "", pair_costs_defer
                                             (f"**{conclusion}**", minimum, favorable, warning) if part))
         elif result.get("analysis_type") == "future_pair":
             from .future_pair_state import future_pair_feedback, history_clarification, unavailable_cost
-            sections.append(history_clarification(result, question, pause_specs=pair_specs_deferred) or
+            from .progressive_dialogue import future_pair_guidance
+            short = None if (pair_costs_deferred or pair_specs_deferred or unavailable_cost(question)) else future_pair_guidance(result, pair_inputs)
+            sections.append(short or history_clarification(result, question, pause_specs=pair_specs_deferred) or
                             future_pair_feedback(result, pause_costs=pair_costs_deferred or unavailable_cost(question)))
         elif result.get("analysis_type") == "price_history":
             sections.append(render_result(result))
@@ -59,14 +62,11 @@ def render_dialogue(results: list[dict], *, question: str = "", pair_costs_defer
             sections.append(format_timing_report(result, details=False))
         elif result.get("status") == "NEEDS_INPUT" and result.get("missing_fields"):
             fields = result["missing_fields"]
-            from .future_pair_state import asks_where_to_check, unavailable_cost
-            if entry["tool"] == "compare_shipment_options" and unavailable_cost(question):
-                text = "과거 출하량부터 볼까요? 품종과 비교하고 싶은 날짜를 알려주세요."
-                if asks_where_to_check(question):
-                    text += ("\n\n보관료는 저장고 청구서나 견적서에서 확인할 수 있어요. "
-                             "줄어드는 양은 보관 전후에 팔 수 있는 감귤 무게를 재서 확인해 보세요.")
-                sections.append(text)
-                continue
+            if entry["tool"] == "compare_shipment_options":
+                from .progressive_dialogue import current_comparison_guidance
+                if (short := current_comparison_guidance(result, deferred_fields=deferred_current_fields)) is not None:
+                    sections.append(short)
+                    continue
             first, rest = fields[:3], fields[3:]
             prompts = {
                 "quantity_kg": "비교할 감귤은 몇 kg인가요? 톤으로 알려주셔도 됩니다.",

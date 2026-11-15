@@ -265,10 +265,13 @@ class FuturePairTests(unittest.TestCase):
         self.assertIn("가격쌍 20개", text)
         self.assertIn("과거 출하량", text)
         self.assertNotIn("**아직 확인할 조건**", text)
-        cost_prompt = render_dialogue([entry])
-        self.assertEqual(cost_prompt.count("하루 보관비"), 1)
-        self.assertEqual(cost_prompt.count("판매 수수료"), 1)
-        self.assertIn("다른 항목만 먼저·나중을 나눠", cost_prompt)
+        # STEP 1: ask the next decision topic, not every missing cost at once.
+        next_question = render_dialogue([entry])
+        self.assertIn("10일 보관", next_question)
+        self.assertIn("감모율", next_question)
+        self.assertNotIn("하루 보관비", next_question)
+        self.assertNotIn("판매 수수료", next_question)
+        self.assertNotIn("**아직 확인할 조건**", next_question)
         timing = workspace.lookup_shipment_timing("노지온주", pair.version)
         self.assertEqual(timing["status"], "OK")
         report = timing["visible_results"][0]["result"]

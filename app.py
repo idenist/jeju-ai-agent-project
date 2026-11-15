@@ -357,12 +357,17 @@ def _show_agent_reply(reply, current_version, draft_pending=False, past_future_p
     if past_future_pair:
         with st.expander("이전 두 출하일 비교 응답"):
             st.markdown(display_text)
-    elif draft_pending or (version != current_version and not any(
-            entry["tool"] == "compare_future_pair" for entry in reply.get("visible_results", []))):
-        suffix = "카드에 저장 전 수정이 있습니다" if draft_pending else f"현재 버전 {current_version}"
-        with st.expander(f"이전 조건 버전 {version}의 응답 · {suffix}"):
-            st.markdown(display_text)
     else:
+        # 대화 내 이전 답변은 그대로 읽을 수 있게 유지한다. 다만 현재 계산
+        # 결과인 것처럼 보이지 않도록 조건 변경 여부만 간단히 표시한다.
+        stale = version is not None and version != current_version and not any(
+            entry["tool"] == "compare_future_pair" for entry in reply.get("visible_results", []))
+        if draft_pending:
+            st.caption("직접 입력에서 수정 중인 조건이 있습니다. 아래 답변은 수정 전 기준입니다.")
+        elif stale and any(entry["tool"] == "compare_shipment_options" and
+                           entry["result"].get("status") == "OK"
+                           for entry in reply.get("visible_results", [])):
+            st.caption("이 답변 이후 출하 조건이 변경됐습니다. 최신 조건은 아래 대화에서 확인하세요.")
         st.markdown(display_text)
     for result in settlements:
         with st.expander(f"정산 근거 보기 · 기록 버전 {result['record_revision']}"):
@@ -483,17 +488,22 @@ def _render_later_shipment_edit(ws, pair, version):
                 st.rerun()
 
 
-def _submit_shipment_question(example=None, *, timing_lookup=None, pair_edit=None, basis_choice=None):
+def _submit_shipment_question(example=None, *, timing_lookup=None, pair_edit=None, basis_choice=None,
+                              start_new=False):
+    # A menu click explicitly starts a new comparison; ordinary chat never does.
+    if start_new:
+        _reset_all()
     question = example if example is not None else st.session_state.get("shipment_question", "")
     messages = st.session_state.setdefault("agent_messages", [])
     if question.strip() and not (messages and messages[-1].get("pending")):
         messages.append({"role": "user", "content": question.strip(), "pending": True, "started": monotonic(),
-                         "timing_lookup": timing_lookup, "pair_edit": pair_edit, "basis_choice": basis_choice})
+                         "timing_lookup": timing_lookup, "pair_edit": pair_edit, "basis_choice": basis_choice,
+                         "quickstart": start_new})
         if latency_logging_enabled():
             messages[-1]["submitted_ms"] = int(time() * 1000)
 
 
-def _render_shipment_composer(disabled, show_examples, *, busy=False):
+def _render_shipment_composer(disabled, show_examples, *, busy=False, switch_mode=False):
     if show_examples:
         examples = (
             ("지금 팔지 더 보관할지 비교", "감귤을 지금 팔 때와 더 보관하고 팔 때를 비교해 주세요."),
@@ -501,7 +511,12 @@ def _render_shipment_composer(disabled, show_examples, *, busy=False):
         )
         with st.container(key="shipment_examples", horizontal=True, gap="small"):
             for label, example in examples:
-                st.button(label, disabled=disabled, on_click=_submit_shipment_question, args=(example,))
+                visible_label = ("새 비교 · 지금 vs 보관" if label.startswith("지금") else
+                                 "새 비교 · 두 출하일") if switch_mode else label
+                st.button(visible_label, disabled=disabled, on_click=_submit_shipment_question,
+                          args=(example,), kwargs={"start_new": switch_mode})
+        if switch_mode:
+            st.caption("새 비교를 선택하면 현재 조건과 대화 기록이 초기화됩니다.")
     suffix = "_busy" if busy else ""
     with st.container(key=f"shipment_composer{suffix}"):
         with st.form(f"shipment_chat{suffix}", clear_on_submit=True, border=False):
@@ -901,6 +916,17 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                 reply, steps, elapsed = _run_with_shipment_progress(
                     lambda report: _reply_to_chat_basis(ws, *choice, on_progress=report), started
                 )
+            elif pending.pop("quickstart", False):
+                # Fixed menu actions use validated local state, not another LLM call.
+                from agents.juneok.progressive_dialogue import quickstart_reply
+                from agents.juneok.presentation import report_for
+                reply = quickstart_reply(ws.session, pending["content"], render_dialogue, report_for)
+                if reply is None:
+                    reply, steps, elapsed = _run_with_shipment_progress(
+                        lambda report: ws.run(pending["content"], on_progress=report), started
+                    )
+                else:
+                    steps, elapsed = [], None
             elif _REPORT_REQUEST.fullmatch(pending["content"]):
                 message = "방금 비교한 결과의 보고서입니다." if previous_report else "내려받을 최근 출하 비교 결과가 없습니다. 출하 조건을 비교한 뒤 다시 요청해 주세요."
                 reply = {"status": "OK", "text": message, "state": ws.store.snapshot(), "chat_report": previous_report}
@@ -955,7 +981,8 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
             _render_pending_pair_price(ws, messages)
             _render_box_price_actions(pair_state)
     with composer.container():
-        _render_shipment_composer(draft_pending or settlement_dirty, show_examples=not messages)
+        _render_shipment_composer(draft_pending or settlement_dirty, show_examples=True,
+                                  switch_mode=bool(messages))
 
 
 def _render_report(entries, *, chat_json=None):
