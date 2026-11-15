@@ -94,18 +94,22 @@ def main() -> int:
             lines.append(f"| {season} | {interval}일 | OK | {result['clean_pairs']} | {start}~{end} | "
                          + " | ".join(f"{p:,.2f}" for p in prices) + f" | {'O' if same else 'X'} |")
 
-    lines += ["", "## 자료가 없을 때", "",
-              "| 시즌 | 경우 | 상태 | B안 단가 | 직접 입력 안내 |", "|---|---|---|---|---|"]
+    lines += ["", "## 가정 단가를 만들지 않아야 할 때 (자료 없음·경고 사례만 있음)", "",
+              "| 시즌 | 경우 | 상태 | 경고 사례 | B안 단가 | 직접 입력 안내 |", "|---|---|---|---|---|---|"]
     for season in SEASONS:
         for label, interval, spec, expected in (
                 ("10일 간격(자료에 없는 간격)", 10, SPEC, "INTERVAL_NOT_AVAILABLE"),
-                ("자료에 없는 크기", 7, {**SPEC, "size": "없는크기"}, "NO_DATA")):
+                ("자료에 없는 크기", 7, {**SPEC, "size": "없는크기"}, "NO_DATA"),
+                # 사례는 있지만 전부 품질 경고(크기 미상) 대상이면 가정 단가를 만들지 않아야 한다.
+                ("사례 전부 품질 경고(크기 미상)", 7, {**SPEC, "size": "미상"}, "NO_CLEAN_COMPARISON")):
             result = run(season, interval, spec)
             has_price = bool(result.get("scenarios"))
             manual = bool(result.get("manual_price_allowed"))
             # 기대한 상태여야 하고, 가정 단가는 비어 있으며, 직접 입력 안내가 반드시 있어야 통과한다.
             ok &= result["status"] == expected and not has_price and manual
-            lines.append(f"| {season} | {label} | {result['status']} | {'있음' if has_price else '없음'} | "
+            warned = result.get("warning_pairs")
+            lines.append(f"| {season} | {label} | {result['status']} | "
+                         f"{'-' if warned is None else warned} | {'있음' if has_price else '없음'} | "
                          f"{'있음' if manual else '없음'} |")
 
     lines += ["", "## 규격별 경고 없는 사례 수 (표본 부족 경고 기준 참고)", "",
