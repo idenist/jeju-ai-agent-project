@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agents.seunghyuk.forecast_agent import (
+from experiments.forecast_agent import (
     EXPERIMENTAL_TOOL, ExperimentalForecastDraft, _resolve_spec,
     format_experimental_result, model_receipt,
 )
@@ -47,7 +47,7 @@ class ExperimentalAgentBridgeTests(unittest.TestCase):
     def test_일상적인_짧은_출하질문을_ML실험으로_보냄(self):
         # 기능 설명을 아는 사용자는 극소수다. CLI 옵트인 환경에서는
         # '연구용 ML 모델' 문구가 없어도 출하 시점 비교 의도를 인식해야 한다.
-        from agents.seunghyuk.forecast_agent import keep_experimental_route
+        from experiments.forecast_agent import keep_experimental_route
         draft = ExperimentalForecastDraft()
         cases = (
             "감귤 3톤 있는데 언제 팔까요?",
@@ -61,7 +61,7 @@ class ExperimentalAgentBridgeTests(unittest.TestCase):
                 self.assertTrue(keep_experimental_route(question, draft))
 
     def test_과거조회나_출하량질문은_실험으로_탈취하지_않음(self):
-        from agents.seunghyuk.forecast_agent import keep_experimental_route
+        from experiments.forecast_agent import keep_experimental_route
         draft = ExperimentalForecastDraft()
         for question in (
                 "감귤 과거 7일 가격 비교해줘",
@@ -85,7 +85,7 @@ class ExperimentalAgentBridgeTests(unittest.TestCase):
             "option_a.delay_days", "option_b.delay_days", "spec.variety"])
         self.assertIsNone(draft.inputs["spec"]["variety"])
         # 직전 비용 질문을 잠시 중단하고 용어 설명을 요청할 수 있어야 한다.
-        from agents.seunghyuk.forecast_agent import keep_experimental_route
+        from experiments.forecast_agent import keep_experimental_route
         self.assertFalse(keep_experimental_route("감모율이 뭐예요?", draft))
         self.assertTrue(draft.awaiting_input)  # 이전 ML 과업은 삭제하지 않음
         message = format_experimental_result(result)
@@ -103,7 +103,7 @@ class ExperimentalAgentBridgeTests(unittest.TestCase):
 
     def test_비지원_10일은_모델을_열지_않고_거부(self):
         state = ExperimentalForecastDraft()
-        with patch("agents.seunghyuk.forecast_agent.compare_experimental", side_effect=AssertionError):
+        with patch("experiments.forecast_agent.compare_experimental", side_effect=AssertionError):
             result = state.apply({"action": "new", "patch": {
                 "option_a": {"delay_days": 3}, "option_b": {"delay_days": 10}}})
         self.assertEqual(result["status"], "NO_DATA")
@@ -120,8 +120,8 @@ class ExperimentalAgentBridgeTests(unittest.TestCase):
     def test_선택한_신규묶음에서_최신일과_규격코드를_같이_조회(self):
         # [버전 회귀] 기존 Agent 코드 역조회는 공용 가격표를 읽었기 때문에
         # 예측 입력만 새 데이터로 바꾸면 날짜·규격이 서로 달라진다.
-        from agents.seunghyuk import forecast_agent as agent
-        from agents.seunghyuk.forecast_bridge import EXPERIMENT_DATASET_ENV
+        from experiments import forecast_agent as agent
+        from experiments.forecast_bridge import EXPERIMENT_DATASET_ENV
         with tempfile.TemporaryDirectory() as d:
             source = Path(d) / "daily_prices.csv"
             fields = ["date", "quality_flag", "market_code", "variety", "variety_code",
@@ -134,7 +134,7 @@ class ExperimentalAgentBridgeTests(unittest.TestCase):
                 writer.writeheader()
                 writer.writerow(row)
             with patch.dict("os.environ", {EXPERIMENT_DATASET_ENV: "market-20261113"}), \
-                 patch("agents.seunghyuk.forecast_agent.selected_experiment_source",
+                 patch("experiments.forecast_agent.selected_experiment_source",
                        return_value={"price_file": source}):
                 latest = agent.ExperimentalForecastDraft._resolve_date("latest_observed")
                 resolution = agent._resolve_spec(SPEC, latest)
@@ -152,15 +152,15 @@ class ExperimentalAgentBridgeTests(unittest.TestCase):
                 writer.writeheader()
                 writer.writerow(row)
             with patch.dict("os.environ", {"JEJU_EXPERIMENTAL_DATASET": ""}), \
-                 patch("agents.seunghyuk.forecast_agent.PRICE_FILE", p):
+                 patch("experiments.forecast_agent.PRICE_FILE", p):
                 resolved = _resolve_spec(SPEC, __import__('datetime').date(2026, 11, 3))
             self.assertEqual(resolved["spec"]["variety_code"], "01")
             self.assertEqual(resolved["applied_data_defaults"]["market_code"], "110001")
 
     def test_실제_학습모델_출력은_서버에서만_숫자를_렌더링(self):
         state = ExperimentalForecastDraft()
-        with patch("agents.seunghyuk.forecast_agent._resolve_spec", return_value=RESOLVED), \
-             patch("agents.seunghyuk.forecast_agent.compare_experimental", return_value=deepcopy(EXAMPLE_RESULT)) as model:
+        with patch("experiments.forecast_agent._resolve_spec", return_value=RESOLVED), \
+             patch("experiments.forecast_agent.compare_experimental", return_value=deepcopy(EXAMPLE_RESULT)) as model:
             result = state.apply({"action": "new", "patch": COMPLETE})
         self.assertEqual(result["status"], "EXPERIMENTAL_ONLY")
         self.assertEqual(model.call_args.kwargs["spec"], RESOLVED["spec"])
@@ -171,8 +171,8 @@ class ExperimentalAgentBridgeTests(unittest.TestCase):
 
     def test_기존_대화Agent에_실험도구는_옵트인으로만_등록(self):
         # 실제 API를 사용하지 않고 Responses 함수 호출을 흉내 내어 라우팅을 검증한다.
-        from agents.juneok.agent import AgentSession
-        from agents.juneok.config import Settings
+        from agents.agent import AgentSession
+        from agents.config import Settings
 
         class DummyClient:
             def __init__(self):
@@ -188,8 +188,8 @@ class ExperimentalAgentBridgeTests(unittest.TestCase):
 
         client = DummyClient()
         session = AgentSession(Settings(model="mock-model"), client=client, experimental_forecast=True)
-        with patch("agents.seunghyuk.forecast_agent._resolve_spec", return_value=RESOLVED), \
-             patch("agents.seunghyuk.forecast_agent.compare_experimental", return_value=deepcopy(EXAMPLE_RESULT)):
+        with patch("experiments.forecast_agent._resolve_spec", return_value=RESOLVED), \
+             patch("experiments.forecast_agent.compare_experimental", return_value=deepcopy(EXAMPLE_RESULT)):
             answer = session.run("2026-11-03 기준 조생귤 연구용 ML 가격 비교를 실행해 주세요")
         self.assertEqual(answer["status"], "OK", answer["events"])
         self.assertEqual(answer["visible_results"][0]["tool"], "compare_experimental_forecast")
@@ -210,7 +210,7 @@ class ExperimentalAgentBridgeTests(unittest.TestCase):
     # [회귀/원인] 동일한 ML 질문의 두 번째 턴에서 일반 계산 도구가 선택됐던 문제.
     # 조건 보완은 ML로, 명시적으로 다른 질문을 하면 일반 도구로 돌아가는지 검사한다.
     def test_미완료_실험은_입력보완동안_계속_선택하고_명시적_전환은_허용(self):
-        from agents.seunghyuk.forecast_agent import keep_experimental_route
+        from experiments.forecast_agent import keep_experimental_route
         draft = ExperimentalForecastDraft()
         self.assertTrue(keep_experimental_route(
             "연구용 ML 모델로 조생귤 3톤의 3일/14일 출하를 비교해줘", draft))
@@ -231,8 +231,8 @@ class ExperimentalAgentBridgeTests(unittest.TestCase):
     # ③ 수수료·감모·비용 보완. 모델이 action=new를 잘못 내도 기존 값을 유지해야 한다.
     # mock 응답이므로 실제 LLM의 품질까지 통과했다고 주장하지 않는다.
     def test_반복질문_및_다음턴_답변에서_일반계산기로_빠지지_않음(self):
-        from agents.juneok.agent import AgentSession
-        from agents.juneok.config import Settings
+        from agents.agent import AgentSession
+        from agents.config import Settings
 
         class ReplyClient:
             def __init__(self):
@@ -269,8 +269,8 @@ class ExperimentalAgentBridgeTests(unittest.TestCase):
         self.assertEqual(second["visible_results"][0]["result"]["status"], "NEEDS_INPUT")
         self.assertEqual(session.experimental_forecast_draft.inputs["quantity"], 3000)
         self.assertEqual(session.experimental_forecast_draft.inputs["as_of"], "2026-11-03")
-        with patch("agents.seunghyuk.forecast_agent._resolve_spec", return_value=RESOLVED), \
-             patch("agents.seunghyuk.forecast_agent.compare_experimental", return_value=deepcopy(EXAMPLE_RESULT)):
+        with patch("experiments.forecast_agent._resolve_spec", return_value=RESOLVED), \
+             patch("experiments.forecast_agent.compare_experimental", return_value=deepcopy(EXAMPLE_RESULT)):
             third = session.run("수수료 차감 전, A 감모 1%, B 감모 4%, 하루 보관비 각 1만원, "
                                 "기타비용 각 5천원, 수수료율 A 5% B 7%")
         self.assertEqual(third["visible_results"][0]["result"]["status"], "EXPERIMENTAL_ONLY")

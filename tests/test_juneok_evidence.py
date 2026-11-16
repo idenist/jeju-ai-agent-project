@@ -8,8 +8,8 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 
-from agents.juneok.config import PROJECT_ROOT
-from agents.juneok.evidence import get_historical_shipment_context, get_market_evidence
+from agents.config import PROJECT_ROOT
+from agents.evidence import get_historical_shipment_context, get_market_evidence
 
 
 MARKET = {"market_code": "110001", "variety": "조생귤", "grade": "특", "size": "소",

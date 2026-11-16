@@ -5,11 +5,11 @@ import os
 import unittest
 from unittest.mock import patch
 
-from agents.common.future_pair import compare_future_pair
-from agents.juneok.config import PROJECT_ROOT
-from agents.juneok.pdf_report import render_pdf_report
-from agents.juneok.presentation import select_results
-from agents.juneok.reporting import render_report
+from services.future_pair import compare_future_pair
+from agents.config import PROJECT_ROOT
+from ui.pdf_report import render_pdf_report
+from ui.presentation import select_results
+from ui.reporting import render_report
 
 
 FILTERS = {"variety": "조생귤", "grade": "특", "size": "소", "package": "상자", "package_kg": "5"}
@@ -20,8 +20,8 @@ COMMON = {"quantity": 3000, "price_basis": "gross", "start_date": "2026-11-12", 
 
 class FuturePairTests(unittest.TestCase):
     def test_box_quote_waits_for_the_missing_weight_and_confirmation(self):
-        from agents.juneok.agent import AgentSession
-        from agents.juneok.box_price import mentions_box_price
+        from agents.agent import AgentSession
+        from agents.box_price import mentions_box_price
         from test_integration_ui_journey import 모의_대화_클라이언트
 
         self.assertFalse(mentions_box_price("상자당 5kg이고 먼저 팔 때 kg당 2,500원이에요."))
@@ -47,7 +47,7 @@ class FuturePairTests(unittest.TestCase):
                 self.assertIn("2,500원/kg", confirmed["text"])
 
     def test_box_quotes_without_a_particle_require_confirmation(self):
-        from agents.juneok.agent import AgentSession
+        from agents.agent import AgentSession
         from test_integration_ui_journey import 모의_대화_클라이언트
 
         for quote, entered_amount, unit_price in (("5kg 상자 12,500원", 12500, 2500),
@@ -68,8 +68,8 @@ class FuturePairTests(unittest.TestCase):
                 self.assertEqual(agent.future_pair.current_result()["option_a"]["price_per_kg"], str(unit_price))
 
     def test_box_price_confirmation_preserves_the_separate_history_package(self):
-        from agents.juneok.box_price import proposed_box_price
-        from agents.juneok.future_pair_state import FuturePairState
+        from agents.box_price import proposed_box_price
+        from agents.future_pair_state import FuturePairState
 
         pair = FuturePairState()
         quote = proposed_box_price("A안은 5kg 상자 12,500원이고 과거 경락가격은 10kg 상자 규격으로 봐 주세요.",
@@ -82,8 +82,8 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(pair.inputs["history_filters"], filters)
 
     def test_box_quote_asks_for_sales_weight_when_only_history_weight_is_given(self):
-        from agents.juneok.box_price import proposed_box_price
-        from agents.juneok.future_pair_state import FuturePairState
+        from agents.box_price import proposed_box_price
+        from agents.future_pair_state import FuturePairState
 
         for message in (
             "A안은 한 박스 2만원이에요. 과거 경락가격은 5kg 상자 규격으로 봐 주세요.",
@@ -112,7 +112,7 @@ class FuturePairTests(unittest.TestCase):
                 self.assertEqual(pair.inputs["history_filters"], filters)
 
     def test_box_quote_accepts_explicit_sales_weight_after_history_filters(self):
-        from agents.juneok.box_price import proposed_box_price
+        from agents.box_price import proposed_box_price
 
         examples = (
             ("A안은 한 박스 2만원이에요. 과거 시세는 가락시장, 조생귤 특 소 5kg 상자로 보고, 실제 판매 상자는 4kg이에요.", 5000),
@@ -124,7 +124,7 @@ class FuturePairTests(unittest.TestCase):
                 self.assertEqual(quote.unit_price, Decimal(expected))
 
     def test_ambiguous_sales_weight_still_requires_confirmation_in_history_clause(self):
-        from agents.juneok.box_price import proposed_box_price
+        from agents.box_price import proposed_box_price
 
         quote = proposed_box_price(
             "A안은 5kg 상자에 12,500원인데 10kg인지 헷갈리고 B안 과거 시세는 5kg 상자로 봐 주세요.", None,
@@ -133,7 +133,7 @@ class FuturePairTests(unittest.TestCase):
         self.assertIn("실제 판매할 상자", quote.question())
 
     def test_clear_future_shipment_choice_keeps_the_reported_quantity(self):
-        from agents.juneok.agent import AgentSession
+        from agents.agent import AgentSession
         from test_integration_ui_journey import 모의_대화_클라이언트
 
         client = 모의_대화_클라이언트("compare_future_pair", {
@@ -151,7 +151,7 @@ class FuturePairTests(unittest.TestCase):
 
     def test_future_pair_routing_distinguishes_sales_from_other_requests(self):
         from datetime import date
-        from agents.juneok.future_pair_intent import explicit_shipment_quantity, is_future_pair_request
+        from agents.future_pair_intent import explicit_shipment_quantity, is_future_pair_request
 
         today = date(2026, 11, 15)
         for question in ("3,000kg을 3일 후랑 10일 후 중 언제 출하할까요?",
@@ -174,7 +174,7 @@ class FuturePairTests(unittest.TestCase):
 
     def test_regulation_help_without_a_model_tool_keeps_the_pending_future_comparison(self):
         from types import SimpleNamespace
-        from agents.juneok.agent import AgentSession
+        from agents.agent import AgentSession
         from test_integration_ui_journey import 모의_대화_클라이언트
 
         client = 모의_대화_클라이언트("compare_future_pair", {
@@ -211,13 +211,13 @@ class FuturePairTests(unittest.TestCase):
         self.assertIsNone(agent.future_pair.pending)
 
     def test_history_precedes_missing_costs_and_manual_recovery_preserves_inputs(self):
-        from agents.juneok.future_pair_state import FuturePairState, future_pair_feedback
+        from agents.future_pair_state import FuturePairState, future_pair_feedback
 
         pair = FuturePairState()
         base = {**COMMON, "option_a": {**OPTION_A, "loss_percent": None, "daily_storage_cost": None},
                 "option_b": {**OPTION_B, "loss_percent": None, "daily_storage_cost": None},
                 "price_mode": "history", "history_filters": FILTERS}
-        with patch("agents.juneok.future_pair_state.compare_future_pair", side_effect=AssertionError):
+        with patch("agents.future_pair_state.compare_future_pair", side_effect=AssertionError):
             preview = pair.apply("new", pair.version, base)
             self.assertEqual(preview["source_status"], "HISTORY_READY")
             self.assertEqual(preview["history_preview"]["clean_pairs"], 20)
@@ -247,9 +247,9 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(Decimal(finished["options_b"][0]["difference_vs_a_krw"]), 261850)
 
     def test_unknown_cost_can_continue_with_historical_volume_without_losing_inputs(self):
-        from agents.juneok.agent import AgentSession
-        from agents.juneok.presentation import render_dialogue
-        from agents.juneok.workspace import SharedWorkspace
+        from agents.agent import AgentSession
+        from ui.presentation import render_dialogue
+        from agents.workspace import SharedWorkspace
 
         workspace = SharedWorkspace(AgentSession())
         pair = workspace.session.future_pair
@@ -308,7 +308,7 @@ class FuturePairTests(unittest.TestCase):
         self.assertLess(report.index("A안 대비 차액"), report.index("기간 전체 감모"))
         self.assertIn("과거 동일 규격 경락가격쌍", report)
         self.assertNotIn("trade_type", report)
-        from agents.juneok.presentation import render_dialogue
+        from ui.presentation import render_dialogue
         reply = render_dialogue([{"tool": "compare_future_pair", "result": result}])
         for output in (reply, report):
             self.assertIn("중앙값 가정(2,409.37원/kg)에서 A안(11/15)의 비교금액이 B안(11/22)보다 670,493원", output)
@@ -347,7 +347,7 @@ class FuturePairTests(unittest.TestCase):
         unavailable = compare_future_pair(**COMMON, option_b=option_b, history_filters=FILTERS)
         self.assertEqual(unavailable["status"], "INTERVAL_NOT_AVAILABLE")
         self.assertTrue(unavailable["manual_price_required"])
-        with patch("agents.common.future_pair.verify_cached_price_sources", side_effect=AssertionError):
+        with patch("services.future_pair.verify_cached_price_sources", side_effect=AssertionError):
             manual = compare_future_pair(**COMMON, option_b=option_b, price_b=2750)
         row = manual["options_b"][0]
         self.assertEqual(Decimal(row["proceeds_krw"]), 7280600)
@@ -361,7 +361,7 @@ class FuturePairTests(unittest.TestCase):
             self.assertIn(value, text)
 
     def test_all_warned_price_pairs_open_manual_entry_without_creating_a_price(self):
-        from agents.juneok.future_pair_state import FuturePairState
+        from agents.future_pair_state import FuturePairState
 
         pair = FuturePairState()
         unavailable = pair.apply("new", pair.version, {
@@ -379,9 +379,9 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(Decimal(manual["options_b"][0]["price_per_kg"]), 2750)
 
     def test_chat_basis_choice_needs_a_missing_basis_and_keeps_unknown_empty(self):
-        from agents.juneok.agent import AgentSession
-        from agents.juneok.workspace import SharedWorkspace
-        from app import _chat_basis_target, _reply_to_chat_basis
+        from agents.agent import AgentSession
+        from agents.workspace import SharedWorkspace
+        from ui.chat import _chat_basis_target, _reply_to_chat_basis
 
         workspace = SharedWorkspace(AgentSession())
         pair = workspace.session.future_pair
@@ -404,8 +404,8 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(_reply_to_chat_basis(workspace, *target, "gross")["status"], "INVALID_INPUT")
 
     def test_new_chat_comparison_drops_an_inherited_basis_and_continuation_keeps_it(self):
-        from agents.juneok.agent import AgentSession
-        from agents.juneok.future_pair_state import LABELS
+        from agents.agent import AgentSession
+        from agents.future_pair_state import LABELS
         from test_integration_ui_journey import 모의_대화_클라이언트
 
         client = 모의_대화_클라이언트("compare_future_pair", {})
@@ -443,8 +443,8 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(pair.inputs["price_basis"], "gross")
 
     def test_new_current_shipment_comparison_clears_old_basis(self):
-        from agents.juneok.agent import AgentSession
-        from agents.juneok.state import ScenarioStore, demo_scenario
+        from agents.agent import AgentSession
+        from agents.state import ScenarioStore, demo_scenario
         from test_integration_ui_journey import 모의_대화_클라이언트
 
         client = 모의_대화_클라이언트("update_scenario", {"expected_version": 0, "clear_fields": [],
@@ -536,8 +536,8 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(app.text_input(key="future_pair_filter_variety").value, "")
 
     def test_manual_price_over_twice_a_warns_without_altering_the_comparison(self):
-        from agents.juneok.presentation import render_dialogue
-        from agents.juneok.reporting import manual_price_warning
+        from ui.presentation import render_dialogue
+        from ui.reporting import manual_price_warning
         self.assertIsNone(manual_price_warning(2500, 5000))
         self.assertIsNone(manual_price_warning(2500, 2600))
         result = compare_future_pair(**COMMON, option_b=OPTION_B, price_b=26000)
@@ -724,7 +724,7 @@ class FuturePairTests(unittest.TestCase):
             self.assertIn(value, pdf_text)
             self.assertIn(value, screen)
 
-        with patch("agents.juneok.future_pair_state._price_revision", return_value=("changed",)):
+        with patch("agents.future_pair_state._price_revision", return_value=("changed",)):
             self.assertIsNone(pair.current_result())
         unsupported = compare("edit", {"option_b": {"delay_days": 8, "loss_percent": 4, "loss_confirmed_for_period": True}})
         self.assertEqual(unsupported["status"], "NO_DATA")
@@ -732,13 +732,13 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(unsupported["message"].count("B안 단가를 직접 입력"), 1)
         app.run()
         self.assertFalse(any(button.label.startswith("미래 A/B") for button in app.get("download_button")))
-        with patch("agents.common.future_pair.verify_cached_price_sources", return_value={"status": "DATA_ERROR"}):
+        with patch("services.future_pair.verify_cached_price_sources", return_value={"status": "DATA_ERROR"}):
             error = compare("edit", {"option_b": {"delay_days": 10, "loss_percent": 4, "loss_confirmed_for_period": True}})
         self.assertEqual(error["status"], "DATA_ERROR")
         self.assertTrue(error["manual_price_required"])
         self.assertIsNone(pair.current_result())
         self.assertEqual(pair.inputs["history_filters"], FILTERS)
-        with patch("agents.common.future_pair.verify_cached_price_sources", side_effect=AssertionError):
+        with patch("services.future_pair.verify_cached_price_sources", side_effect=AssertionError):
             manual = compare("edit", {"price_mode": "manual", "price_b": 2750,
                                       "option_b": {"delay_days": 8, "loss_percent": 4, "loss_confirmed_for_period": True}})
         self.assertEqual(manual["option_a"], seven["option_a"])
@@ -746,7 +746,7 @@ class FuturePairTests(unittest.TestCase):
         self.assertIsNone(pair.inputs["history_filters"])
 
     def test_manual_price_accepts_redundant_clear_of_history_filters(self):
-        from agents.juneok.future_pair_state import FuturePairState
+        from agents.future_pair_state import FuturePairState
 
         pair = FuturePairState()
         pair.apply("new", pair.version, {**COMMON, "option_b": OPTION_B, "price_mode": "history"})

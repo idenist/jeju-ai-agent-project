@@ -4,10 +4,10 @@ from io import BytesIO
 import unittest
 
 from pypdf import PdfReader
-from agents.juneok.comparison import compare_shipment_options
-from agents.juneok.reporting import render_report, REPORT_FOOTER, REPORT_NOTICES_HEADING
-from agents.juneok.pdf_report import render_pdf_report
-from agents.juneok.state import demo_scenario
+from agents.comparison import compare_shipment_options
+from ui.reporting import render_report, REPORT_FOOTER, REPORT_NOTICES_HEADING
+from ui.pdf_report import render_pdf_report
+from agents.state import demo_scenario
 
 
 class ReportStyleTests(unittest.TestCase):

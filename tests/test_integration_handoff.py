@@ -24,10 +24,10 @@ class 인수증빙검수(unittest.TestCase):
         cases = [{"id": name, "turns": [{"user": "평가 질문"}] * count}
                  for name, count in zip(ids, turn_counts)]
         self._write(self.root / "evals/integration_e2e_cases.json", cases)
-        required = ["app.py", "agents/juneok/agent.py", "agents/juneok/tools.py",
-                    "agents/juneok/workspace.py", "agents/common/price_history_service.py",
+        required = ["app.py", "ui/application.py", "ui/chat.py", "ui/panels.py", "agents/agent.py", "agents/tools.py",
+                    "agents/workspace.py", "services/price_history_service.py",
                     "data/processed/daily_prices.csv", "data/processed/price_comparison_availability.csv",
-                    "agents/seunghyuk/shipment_timing.py", "data/processed/daily_shipments.csv",
+                    "services/shipment_timing.py", "data/processed/daily_shipments.csv",
                     "data/reports/shipment_quality_report.json",
                     "evals/integration_e2e_cases.json", "scripts/evaluate_integrated_agent.py"]
         for path in required:
@@ -93,7 +93,7 @@ class 인수증빙검수(unittest.TestCase):
         self.assertEqual(self.check()["status"], "FAIL")
 
     def test_이전_소스_버전_평가를_재사용하지_않음(self):
-        (self.root / "agents/juneok/agent.py").write_text("변경된 코드", encoding="utf-8")
+        (self.root / "agents/agent.py").write_text("변경된 코드", encoding="utf-8")
         self.assertEqual(self.check()["status"], "FAIL")
         self.assertFalse(self.check()["source_hashes_match"])
 

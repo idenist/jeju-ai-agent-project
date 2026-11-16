@@ -1,8 +1,8 @@
 import unittest
 
-from agents.jeonghyeon.comparison_input import build_future_pair_input
+from services.comparison_input import build_future_pair_input
 
-# agents/juneok/comparison.py의 대안 필드 (2026-11-11 기준)
+# agents/comparison.py의 대안 필드 (2026-11-11 기준)
 TEAM_OPTION_FIELDS = {"id", "delay_days", "loss_percent", "daily_storage_cost", "fee_percent",
                       "future_price_per_kg", "costs", "loss_confirmed_for_period"}
 ARGS = {"variety": "조생귤", "grade": "특", "size": "소", "package": "상자", "package_kg": 5,

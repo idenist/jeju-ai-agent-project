@@ -14,14 +14,14 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
-from agents.common.calculation_service import compare_shipment_options
-from agents.juneok.agent import AgentSession
-from agents.juneok.comparison import compare_shipment_options as 원래_계산
-from agents.juneok.config import Settings
-from agents.juneok.pdf_report import render_pdf_report
-from agents.juneok.reporting import render_report
-from agents.juneok.settlement import empty_values
-from agents.juneok.workspace import SharedWorkspace
+from services.calculation_service import compare_shipment_options
+from agents.agent import AgentSession
+from agents.comparison import compare_shipment_options as 원래_계산
+from agents.config import Settings
+from ui.pdf_report import render_pdf_report
+from ui.reporting import render_report
+from services.settlement import empty_values
+from agents.workspace import SharedWorkspace
 
 
 프로젝트_경로 = Path(__file__).resolve().parents[1]
@@ -59,10 +59,10 @@ class 통합실행경로검수(TestCase):
     def test_실서비스_계산_경로는_단일_진입점을_사용(self):
         # 기본 엔진을 직접 사용하는 코드는 공통 서비스 내부로 제한합니다.
         대상 = [
-            "agents/juneok/tools.py", "agents/juneok/briefing.py",
-            "agents/juneok/insights.py", "agents/juneok/sensitivity.py",
-            "agents/juneok/limits.py", "agents/juneok/agent.py",
-            "agents/juneok/settlement.py",
+            "agents/tools.py", "agents/briefing.py",
+            "agents/insights.py", "agents/sensitivity.py",
+            "agents/limits.py", "agents/agent.py",
+            "services/settlement.py",
         ]
         for 상대경로 in 대상:
             with self.subTest(파일=상대경로):
@@ -74,14 +74,14 @@ class 통합실행경로검수(TestCase):
                 ]
                 self.assertTrue(가져오기, f"계산 호출 경로가 확인되지 않습니다: {상대경로}")
                 self.assertTrue(all(
-                    명령.level == 0 and 명령.module == "agents.common.calculation_service"
+                    명령.level == 0 and 명령.module == "services.calculation_service"
                     for 명령 in 가져오기
                 ), f"공통 계산 서비스를 우회합니다: {상대경로}")
 
     def test_직접_비교와_도구_호출이_같은_계산기를_사용(self):
-        from agents.juneok.tools import execute_tool
+        from agents.tools import execute_tool
 
-        with patch("agents.common.calculation_service._primary_calculate", wraps=원래_계산) as 추적:
+        with patch("services.calculation_service._primary_calculate", wraps=원래_계산) as 추적:
             self.assertEqual(self.작업공간.load_demo()["status"], "OK")
             직접 = self.작업공간.current_entries()[0]["result"]
             함수호출 = execute_tool(
@@ -109,7 +109,7 @@ class 통합실행경로검수(TestCase):
         ])
         self.세션.client = 클라이언트
 
-        with patch("agents.common.calculation_service._primary_calculate", wraps=원래_계산) as 추적:
+        with patch("services.calculation_service._primary_calculate", wraps=원래_계산) as 추적:
             결과 = self.작업공간.run("7일 보관 대안의 손익분기를 계산해 주세요.")
         self.assertEqual(결과["status"], "OK")
         self.assertEqual(추적.call_count, 1)
@@ -121,7 +121,7 @@ class 통합실행경로검수(TestCase):
     def test_민감도_분석은_공통_계산기를_사용하고_기준값을_보존(self):
         self.작업공간.load_demo()
         이전 = deepcopy(self.작업공간.store.snapshot())
-        with patch("agents.common.calculation_service._primary_calculate", wraps=원래_계산) as 추적:
+        with patch("services.calculation_service._primary_calculate", wraps=원래_계산) as 추적:
             결과 = self.작업공간.sensitivity("seven_days", [2, 4], [3000, 3300])
         self.assertEqual(결과["status"], "OK")
         self.assertEqual(len(결과["rows"]), 4)
@@ -135,7 +135,7 @@ class 통합실행경로검수(TestCase):
     def test_역산과_종합_브리핑은_같은_계산기를_사용(self):
         self.작업공간.load_demo()
         이전 = deepcopy(self.작업공간.store.snapshot())
-        with patch("agents.common.calculation_service._primary_calculate", wraps=원래_계산) as 추적:
+        with patch("services.calculation_service._primary_calculate", wraps=원래_계산) as 추적:
             역산 = self.작업공간.offer_limits("seven_days", 3300, "loss_percent")
             횟수 = 추적.call_count
             브리핑 = self.작업공간.review()
@@ -180,7 +180,7 @@ class 통합실행경로검수(TestCase):
     def test_정산_연결시_독립_계산기_우회가_없음(self):
         self.작업공간.load_demo()
         보관파일 = self.작업공간.export_case("비교 조건")
-        with patch("agents.common.calculation_service._primary_calculate", wraps=원래_계산) as 추적:
+        with patch("services.calculation_service._primary_calculate", wraps=원래_계산) as 추적:
             self.작업공간.shipment.connect(보관파일, "seven_days")
         self.assertEqual(추적.call_count, 1)
         self.assertEqual(self.작업공간.shipment.revision, 0)
@@ -235,7 +235,7 @@ class 통합실행경로검수(TestCase):
         from streamlit.testing.v1 import AppTest
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
-            with patch("agents.common.calculation_service._primary_calculate", wraps=원래_계산) as 추적:
+            with patch("services.calculation_service._primary_calculate", wraps=원래_계산) as 추적:
                 화면 = AppTest.from_file(str(프로젝트_경로 / "app.py"), default_timeout=25).run()
                 next(버튼 for 버튼 in 화면.button if 버튼.label == "가상 예시 조건 불러오기").click().run()
                 next(버튼 for 버튼 in 화면.button if 버튼.label == "입력 조건 비교").click().run()

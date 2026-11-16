@@ -1,6 +1,6 @@
 import unittest
 
-from agents.jeonghyeon.price_history import execute_tool
+from services.price_history import execute_tool
 
 SPEC = {"variety": "조생귤", "grade": "특", "size": "소", "interval_days": 7}
 

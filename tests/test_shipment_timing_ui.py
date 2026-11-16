@@ -78,11 +78,11 @@ class TimingUISmoke(unittest.TestCase):
         fake = FakeStreamlit()
         data_root = Path(__file__).resolve().parents[1]
         with patch.dict(sys.modules, {"streamlit": fake}):
-            name = "agents.seunghyuk.shipment_timing_ui"
+            name = "ui.shipment_timing_ui"
             sys.modules.pop(name, None)
             module = importlib.import_module(name)
             # The package root is the directory containing the two already-preprocessed files.
-            from agents.seunghyuk import shipment_timing
+            from services import shipment_timing
             original = shipment_timing.ROOT
             shipment_timing.ROOT = data_root
             try:

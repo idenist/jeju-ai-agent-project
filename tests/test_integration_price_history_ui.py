@@ -9,9 +9,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agents.juneok.agent import AgentSession
-from agents.juneok.config import Settings
-from agents.juneok.workspace import SharedWorkspace
+from agents.agent import AgentSession
+from agents.config import Settings
+from agents.workspace import SharedWorkspace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,7 +96,7 @@ class 직접가격조회검수(unittest.TestCase):
     def test_가격원천_검증실패시_과거가격과_이전조건을_폐기(self):
         ws = SharedWorkspace(AgentSession())
         self.assertEqual(ws.price_history(조회)["status"], "OK")
-        with patch("agents.common.price_history_service.verify_integrated_price_sources",
+        with patch("services.price_history_service.verify_integrated_price_sources",
                    return_value={"status": "DATA_ERROR", "reason": "VERSION_MISMATCH"}):
             result = ws.price_history(조회)
         self.assertEqual(result["status"], "DATA_ERROR")

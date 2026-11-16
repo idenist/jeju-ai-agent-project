@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import unittest
 
-from agents.common.price_history_service import get_integrated_price_history
-from agents.juneok.agent import SYSTEM_PROMPT
-from agents.juneok.tools import TOOLS
+from services.price_history_service import get_integrated_price_history
+from agents.agent import SYSTEM_PROMPT
+from agents.tools import TOOLS
 
 
 규격 = {"grade": "특", "size": "소", "package": "상자",

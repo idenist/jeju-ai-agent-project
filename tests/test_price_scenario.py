@@ -4,8 +4,8 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 
-from agents.jeonghyeon.price_history import DEFAULT_FILE
-from agents.jeonghyeon.price_scenario import PRICES_FILE, REPORT_FILE, content_sha256, execute_scenario_tool
+from services.price_history import DEFAULT_FILE
+from services.price_scenario import PRICES_FILE, REPORT_FILE, content_sha256, execute_scenario_tool
 
 SPEC = {"variety": "조생귤", "grade": "특", "size": "소", "package": "상자", "package_kg": 5,
         "option_a_sale_date": "2026-11-13", "option_b_sale_date": "2026-11-20",

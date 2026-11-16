@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from agents.jeonghyeon.price_history import execute_tool, get_price_history, DEFAULT_FILE
+from services.price_history import execute_tool, get_price_history, DEFAULT_FILE
 from test_price_comparisons import row
 from build_price_comparisons import REQUIRED, run
 

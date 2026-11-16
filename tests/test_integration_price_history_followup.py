@@ -7,13 +7,13 @@ from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agents.common.price_history_followup import (
+from services.price_history_followup import (
     MissingPreviousPriceQuery, resolve_price_history_query,
 )
-from agents.juneok.agent import AgentSession
-from agents.juneok.config import Settings
-from agents.juneok.state import ScenarioStore, demo_scenario
-from agents.juneok.workspace import SharedWorkspace
+from agents.agent import AgentSession
+from agents.config import Settings
+from agents.state import ScenarioStore, demo_scenario
+from agents.workspace import SharedWorkspace
 
 
 기준조건 = {
@@ -122,7 +122,7 @@ class 가격조회후속조건검수(unittest.TestCase):
         def query(args):
             calls.append(deepcopy(args))
             return 검증용_조회(args)
-        with patch("agents.common.price_history_service.get_integrated_price_history", side_effect=query):
+        with patch("services.price_history_service.get_integrated_price_history", side_effect=query):
             a = session.run("조생귤 특 소 상자 5kg의 7일 과거 가격을 알려줘")
             b = session.run("그럼 나머지는 유지하고 14일로 바꿔줘")
         self.assertEqual((a["status"], b["status"]), ("OK", "OK"))
@@ -143,7 +143,7 @@ class 가격조회후속조건검수(unittest.TestCase):
         def query(args):
             seen.append(deepcopy(args))
             return 검증용_조회(args)
-        with patch("agents.common.price_history_service.get_integrated_price_history", side_effect=query):
+        with patch("services.price_history_service.get_integrated_price_history", side_effect=query):
             first = session.run("조생귤의 과거 가격을 알려줘")
             second = session.run("특, 소, 상자 5kg, 7일로 조회해줘")
         self.assertEqual(first["visible_results"][0]["result"]["status"], "NEEDS_INPUT")
@@ -170,7 +170,7 @@ class 가격조회후속조건검수(unittest.TestCase):
             {"follow_up": True, "package_kg": 5},
         )
         scenario = session.store.snapshot()
-        with patch("agents.common.price_history_service.get_integrated_price_history",
+        with patch("services.price_history_service.get_integrated_price_history",
                    side_effect=검증용_조회) as lookup:
             session.run("조생귤 특 소 상자 5kg의 과거 7일 가격을 알려줘")
             conflict = session.run("포장 표기는 10kg인데 한 상자가 5kg라고 들었어요.")
@@ -191,7 +191,7 @@ class 가격조회후속조건검수(unittest.TestCase):
         self.assertEqual(session.store.snapshot(), scenario)
 
     def test_포장명_중량과_별도입력_충돌을_파이썬에서도_차단(self):
-        from agents.common.price_history_followup import resolve_price_history_request
+        from services.price_history_followup import resolve_price_history_request
         args = {**기준조건, "package": "10kg 박스", "package_kg": 5}
         pending, clarification = resolve_price_history_request(args, None)
         self.assertEqual(clarification["source_status"], "PACKAGE_WEIGHT_CONFLICT")
@@ -207,7 +207,7 @@ class 가격조회후속조건검수(unittest.TestCase):
         self.assertEqual(corrected["interval_days"], 7)
 
     def test_포장명에_중량만_있으면_포장종류는_자동추측하지_않음(self):
-        from agents.common.price_history_followup import resolve_price_history_request
+        from services.price_history_followup import resolve_price_history_request
         pending, clarification = resolve_price_history_request(
             {**기준조건, "package": "10kg", "package_kg": 5}, None)
         self.assertEqual(clarification["source_status"], "PACKAGE_WEIGHT_CONFLICT")
@@ -216,7 +216,7 @@ class 가격조회후속조건검수(unittest.TestCase):
 
     def test_유일한_시장과_거래방식_자동값은_기억하지_않음(self):
         session, _ = self._session(기준조건)
-        with patch("agents.common.price_history_service.get_integrated_price_history", side_effect=검증용_조회):
+        with patch("services.price_history_service.get_integrated_price_history", side_effect=검증용_조회):
             session.run("조생귤 특 소 상자 5kg, 7일")
         self.assertNotIn("market_code", session.price_history_query)
         self.assertNotIn("trade_type", session.price_history_query)
@@ -224,7 +224,7 @@ class 가격조회후속조건검수(unittest.TestCase):
 
     def test_철회하면_기존_등급을_다시_사용하지_않음(self):
         session, _ = self._session(기준조건, {"follow_up": True, "clear_fields": ["grade"]})
-        with patch("agents.common.price_history_service.get_integrated_price_history", side_effect=검증용_조회):
+        with patch("services.price_history_service.get_integrated_price_history", side_effect=검증용_조회):
             session.run("조생귤 특 소 상자 5kg, 7일")
             reply = session.run("등급은 아직 모르겠으니 빼줘")
         self.assertNotIn("grade", session.price_history_query)
@@ -234,7 +234,7 @@ class 가격조회후속조건검수(unittest.TestCase):
     def test_후속_조회_조건이_없을때_시장조회로_자동보충하지_않음(self):
         session, _ = self._session({"follow_up": True, "interval_days": 14})
         session.task_context.value["market_query"] = {"variety": "조생귤", "grade": "특"}
-        with patch("agents.common.price_history_service.get_integrated_price_history") as fetch:
+        with patch("services.price_history_service.get_integrated_price_history") as fetch:
             reply = session.run("전에 봤던 가격을 14일로 바꿔줘")
         fetch.assert_not_called()
         self.assertEqual(reply["visible_results"][0]["result"]["status"], "NEEDS_INPUT")
@@ -244,7 +244,7 @@ class 가격조회후속조건검수(unittest.TestCase):
     def test_과거_가격간격과_보관일은_다른_값(self):
         session, _ = self._session(기준조건, {"follow_up": True, "interval_days": 14})
         scenario = session.store.snapshot()
-        with patch("agents.common.price_history_service.get_integrated_price_history", side_effect=검증용_조회):
+        with patch("services.price_history_service.get_integrated_price_history", side_effect=검증용_조회):
             session.run("7일간 과거 경락가격을 비교해줘")
             session.run("14일 과거 가격으로 바꿔줘")
         self.assertEqual(session.store.snapshot(), scenario)
@@ -253,10 +253,10 @@ class 가격조회후속조건검수(unittest.TestCase):
 
     def test_자료_버전이_바뀌면_이전조건을_폐기(self):
         session, _ = self._session(기준조건, {"follow_up": True, "interval_days": 14})
-        with patch("agents.common.price_history_service.get_integrated_price_history", side_effect=검증용_조회):
+        with patch("services.price_history_service.get_integrated_price_history", side_effect=검증용_조회):
             session.run("이전 가격 비교")
-        with patch("agents.juneok.agent.data_revision", return_value=("new-data",)), \
-             patch("agents.common.price_history_service.get_integrated_price_history") as fetch:
+        with patch("agents.agent.data_revision", return_value=("new-data",)), \
+             patch("services.price_history_service.get_integrated_price_history") as fetch:
             reply = session.run("14일로 바꿔줘")
         fetch.assert_not_called()
         self.assertEqual(reply["visible_results"][0]["result"]["status"], "NEEDS_INPUT")
@@ -265,7 +265,7 @@ class 가격조회후속조건검수(unittest.TestCase):
     def test_대화_초기화는_과거가격_조건도_초기화(self):
         session, _ = self._session(기준조건)
         ws = SharedWorkspace(session)
-        with patch("agents.common.price_history_service.get_integrated_price_history", side_effect=검증용_조회):
+        with patch("services.price_history_service.get_integrated_price_history", side_effect=검증용_조회):
             session.run("7일 비교")
         self.assertIsNotNone(session.price_history_query)
         ws.clear_conversation(preserve_conditions=True)
@@ -274,7 +274,7 @@ class 가격조회후속조건검수(unittest.TestCase):
 
     def test_모델에_가격_원본을_전달하지_않음(self):
         session, client = self._session(기준조건, {"follow_up": True, "interval_days": 14})
-        with patch("agents.common.price_history_service.get_integrated_price_history", side_effect=검증용_조회):
+        with patch("services.price_history_service.get_integrated_price_history", side_effect=검증용_조회):
             session.run("7일 가격비교")
             session.run("14일로 변경")
         for request in client.requests:

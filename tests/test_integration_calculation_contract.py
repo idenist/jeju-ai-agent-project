@@ -6,9 +6,9 @@ from copy import deepcopy
 from decimal import Decimal, ROUND_CEILING
 import unittest
 
-from agents.baseline import calculate_break_even
-from agents.juneok.comparison import compare_shipment_options
-from agents.juneok.state import ScenarioStore, demo_scenario
+from services.baseline import calculate_break_even
+from agents.comparison import compare_shipment_options
+from agents.state import ScenarioStore, demo_scenario
 
 
 def number(value: object) -> Decimal:

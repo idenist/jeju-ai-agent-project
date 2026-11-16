@@ -12,19 +12,19 @@ from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agents.common.data_contract import verify_integrated_price_sources
-from agents.common.price_history_service import get_integrated_price_history
-from agents.common.result_contract import JUNEOK_TOOLS
-from agents.jeonghyeon.comparison_input import build_comparison_input
-from agents.jeonghyeon.price_history import execute_tool as 기존_조회
-from agents.jeonghyeon.price_scenario import content_sha256, get_price_scenarios
-from agents.juneok.agent import AgentSession
-from agents.juneok.config import PROJECT_ROOT, Settings
-from agents.juneok.pdf_report import render_pdf_report
-from agents.juneok.reporting import render_report
-from agents.juneok.state import ScenarioStore, demo_scenario
-from agents.juneok.tools import TOOLS, execute_tool
-from agents.juneok.workspace import SharedWorkspace
+from services.data_contract import verify_integrated_price_sources
+from services.price_history_service import get_integrated_price_history
+from services.result_contract import JUNEOK_TOOLS
+from services.comparison_input import build_comparison_input
+from services.price_history import execute_tool as 기존_조회
+from services.price_scenario import content_sha256, get_price_scenarios
+from agents.agent import AgentSession
+from agents.config import PROJECT_ROOT, Settings
+from ui.pdf_report import render_pdf_report
+from ui.reporting import render_report
+from agents.state import ScenarioStore, demo_scenario
+from agents.tools import TOOLS, execute_tool
+from agents.workspace import SharedWorkspace
 
 
 조회조건 = {"variety": "조생귤", "grade": "특", "size": "소", "package": "상자",
@@ -130,14 +130,14 @@ class 통합경계검수(unittest.TestCase):
             self.assertNotIn("99999999", item["text"])
 
     def test_새_가격조회는_이전_규격_기본값을_이어받지_않음(self):
-        from agents.common.price_history_followup import resolve_price_history_query
+        from services.price_history_followup import resolve_price_history_query
         selected = resolve_price_history_query({"follow_up": False, "variety": "극조생감귤", "interval_days": 3}, 조회조건)
         self.assertEqual(selected, {"variety": "극조생감귤", "interval_days": 3, "limit": 3})
         self.assertNotIn("grade", selected)
         self.assertNotIn("package_kg", selected)
 
     def test_검증되지_않은_가격쌍은_차단하되_자체_계산은_가능(self):
-        with patch("agents.common.price_history_service.verify_integrated_price_sources",
+        with patch("services.price_history_service.verify_integrated_price_sources",
                    return_value={"status": "DATA_ERROR", "reason": "VERSION_MISMATCH"}):
             history = get_integrated_price_history(조회조건)
         self.assertEqual(history["status"], "DATA_ERROR")

@@ -9,7 +9,7 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
-from agents.baseline import calculate_break_even, describe_history, load_price_observations
+from services.baseline import calculate_break_even, describe_history, load_price_observations
 
 
 class BaselineTests(unittest.TestCase):

@@ -1,7 +1,7 @@
 # 미래 A·B 입력 변환 계약 — `build_future_pair_input()`
 
-> 담당: 양정현 · 파일: `agents/jeonghyeon/comparison_input.py` 
-> 호출부: `agents/common/future_pair.py` (`compare_future_pair`, 준억님 주관)
+> 담당: 양정현 · 파일: `services/comparison_input.py`
+> 호출부: `services/future_pair.py` (`compare_future_pair`, 준억님 주관)
 > 정현 담당분. 계약을 바꿀 때는  변경 절차(제안 → 영향 파일·테스트 명시 → 상대 리뷰 → 양측 테스트 통과)를 따른다.
 
 ---
@@ -156,6 +156,6 @@ build_future_pair_input(args, *, option_a, option_b, **paths)
 
 ## 7. 변경 이력
 
-- `build_future_pair_input` 추가 (방식 B) 
+- `build_future_pair_input` 추가 (방식 B)
 - 직접 입력 안내 문구 중복 제거 (dev/juneok)
-- 근거 문장 가격 천 단위 쉼표 (`2500.0` → `2,500`) 
+- 근거 문장 가격 천 단위 쉼표 (`2500.0` → `2,500`)

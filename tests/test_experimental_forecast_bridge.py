@@ -9,7 +9,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from agents.seunghyuk import forecast_bridge as bridge
+from experiments import forecast_bridge as bridge
 
 
 class ForecastBridgeTests(unittest.TestCase):

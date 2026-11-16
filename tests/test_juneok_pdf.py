@@ -8,11 +8,11 @@ from unittest.mock import patch
 
 from pypdf import PdfReader
 
-from agents.juneok.comparison import compare_shipment_options
-from agents.juneok.evidence import get_historical_shipment_context
-from agents.juneok.pdf_report import render_pdf_report
-from agents.juneok.sensitivity import compare_sensitivity
-from agents.juneok.state import demo_scenario
+from agents.comparison import compare_shipment_options
+from agents.evidence import get_historical_shipment_context
+from ui.pdf_report import render_pdf_report
+from agents.sensitivity import compare_sensitivity
+from agents.state import demo_scenario
 
 
 def read_pdf(results):
@@ -23,9 +23,9 @@ def read_pdf(results):
 
 class PdfTests(unittest.TestCase):
     def test_handoff_reports_do_not_split_short_notice_box(self):
-        from agents.juneok.agent import AgentSession
-        from agents.juneok.config import Settings
-        from agents.juneok.workspace import SharedWorkspace, card_values
+        from agents.agent import AgentSession
+        from agents.config import Settings
+        from agents.workspace import SharedWorkspace, card_values
         ws = SharedWorkspace(AgentSession(Settings(api_key="", model="offline-demo")))
         ws.load_demo()
         for grid in [False, True]:
@@ -112,10 +112,10 @@ class PdfTests(unittest.TestCase):
         self.assertIn("[U+1F34A]", compact)
 
     def test_missing_packaged_font_fails_explicitly(self):
-        from agents.juneok.pdf_report import _register_fonts
+        from ui.pdf_report import _register_fonts
         _register_fonts.cache_clear()
         try:
-            with patch("agents.juneok.pdf_report.FONT_DIR", Path("missing-font-fixture")):
+            with patch("ui.pdf_report.FONT_DIR", Path("missing-font-fixture")):
                 with self.assertRaisesRegex(ValueError, "글꼴"):
                     render_pdf_report([])
         finally:

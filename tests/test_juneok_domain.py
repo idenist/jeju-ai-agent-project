@@ -3,8 +3,8 @@ from copy import deepcopy
 from decimal import Decimal
 import unittest
 
-from agents.juneok.comparison import compare_shipment_options
-from agents.juneok.state import ScenarioStore, demo_scenario, empty_scenario
+from agents.comparison import compare_shipment_options
+from agents.state import ScenarioStore, demo_scenario, empty_scenario
 
 
 class ComparisonTests(unittest.TestCase):

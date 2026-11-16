@@ -3,11 +3,11 @@ from copy import deepcopy
 import unittest
 
 from test_juneok_harness import FakeClient, call, response
-from agents.juneok.agent import AgentSession
-from agents.juneok.config import Settings
-from agents.juneok.state import ScenarioStore, demo_scenario
-from agents.juneok.presentation import connection_label
-from agents.juneok.quality import assess_turn
+from agents.agent import AgentSession
+from agents.config import Settings
+from agents.state import ScenarioStore, demo_scenario
+from ui.presentation import connection_label
+from agents.quality import assess_turn
 
 
 class WorkflowTests(unittest.TestCase):

@@ -1,9 +1,9 @@
 import unittest
 
-from agents.juneok.comparison import compare_shipment_options
-from agents.juneok.reporting import render_result, render_report
-from agents.juneok.state import demo_scenario
-from agents.juneok.ui_workflow import INPUT_CONTEXTS, condition_rows, form_snapshot, manual_scenario
+from agents.comparison import compare_shipment_options
+from ui.reporting import render_result, render_report
+from agents.state import demo_scenario
+from ui.ui_workflow import INPUT_CONTEXTS, condition_rows, form_snapshot, manual_scenario
 
 
 class UiWorkflowTests(unittest.TestCase):

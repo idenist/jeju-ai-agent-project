@@ -3,7 +3,7 @@ import csv
 import tempfile
 import unittest
 from pathlib import Path
-from agents.common.seasonal_prices import compare_seasonal_prices, REQUIRED
+from services.seasonal_prices import compare_seasonal_prices, REQUIRED
 
 
 class SeasonalLookupTests(unittest.TestCase):

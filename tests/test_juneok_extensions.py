@@ -9,15 +9,15 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from agents.juneok.agent import AgentSession
-from agents.juneok.casefiles import parse_case, MAX_BYTES
-from agents.juneok.config import Settings
-from agents.juneok.insights import decision_conditions
-from agents.juneok.state import demo_scenario
-from agents.juneok.workspace import SharedWorkspace
-from agents.juneok.presentation import select_results
-from agents.juneok.reporting import render_report
-from agents.juneok.tools import execute_tool
+from agents.agent import AgentSession
+from agents.casefiles import parse_case, MAX_BYTES
+from agents.config import Settings
+from agents.insights import decision_conditions
+from agents.state import demo_scenario
+from agents.workspace import SharedWorkspace
+from ui.presentation import select_results
+from ui.reporting import render_report
+from agents.tools import execute_tool
 
 
 class ExtensionTests(unittest.TestCase):
@@ -73,7 +73,7 @@ class ExtensionTests(unittest.TestCase):
 
     def test_brief_data_error_preserves_valid_comparison(self):
         ws = self.workspace()
-        with patch("agents.juneok.briefing.get_historical_shipment_context", return_value={"status": "DATA_ERROR", "message": "자료 오류"}):
+        with patch("agents.briefing.get_historical_shipment_context", return_value={"status": "DATA_ERROR", "message": "자료 오류"}):
             result = ws.review(shipment_query=self.query())
         self.assertEqual(result["review_status"], "PARTIAL")
         self.assertIn("3,109원/kg", render_report(ws.current_entries()))
@@ -154,7 +154,7 @@ class ExtensionTests(unittest.TestCase):
 
     def test_changed_data_recomputes_and_flags_difference(self):
         ws = self.workspace(); content = ws.export_case("예시")
-        with patch("agents.juneok.workspace.data_revision", return_value=("NEW_DATA",)):
+        with patch("agents.workspace.data_revision", return_value=("NEW_DATA",)):
             result = ws.restore_case(content, ws.store.version)
             self.assertTrue(result["data_changed"])
             self.assertIn("3,109원/kg", render_report(ws.current_entries()))
@@ -169,7 +169,7 @@ class ExtensionTests(unittest.TestCase):
 
     def test_brief_pdf_preserves_numbers_sources_and_partial_status(self):
         from pypdf import PdfReader
-        from agents.juneok.pdf_report import render_pdf_report
+        from ui.pdf_report import render_pdf_report
         ws = self.workspace(); ws.review(shipment_query=self.query(2025), loss_values=[1, 2, 4], price_values=[3300])
         text = "\n".join(p.extract_text() for p in PdfReader(BytesIO(render_pdf_report(ws.current_entries()))).pages)
         for value in ["부분 검토", "#855", "3,109원/kg", "661,000", "관측자료"]: self.assertIn(value, text)

@@ -6,9 +6,9 @@ from decimal import Decimal
 from unittest import TestCase
 from unittest.mock import patch
 
-from agents.common.calculation_service import compare_shipment_options as service_calculate
-from agents.juneok.comparison import compare_shipment_options as original_calculate
-from agents.juneok.state import ScenarioStore, demo_scenario
+from services.calculation_service import compare_shipment_options as service_calculate
+from agents.comparison import compare_shipment_options as original_calculate
+from agents.state import ScenarioStore, demo_scenario
 
 
 class ServiceCalculationTests(TestCase):
@@ -20,13 +20,13 @@ class ServiceCalculationTests(TestCase):
         self.assertEqual(result["options"][0]["minimum_whole_krw_per_kg"], "3109")
 
     def test_single_engine_call_for_one_analysis(self):
-        with patch("agents.common.calculation_service._primary_calculate", wraps=original_calculate) as run:
+        with patch("services.calculation_service._primary_calculate", wraps=original_calculate) as run:
             result = service_calculate(demo_scenario())
         self.assertEqual(run.call_count, 1)
         self.assertEqual(result["status"], "OK")
 
     def test_service_does_not_call_legacy_engine(self):
-        with patch("agents.baseline.calculate_break_even", side_effect=AssertionError("중복 계산 금지")):
+        with patch("services.baseline.calculate_break_even", side_effect=AssertionError("중복 계산 금지")):
             self.assertEqual(service_calculate(demo_scenario())["status"], "OK")
 
     def test_service_keeps_original_scenario_unchanged(self):
@@ -43,7 +43,7 @@ class ServiceCalculationTests(TestCase):
         self.assertIn("current_price_per_kg", result["missing_fields"])
 
     def test_unknown_status_fails_closed(self):
-        with patch("agents.common.calculation_service._primary_calculate", return_value={"status": "UNKNOWN"}):
+        with patch("services.calculation_service._primary_calculate", return_value={"status": "UNKNOWN"}):
             result = service_calculate(demo_scenario())
         self.assertEqual(result["status"], "DATA_ERROR")
         self.assertNotIn("options", result)
@@ -54,9 +54,9 @@ class ServiceCalculationTests(TestCase):
         self.assertEqual(service_calculate(scenario)["status"], "INVALID_INPUT")
 
     def test_registered_service_uses_common_entrypoint(self):
-        from agents.juneok.tools import execute_tool
+        from agents.tools import execute_tool
         store = ScenarioStore(scenario=demo_scenario())
-        with patch("agents.common.calculation_service._primary_calculate", wraps=original_calculate) as run:
+        with patch("services.calculation_service._primary_calculate", wraps=original_calculate) as run:
             result = execute_tool("compare_shipment_options", {"expected_version": 0}, store)
         self.assertEqual(run.call_count, 1)
         self.assertEqual(result["status"], "OK")
@@ -64,13 +64,13 @@ class ServiceCalculationTests(TestCase):
         self.assertEqual(result["options"][0]["minimum_whole_krw_per_kg"], "3109")
 
     def test_related_calculation_modules_share_entrypoint(self):
-        from agents.juneok import tools, briefing, insights, sensitivity, limits
+        from agents import tools, briefing, insights, sensitivity, limits
         for module in (tools, briefing, insights, sensitivity, limits):
             with self.subTest(module=module.__name__):
                 self.assertIs(module.compare_shipment_options, service_calculate)
 
     def test_baseline_stays_independent_for_verification(self):
-        from agents.baseline import calculate_break_even
+        from services.baseline import calculate_break_even
         scenario = demo_scenario()
         old = calculate_break_even(
             current_price_per_kg=Decimal("3000"), quantity_kg=Decimal("3000"),

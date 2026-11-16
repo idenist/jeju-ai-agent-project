@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agents.common.data_contract import market_key, verify_price_pair_sources
+from services.data_contract import market_key, verify_price_pair_sources
 
 
 FIELDS = [

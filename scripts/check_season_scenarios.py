@@ -16,7 +16,7 @@ from statistics import median
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from agents.jeonghyeon.price_scenario import execute_scenario_tool  # noqa: E402
+from services.price_scenario import execute_scenario_tool  # noqa: E402
 
 SEASONS = ("2024-2025", "2025-2026")
 SPEC = {"variety": "조생귤", "grade": "특", "size": "소", "package": "상자", "package_kg": "5"}

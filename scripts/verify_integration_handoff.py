@@ -108,10 +108,10 @@ def verify_live_evidence(folder: Path, root: Path = ROOT) -> dict:
                     or t.get("run_status") != "OK" or t.get("failures") for t in turns)):
                 issues.append("실제 턴 기록이 모두 정상 통과하지 않았습니다.")
         source = metadata.get("source_sha256")
-        required = {"app.py", "agents/juneok/agent.py", "agents/juneok/tools.py",
-                    "agents/juneok/workspace.py", "agents/common/price_history_service.py",
+        required = {"app.py", "ui/application.py", "ui/chat.py", "ui/panels.py", "agents/agent.py", "agents/tools.py",
+                    "agents/workspace.py", "services/price_history_service.py",
                     "data/processed/daily_prices.csv", "data/processed/price_comparison_availability.csv",
-                    "agents/seunghyuk/shipment_timing.py", "data/processed/daily_shipments.csv",
+                    "services/shipment_timing.py", "data/processed/daily_shipments.csv",
                     "data/reports/shipment_quality_report.json",
                     "evals/integration_e2e_cases.json", "scripts/evaluate_integrated_agent.py"}
         if not isinstance(source, dict) or not required.issubset(source):
@@ -162,8 +162,8 @@ def verify_repository(root: Path) -> dict:
 
 
 def verify_data(root: Path = ROOT) -> dict:
-    from agents.common.data_contract import verify_integrated_price_sources
-    from agents.jeonghyeon.price_scenario import content_sha256
+    from services.data_contract import verify_integrated_price_sources
+    from services.price_scenario import content_sha256
     try:
         result = verify_integrated_price_sources(root)
         if result.get("status") != "OK" or result.get("full_content_verified") is not True:
@@ -174,7 +174,7 @@ def verify_data(root: Path = ROOT) -> dict:
         actual = content_sha256((root / "data/processed" / name).read_bytes())
         if expected != actual:
             return {"status": "FAIL", "reason": "PAIR_REPORT_HASH_MISMATCH"}
-        from agents.juneok.tools import TOOLS
+        from agents.tools import TOOLS
         names = {tool["name"] for tool in TOOLS}
         if not {"get_price_history", "compare_shipment_options"}.issubset(names) or "get_price_scenarios" in names:
             return {"status": "FAIL", "reason": "ACTIVE_TOOL_CONTRACT_CHANGED"}

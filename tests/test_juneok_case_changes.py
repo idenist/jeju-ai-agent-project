@@ -5,12 +5,12 @@ import os
 from pathlib import Path
 import unittest
 from unittest.mock import patch
-from agents.juneok.agent import AgentSession
-from agents.juneok.workspace import SharedWorkspace
-from agents.juneok.config import Settings
-from agents.juneok.casefiles import parse_case, _canonical
-from agents.juneok.case_changes import compare_cases
-from agents.juneok.tools import execute_tool
+from agents.agent import AgentSession
+from agents.workspace import SharedWorkspace
+from agents.config import Settings
+from agents.casefiles import parse_case, _canonical
+from agents.case_changes import compare_cases
+from agents.tools import execute_tool
 from test_juneok_harness import FakeClient, call, response
 
 
@@ -93,7 +93,7 @@ class CaseChangesTests(unittest.TestCase):
         ws.clear_conversation(False); self.assertIsNone(ws.session.comparison_reference)
 
     def test_pdf_contains_recalculation_and_changes(self):
-        from agents.juneok.pdf_report import render_pdf_report
+        from ui.pdf_report import render_pdf_report
         from pypdf import PdfReader
         ws = self.workspace(); raw = ws.export_case("이전")
         ws.store.scenario["options"][0]["loss_percent"] = 4

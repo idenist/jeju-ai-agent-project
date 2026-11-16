@@ -27,17 +27,17 @@ PRICE_QUERY = {
     "package_kg": "5", "interval_days": 7, "limit": 3,
 }
 SOURCE_PATHS = (
-    "app.py", "agents/juneok/agent.py", "agents/juneok/tools.py",
-    "agents/juneok/workspace.py", "agents/juneok/state.py",
-    "agents/juneok/future_pair_state.py", "agents/juneok/future_pair_intent.py",
-    "agents/juneok/box_price.py",
-    "agents/juneok/presentation.py", "agents/juneok/reporting.py",
-    "agents/common/future_pair.py", "agents/common/data_contract.py",
-    "agents/common/calculation_service.py", "agents/common/price_history_service.py",
-    "agents/common/price_history_followup.py", "agents/jeonghyeon/price_history.py",
-    "agents/jeonghyeon/comparison_input.py", "agents/jeonghyeon/price_scenario.py",
-    "agents/seunghyuk/shipment_timing.py", "agents/seunghyuk/shipment_timing_bundle.py",
-    "agents/seunghyuk/shipment_timing_ui.py",
+    "app.py", "ui/application.py", "ui/chat.py", "ui/panels.py", "agents/agent.py", "agents/tools.py",
+    "agents/workspace.py", "agents/state.py",
+    "agents/future_pair_state.py", "agents/future_pair_intent.py",
+    "agents/box_price.py",
+    "ui/presentation.py", "ui/reporting.py",
+    "services/future_pair.py", "services/data_contract.py",
+    "services/calculation_service.py", "services/price_history_service.py",
+    "services/price_history_followup.py", "services/price_history.py",
+    "services/comparison_input.py", "services/price_scenario.py",
+    "services/shipment_timing.py", "services/shipment_timing_bundle.py",
+    "ui/shipment_timing_ui.py",
     "data/processed/daily_prices.csv", "data/processed/price_comparison_availability.csv",
     "data/processed/price_comparisons.csv", "data/metadata/juneok_manifest.json",
     "data/processed/daily_shipments.csv", "data/reports/shipment_quality_report.json",
@@ -99,9 +99,9 @@ def load_cases(path: Path = CASES_FILE) -> list[dict]:
 
 def preflight() -> dict:
     """유료 평가 전에 실제 동결 가격쌍과 통합 도구 등록 상태를 확인합니다."""
-    from agents.common.data_contract import verify_integrated_price_sources
-    from agents.common.price_history_service import get_integrated_price_history
-    from agents.juneok.tools import TOOLS
+    from services.data_contract import verify_integrated_price_sources
+    from services.price_history_service import get_integrated_price_history
+    from agents.tools import TOOLS
 
     source = verify_integrated_price_sources(ROOT)
     if source.get("status") != "OK" or source.get("full_content_verified") is not True:
@@ -266,14 +266,14 @@ def score_turn(spec: dict, reply: dict, before_state: dict, after_state: dict,
 
 def turn_quality(reply: dict) -> dict:
     """실제 Python 보고서와 표시 결과의 기존 품질 계약을 확인합니다."""
-    from agents.juneok.quality import assess_turn
+    from agents.quality import assess_turn
     return assess_turn(reply)
 
 
 def create_workspace(settings, setup: str):
     """각 문항마다 독립된 작업공간을 구성하여 이전 문항 오염을 막습니다."""
-    from agents.juneok.agent import AgentSession
-    from agents.juneok.workspace import SharedWorkspace
+    from agents.agent import AgentSession
+    from agents.workspace import SharedWorkspace
     workspace = SharedWorkspace(AgentSession(settings))
     if setup in {"demo", "demo_with_direct_history"}:
         result = workspace.load_demo()
@@ -416,8 +416,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(checked, ensure_ascii=False))
         print("실제 모델은 호출하지 않았습니다. 먼저 --live --case INT-01로 확인하세요.")
         return 0
-    from agents.juneok.config import Settings
-    from agents.juneok.task_context import data_revision
+    from agents.config import Settings
+    from agents.task_context import data_revision
     settings = Settings.load()
     if args.model:
         settings = Settings(api_key=settings.api_key, model=args.model.strip())

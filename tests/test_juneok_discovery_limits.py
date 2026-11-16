@@ -6,14 +6,14 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from agents.juneok.catalog import explore_data
-from agents.juneok.limits import solve_offer_limits
-from agents.juneok.state import demo_scenario, ScenarioStore
-from agents.juneok.tools import execute_tool
-from agents.juneok.agent import AgentSession
-from agents.juneok.config import Settings
-from agents.juneok.workspace import SharedWorkspace
-from agents.juneok.reporting import render_result
+from agents.catalog import explore_data
+from agents.limits import solve_offer_limits
+from agents.state import demo_scenario, ScenarioStore
+from agents.tools import execute_tool
+from agents.agent import AgentSession
+from agents.config import Settings
+from agents.workspace import SharedWorkspace
+from ui.reporting import render_result
 from test_juneok_harness import FakeClient, call, response
 import test_juneok_evidence as evidence_fixtures
 
@@ -71,7 +71,7 @@ class DiscoveryTests(unittest.TestCase):
         self.assertIn("LOW_SAMPLE", result["candidates"][0]["warnings"])
 
     def test_missing_file_is_data_error(self):
-        with patch("agents.juneok.catalog._market_rows", side_effect=FileNotFoundError):
+        with patch("agents.catalog._market_rows", side_effect=FileNotFoundError):
             self.assertEqual(explore_data("market")["status"], "DATA_ERROR")
 
     def test_fake_model_discovery_preserves_state_and_selection(self):
@@ -85,7 +85,7 @@ class DiscoveryTests(unittest.TestCase):
 
 class OfferLimitsTests(unittest.TestCase):
     def test_live_state_check_rejects_hypothesis_saved_as_condition(self):
-        from scripts.verify_juneok_product_expansion_live import economic_inputs
+        from evals.verify_product_expansion import economic_inputs
         before = ScenarioStore(demo_scenario()).snapshot(); after = deepcopy(before)
         after["version"] += 1; after["scenario"]["options"][0]["loss_confirmed_for_period"] = False
         self.assertEqual(economic_inputs(before), economic_inputs(after))
@@ -113,7 +113,7 @@ class OfferLimitsTests(unittest.TestCase):
         self.assertEqual(s["options"][0]["future_price_per_kg"], 3700)
 
     def test_independent_forward_checks_both_sides(self):
-        from agents.juneok.comparison import compare_shipment_options
+        from agents.comparison import compare_shipment_options
         for field, values in [("loss_percent", ["7.67", "7.68"]), ("daily_storage_cost", [100285, 100286])]:
             differences = []
             for value in values:
@@ -170,8 +170,8 @@ class OfferLimitsTests(unittest.TestCase):
 
     def test_shared_workspace_pdf_and_context_compatibility(self):
         from pypdf import PdfReader
-        from agents.juneok.pdf_report import render_pdf_report
-        from agents.juneok.casefiles import parse_case
+        from ui.pdf_report import render_pdf_report
+        from agents.casefiles import parse_case
         ws = SharedWorkspace(AgentSession()); ws.load_demo(); before = ws.store.snapshot()
         ws.offer_limits(None, 3300, "loss_percent")
         text = "".join(p.extract_text() for p in PdfReader(BytesIO(render_pdf_report(ws.current_entries()))).pages)

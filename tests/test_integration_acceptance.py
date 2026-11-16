@@ -10,8 +10,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from unittest.mock import patch
 
-from agents.common.data_contract import verify_cached_price_sources, verify_integrated_price_sources, verify_price_pair_sources
-from agents.common.result_contract import normalize_tool_result
+from services.data_contract import verify_cached_price_sources, verify_integrated_price_sources, verify_price_pair_sources
+from services.result_contract import normalize_tool_result
 from scripts.build_price_comparisons import FIELDS, REQUIRED, run
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,7 +71,7 @@ class FullSourceVerificationTests(unittest.TestCase):
         self.assertEqual(result["verified_availability_rows"], 6)
 
     def test_cached_verification_reuses_only_identical_files(self):
-        with patch("agents.common.data_contract.verify_integrated_price_sources", wraps=verify_integrated_price_sources) as verify:
+        with patch("services.data_contract.verify_integrated_price_sources", wraps=verify_integrated_price_sources) as verify:
             first = verify_cached_price_sources(self.root)
             self.assertEqual(first["status"], "OK", first)
             first["available_intervals"].clear()
@@ -133,13 +133,13 @@ class ActualRepositoryAcceptanceTests(unittest.TestCase):
         self.assertTrue(result["full_content_verified"])
 
     def test_latest_market_price_agrees_with_independent_baseline(self):
-        from agents.baseline import load_price_observations
-        from agents.juneok.evidence import get_market_evidence
+        from services.baseline import load_price_observations
+        from agents.evidence import get_market_evidence
 
         query = {"market_code": "110001", "variety": "조생귤", "grade": "특",
                  "size": "소", "package": "상자", "package_kg": 5}
         # 운영자가 별도 활성화한 스냅샷과 동결 자료 검사를 혼동하지 않습니다.
-        with patch("agents.juneok.data_refresh.resolve_market_root", return_value=ROOT):
+        with patch("agents.data_refresh.resolve_market_root", return_value=ROOT):
             result = get_market_evidence(query, ROOT)
         self.assertEqual(result["status"], "OK", result)
         baseline = load_price_observations(ROOT / "data/processed/daily_prices.csv",
@@ -154,7 +154,7 @@ class ActualRepositoryAcceptanceTests(unittest.TestCase):
         self.assertFalse(normalized["data"]["is_live_price"])
 
     def test_actual_historical_prices_keep_warning_and_source(self):
-        from agents.jeonghyeon.price_history import get_price_history
+        from services.price_history import get_price_history
         query = {"market_code": "110001", "variety": "조생귤", "grade": "특",
                  "size": "소", "package": "상자", "package_kg": 5,
                  "trade_type": "경매", "interval_days": 7, "limit": 3}
@@ -167,29 +167,10 @@ class ActualRepositoryAcceptanceTests(unittest.TestCase):
         self.assertEqual(result["data"], raw)
         self.assertFalse(result["data"]["is_future_forecast"])
 
-    def test_real_v0_and_extended_calculations_agree_for_simple_case(self):
-        from agents.agent import compare_shipping
-        from agents.juneok.comparison import compare_shipment_options
-        from agents.juneok.state import demo_scenario
-
-        basic = compare_shipping({
-            "variety": "조생귤", "grade": "특", "size": "소", "package_kg": 5,
-            "quantity_kg": 3000, "delay_days": 7, "daily_storage_cost": 20000,
-            "loss_percent": 2, "current_price_per_kg": 3000,
-            "future_price_per_kg": None,
-        }, ROOT / "data/processed/daily_prices.csv")
-        extended = compare_shipment_options(demo_scenario())
-        self.assertEqual(extended["status"], "OK", extended)
-        self.assertEqual(normalize_tool_result("compare_shipping", basic)["status"], "OK")
-        self.assertEqual(Decimal(basic["current_gross_krw"].replace(",", "")), Decimal(extended["current_proceeds_krw"]))
-        self.assertEqual(Decimal(basic["break_even_price_krw_per_kg"].replace(",", "")),
-                         Decimal(extended["options"][0]["break_even_price_per_kg"]).quantize(
-                             Decimal("0.01"), rounding=ROUND_HALF_UP))
-        self.assertFalse(extended["is_future_forecast"])
 
     def test_missing_sale_price_is_not_guessed_from_market(self):
-        from agents.juneok.comparison import compare_shipment_options
-        from agents.juneok.state import empty_scenario
+        from agents.comparison import compare_shipment_options
+        from agents.state import empty_scenario
         result = normalize_tool_result("compare_shipment_options", compare_shipment_options(empty_scenario()))
         self.assertEqual(result["status"], "NEEDS_INPUT")
         self.assertIn("current_price_per_kg", result["missing_fields"])

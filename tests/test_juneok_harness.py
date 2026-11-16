@@ -7,10 +7,10 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import patch
 
-from agents.juneok.agent import AgentSession
-from agents.juneok.config import Settings
-from agents.juneok.state import ScenarioStore, demo_scenario
-from agents.juneok.tools import TOOLS, execute_tool
+from agents.agent import AgentSession
+from agents.config import Settings
+from agents.state import ScenarioStore, demo_scenario
+from agents.tools import TOOLS, execute_tool
 
 
 def call(name, args, number=1):
@@ -192,22 +192,22 @@ class ConfigTests(unittest.TestCase):
 
 class EvaluationTests(unittest.TestCase):
     def test_evidence_preflight_detects_wrong_variety_fixture(self):
-        from scripts.evaluate_juneok import preflight
+        from evals.evaluate_harness import preflight
         case = {"id": "J08", "expected_tool": "get_historical_shipment_context", "expected_status": "OK", "partial_month": True,
                 "evidence_args": {"shipment_variety": "노지온주", "target_month": 9, "start_year": 2025, "end_year": 2025}}
         self.assertFalse(preflight([case])[0]["passed"])
 
     def test_all_current_evidence_fixtures_have_real_data(self):
-        from scripts.evaluate_juneok import preflight
-        from agents.juneok.config import PROJECT_ROOT
+        from evals.evaluate_harness import preflight
+        from agents.config import PROJECT_ROOT
         cases = json.loads((PROJECT_ROOT / "evals/juneok_cases.json").read_text(encoding="utf-8"))
         checks = preflight(cases)
         self.assertEqual(len(checks), 6)
         self.assertTrue(all(x["passed"] for x in checks))
 
     def test_missing_hypothesis_fails_evaluation_without_crashing(self):
-        from scripts.evaluate_juneok import score
-        from agents.juneok.comparison import compare_shipment_options
+        from evals.evaluate_harness import score
+        from agents.comparison import compare_shipment_options
         case = {"id": "test", "expected_tool": "compare_shipment_options", "expected_status": "OK", "difference_krw": "562000"}
         turns = [{"status": "OK", "tool_results": [{"tool": "compare_shipment_options", "result": compare_shipment_options(demo_scenario())}]}]
         scored = score(case, turns)
@@ -215,7 +215,7 @@ class EvaluationTests(unittest.TestCase):
         self.assertIn("wrong_hypothetical_difference", scored["failures"])
 
     def test_api_failure_is_a_failure_not_a_skipped_case(self):
-        from scripts.evaluate_juneok import score
+        from evals.evaluate_harness import score
         result = score({"id": "test", "forbid_successful_comparison": True}, [{"status": "API_ERROR", "tool_results": []}])
         self.assertFalse(result["passed"])
         self.assertIn("model_or_api_error", result["failures"])

@@ -11,14 +11,14 @@ from unittest.mock import patch
 import httpx
 from openai import APITimeoutError, APIConnectionError, AuthenticationError, RateLimitError
 
-from agents.juneok.agent import AgentSession
-from agents.juneok.config import Settings
-from agents.juneok.harness import ExecutionPolicy, RepeatGuard, RunStopped, encoded_size, user_starts
-from agents.juneok.task_context import TaskContext
-from agents.juneok.workspace import SharedWorkspace
-from agents.juneok.state import ScenarioStore, demo_scenario
-from agents.juneok.casefiles import parse_case
-from agents.juneok.reporting import render_report
+from agents.agent import AgentSession
+from agents.config import Settings
+from agents.harness import ExecutionPolicy, RepeatGuard, RunStopped, encoded_size, user_starts
+from agents.task_context import TaskContext
+from agents.workspace import SharedWorkspace
+from agents.state import ScenarioStore, demo_scenario
+from agents.casefiles import parse_case
+from ui.reporting import render_report
 from test_juneok_harness import FakeClient, call, response
 
 
@@ -60,11 +60,11 @@ class TaskHarnessTests(unittest.TestCase):
     def test_internal_tool_failure_is_not_provider_failure(self):
         session = self.session([response(call("compare_shipment_options", {"expected_version": 0}, 1)),
                                 response(call("get_historical_shipment_context", self.query(), 2))])
-        from agents.juneok.tools import execute_tool as real
+        from agents.tools import execute_tool as real
         def invoke(name, args, store):
             if name == "get_historical_shipment_context": raise RuntimeError("PRIVATE_TOKEN")
             return real(name, args, store)
-        with patch("agents.juneok.agent.execute_tool", side_effect=invoke): result = session.run("비교와 조회")
+        with patch("agents.agent.execute_tool", side_effect=invoke): result = session.run("비교와 조회")
         self.assertEqual(result["status"], "INTERNAL_ERROR")
         self.assertIn("3,109", result["text"])
         self.assertNotIn("PRIVATE_TOKEN", json.dumps(result))
@@ -72,7 +72,7 @@ class TaskHarnessTests(unittest.TestCase):
 
     def test_elapsed_limit_has_own_reason_and_no_request(self):
         session = self.session([])
-        with patch("agents.juneok.agent.time.monotonic", side_effect=[0, 91, 92]): result = session.run("비교")
+        with patch("agents.agent.time.monotonic", side_effect=[0, 91, 92]): result = session.run("비교")
         self.assertEqual(result["status"], "TIME_LIMIT")
         self.assertEqual(result["metrics"]["model_requests"], 0)
 
@@ -164,7 +164,7 @@ class TaskHarnessTests(unittest.TestCase):
         self.assertIn("current_price_per_kg", context["pending"]["compare_shipment_options"])
 
     def test_card_period_change_reconfirms_in_shared_context(self):
-        from agents.juneok.workspace import card_values
+        from agents.workspace import card_values
         ws = self.workspace(); ws.sensitivity("seven_days", [1, 2, 4], [3300])
         self.assertEqual(ws.session.task_context.snapshot()["sensitivity_query"]["delay_days"], 7)
         values, ids = card_values(ws.store.snapshot())
@@ -210,7 +210,7 @@ class TaskHarnessTests(unittest.TestCase):
 
     def test_data_change_clears_task_selections_preserving_scenario(self):
         ws = self.workspace(); ws.history(self.query()); before = ws.store.snapshot()
-        with patch("agents.juneok.workspace.data_revision", return_value=("NEW",)):
+        with patch("agents.workspace.data_revision", return_value=("NEW",)):
             self.assertTrue(ws.check_data_change())
         self.assertEqual(before, ws.store.snapshot())
         self.assertIsNone(ws.session.task_context.snapshot()["shipment_query"])
@@ -223,7 +223,7 @@ class TaskHarnessTests(unittest.TestCase):
 
     def test_context_and_partial_failure_export_pdf_are_consistent(self):
         from pypdf import PdfReader
-        from agents.juneok.pdf_report import render_pdf_report
+        from ui.pdf_report import render_pdf_report
         ws = SharedWorkspace(self.session([response(call("compare_shipment_options", {"expected_version": 0}, i)) for i in range(4)]))
         reply = ws.run("같은 호출 반복")
         self.assertEqual(reply["status"], "REPEATED_TOOL_CALL")
@@ -234,8 +234,8 @@ class TaskHarnessTests(unittest.TestCase):
 
 class CompositeEvaluationTests(unittest.TestCase):
     def test_brief_checks_nested_calculation_and_rejects_wrong_amount(self):
-        from agents.juneok.briefing import build_review_brief
-        from scripts.evaluate_juneok import score
+        from agents.briefing import build_review_brief
+        from evals.evaluate_harness import score
         result = build_review_brief(demo_scenario())
         turns = [{"status": "OK", "tool_results": [{"tool": "build_review_brief", "result": result}]}]
         case = {"id": "composite", "expected_tool": "compare_shipment_options", "expected_status": "OK", "minimum_price": "3109", "required_tools": ["compare_shipment_options"]}
@@ -244,8 +244,8 @@ class CompositeEvaluationTests(unittest.TestCase):
         self.assertIn("wrong_minimum_price", score(case, turns)["failures"])
 
     def test_condition_table_checks_actual_hypotheses_and_rejects_wrong_loss(self):
-        from agents.juneok.insights import decision_conditions
-        from scripts.evaluate_juneok import score
+        from agents.insights import decision_conditions
+        from evals.evaluate_harness import score
         result = decision_conditions(demo_scenario(), loss_values=[2, 4])
         turns = [{"status": "OK", "tool_results": [{"tool": "explain_decision_conditions", "result": result}]}]
         case = {"id": "condition", "expected_tool": "compare_sensitivity", "expected_status": "OK", "sensitivity_rows": 2, "expected_losses": [2, 4], "expected_prices": [None]}

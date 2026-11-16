@@ -6,7 +6,7 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-from agents.seunghyuk.shipment_timing import (
+from services.shipment_timing import (
     analyze_shipment_timing, format_timing_report, resolve_pair_dates,
 )
 

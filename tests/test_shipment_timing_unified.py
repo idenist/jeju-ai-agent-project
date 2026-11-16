@@ -15,8 +15,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from agents.seunghyuk.shipment_timing import analyze_shipment_timing, resolve_pair_dates
-from agents.seunghyuk.shipment_timing_bundle import (
+from services.shipment_timing import analyze_shipment_timing, resolve_pair_dates
+from services.shipment_timing_bundle import (
     aligned_economic, export_json, export_payload, report_entries,
     shipment_source_is_current, source_fingerprint,
 )
@@ -77,7 +77,7 @@ class BundleTest(unittest.TestCase):
 
     def test_real_pdf_report_renders_both_sections_if_available(self):
         try:
-            from agents.juneok.pdf_report import render_pdf_report
+            from ui.pdf_report import render_pdf_report
         except (ModuleNotFoundError, ImportError):
             self.skipTest("독립 패키지 검사. 대상 저장소에서 실제 PDF 렌더러를 검증합니다")
         entries = report_entries(self.timing, fake_economic())
@@ -98,7 +98,7 @@ class ChatReportPipelineTest(unittest.TestCase):
     """Extract the installed app's pure chat-report functions without starting Streamlit."""
 
     def test_chat_pdf_json_bundle_dates_and_cache(self):
-        app_path = Path(__file__).resolve().parents[1] / "app.py"
+        app_path = Path(__file__).resolve().parents[1] / "ui" / "chat.py"
         if not app_path.is_file():
             self.skipTest("원격 릴리스 자체 검사. 사용자 저장소에서 app.py 연결을 검사합니다")
         ast_tree = ast.parse(app_path.read_text(encoding="utf-8-sig"))
@@ -127,7 +127,7 @@ class ChatReportPipelineTest(unittest.TestCase):
         self.assertEqual(namespace["_latest_chat_report"](messages, 42, None, 7), (None, None))
         self.assertEqual(namespace["_latest_chat_report"](messages, 42, fake_economic(), 8), (None, None))
         self.assertEqual(namespace["_latest_chat_report"](messages, 41, fake_economic(), 7), (None, None))
-        with patch("agents.seunghyuk.shipment_timing_bundle.source_fingerprint", return_value=("x", "y")):
+        with patch("services.shipment_timing_bundle.source_fingerprint", return_value=("x", "y")):
             self.assertEqual(namespace["_latest_chat_report"](messages, 42, fake_economic(), 7), (None, None))
 
 
@@ -206,7 +206,7 @@ class FakeStreamlit(types.ModuleType):
 class UIPipelineTest(unittest.TestCase):
     def test_auto_date_no_duplicate_and_invalidation(self):
         fake = FakeStreamlit()
-        name = "agents.seunghyuk.shipment_timing_ui"
+        name = "ui.shipment_timing_ui"
         with patch.dict(sys.modules, {"streamlit": fake}):
             sys.modules.pop(name, None)
             ui = importlib.import_module(name)
@@ -229,7 +229,7 @@ class UIPipelineTest(unittest.TestCase):
 
     def test_missing_dates_never_report(self):
         fake = FakeStreamlit()
-        name = "agents.seunghyuk.shipment_timing_ui"
+        name = "ui.shipment_timing_ui"
         with patch.dict(sys.modules, {"streamlit": fake}):
             sys.modules.pop(name, None)
             ui = importlib.import_module(name)
@@ -239,12 +239,12 @@ class UIPipelineTest(unittest.TestCase):
             sys.modules.pop(name, None)
 
     def test_keyless_panel_shows_matching_economics_and_both_downloads(self):
-        name = "agents.seunghyuk.shipment_timing_ui"
+        name = "ui.shipment_timing_ui"
         import streamlit
         from streamlit.testing.v1 import AppTest
 
         script = """
-from agents.seunghyuk.shipment_timing_ui import render_shipment_timing_panel
+from ui.shipment_timing_ui import render_shipment_timing_panel
 from test_shipment_timing_unified import fake_economic
 
 class Pair:

@@ -7,13 +7,13 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from agents.juneok.agent import AgentSession
-from agents.juneok.workspace import SharedWorkspace
-from agents.juneok.settlement import ShipmentStore, empty_values, reconcile, digest, _canonical, normalize
-from agents.juneok.settlement_reporting import render_settlement
-from agents.juneok.reporting import render_report
-from agents.juneok.tools import execute_tool
-from agents.juneok.config import Settings
+from agents.agent import AgentSession
+from agents.workspace import SharedWorkspace
+from services.settlement import ShipmentStore, empty_values, reconcile, digest, _canonical, normalize
+from ui.settlement_reporting import render_settlement
+from ui.reporting import render_report
+from agents.tools import execute_tool
+from agents.config import Settings
 
 
 def sample():
@@ -199,7 +199,7 @@ class SettlementTests(unittest.TestCase):
         self.result()
         r = execute_tool('reconcile_settlement', {'expected_record_revision':1}, self.ws.store, shipment=self.store)
         self.assertEqual(r['amounts']['after_entered_costs_krw'], '9016900.00')
-        from agents.juneok.settlement import model_receipt
+        from services.settlement import model_receipt
         receipt = model_receipt(r)
         self.assertNotIn('amounts', receipt)
         self.assertNotIn('citations', receipt)
@@ -253,14 +253,14 @@ class SettlementTests(unittest.TestCase):
         self.assertEqual(reply['visible_results'][0]['result']['record_revision'], 2)
 
     def test_private_export_is_rejected_by_package_guard(self):
-        from agents.juneok.settlement import reject_private_record
+        from services.settlement import reject_private_record
         self.result()
         with self.assertRaises(ValueError): reject_private_record(self.store.export())
         reject_private_record(b'{"public_data": true}')
 
     def test_pdf_contains_amounts_same_references_and_no_private_path(self):
         from pypdf import PdfReader
-        from agents.juneok.pdf_report import render_pdf_report
+        from ui.pdf_report import render_pdf_report
         r = self.result()
         text = '\n'.join(p.extract_text() for p in PdfReader(BytesIO(render_pdf_report([{'tool':'reconcile_settlement','result':r}]))).pages)
         for value in ['9,016,900.00', '9,156,900.00', r['amount_refs']['after_entered_costs_krw'], '가상 예시']:
@@ -268,8 +268,8 @@ class SettlementTests(unittest.TestCase):
         self.assertNotIn('C:\\', text)
 
     def test_public_pdf_urls_are_clickable_and_plain_address_retained(self):
-        from agents.juneok.evidence import get_historical_shipment_context
-        from agents.juneok.pdf_report import render_pdf_report, _inline
+        from agents.evidence import get_historical_shipment_context
+        from ui.pdf_report import render_pdf_report, _inline
         from pypdf import PdfReader
         result = get_historical_shipment_context({'shipment_variety':'노지온주','target_month':11,'start_year':2018,'end_year':2024})
         pdf = PdfReader(BytesIO(render_pdf_report([{'tool':'get_historical_shipment_context','result':result}])))

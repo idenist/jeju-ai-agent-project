@@ -7,10 +7,10 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from agents.juneok.config import PROJECT_ROOT
-from agents.juneok.csv_import import preview_auction_csv, apply_auction_preview
-from agents.juneok.data_refresh import market_status, snapshot_dir
-from agents.juneok.evidence import get_market_evidence
+from agents.config import PROJECT_ROOT
+from agents.csv_import import preview_auction_csv, apply_auction_preview
+from agents.data_refresh import market_status, snapshot_dir
+from agents.evidence import get_market_evidence
 from scripts.preprocess_auction import run
 
 

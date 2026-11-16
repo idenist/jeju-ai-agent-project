@@ -4,19 +4,19 @@ from __future__ import annotations
 from copy import deepcopy
 import unittest
 
-from agents.common.result_contract import (
+from services.result_contract import (
     COMMON_STATUSES, JUNEOK_TOOLS, normalize_tool_result,
 )
 
 
 class ResultContractTests(unittest.TestCase):
     def test_current_juneok_tool_registry_matches_contract(self):
-        from agents.juneok.tools import TOOLS
+        from agents.tools import TOOLS
         self.assertEqual({item["name"] for item in TOOLS}, JUNEOK_TOOLS)
 
     def test_juneok_success_preserves_numbers_and_source(self):
-        from agents.juneok.comparison import compare_shipment_options
-        from agents.juneok.state import demo_scenario
+        from agents.comparison import compare_shipment_options
+        from agents.state import demo_scenario
         original = compare_shipment_options(demo_scenario())
         before = deepcopy(original)
         output = normalize_tool_result("compare_shipment_options", original)
