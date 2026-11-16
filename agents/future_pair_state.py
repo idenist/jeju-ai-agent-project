@@ -160,15 +160,110 @@ def history_clarification(result, question="", *, pause_specs=False):
     return HISTORY_QUESTIONS[first] + examples
 
 
+
+# The same field-selection rule controls both the displayed question and the
+# short-answer interpreter. No parallel list of "what was asked" to drift.
+PAIR_QUESTION_PRIORITY = (
+    LABELS["start_date"], LABELS["quantity"],
+    "A안 보관일", "B안 보관일", LABELS["price_a"], LABELS["price_basis"],
+    "A안 기간 전체 감모율(%)", "B안 기간 전체 감모율(%)",
+    "A안 수수료율(%)", "B안 수수료율(%)",
+    "A안 전체 물량 하루 보관비(원)", "B안 전체 물량 하루 보관비(원)",
+    "A안 별도 비용(원)", "B안 별도 비용(원)", LABELS["price_b"],
+)
+
+
+def next_pair_field(fields):
+    """Canonical label of the pending input, shared by UI response and router."""
+    return next((label for label in PAIR_QUESTION_PRIORITY if label in fields),
+                fields[0] if fields else None)
+
+
+_SIMPLE_NUM = r"(?:0|[1-9][0-9]*(?:,[0-9]{3})*)(?:\.[0-9]+)?"
+_SIMPLE_REPLY_SUFFIX = re.compile(r"(?:이에요|예요|입니다|이요|요)$")
+_SIMPLE_SIDE = re.compile(
+    r"^(?:(A|B)\s*안|(?:(먼저|나중)\s*(?:출하(?:하는)?|팔(?:때)?)))"
+    r"\s*(?:의\s*)?(?:판매\s*)?(?:단가|가격)?\s*(?:은|는|이|가)?\s*", re.I,
+)
+
+
+def _simple_slot_patch(field, question):
+    """Parse an unambiguous answer to the single field the app actually asked.
+
+    No amount is inferred from arbitrary prose: no ranges, quotations,
+    conflicting numbers, per-box prices, or unrequested historical evidence.
+    All resulting values still go through FuturePairState.apply/_validate.
+    """
+    if not isinstance(question, str) or not isinstance(field, str):
+        return None
+    text = question.strip().rstrip(".!?。 ").strip()
+    text = _SIMPLE_REPLY_SUFFIX.sub("", text).strip()
+    side = None
+    if found := _SIMPLE_SIDE.match(text):
+        side = (found[1] or ("A" if found[2] == "먼저" else "B")).upper()
+        text = text[found.end():].strip()
+    expected_side = "A" if field.startswith("A안") else "B" if field.startswith("B안") else None
+    if side and expected_side and side != expected_side:
+        return None
+    if side and expected_side is None:
+        return None
+
+    if field == LABELS["price_basis"]:
+        if re.fullmatch(r"(?:수수료\s*(?:를\s*)?)?(?:차감|공제|빼기)\s*전", text):
+            return {"price_basis": "gross"}
+        if re.fullmatch(r"(?:수수료\s*(?:를\s*)?)?(?:차감|공제|빼기)\s*(?:후|뒤)", text):
+            return {"price_basis": "commission_net"}
+        return None
+
+    if field == LABELS["start_date"]:
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            return {"start_date": text}
+        return None
+
+    text = re.sub(r"^(?:kg|킬로그램)\s*당\s*", "", text, flags=re.I)
+    kind = None
+    if field in (LABELS["price_a"], LABELS["price_b"]):
+        kind = "price"
+        match = re.fullmatch(rf"({_SIMPLE_NUM})\s*(?:원(?:\s*/\s*(?:kg|킬로그램))?)?", text, re.I)
+    elif field == LABELS["quantity"]:
+        kind = "quantity"
+        match = re.fullmatch(rf"({_SIMPLE_NUM})\s*(kg|킬로그램|톤|t)?", text, re.I)
+    elif field.endswith("보관일"):
+        kind = "days"
+        match = re.fullmatch(rf"({_SIMPLE_NUM})\s*일", text)
+    elif "감모율" in field or "수수료율" in field:
+        kind = "percent"
+        match = re.fullmatch(rf"({_SIMPLE_NUM})\s*(?:%|퍼센트)?", text)
+    elif "보관비" in field or "별도 비용" in field:
+        kind = "cost"
+        match = re.fullmatch(rf"({_SIMPLE_NUM})\s*원?", text)
+    else:
+        return None
+    if match is None:
+        return None
+    value = Decimal(match[1].replace(",", ""))
+    if kind == "quantity" and (match[2] or "").casefold() in {"톤", "t"}:
+        value *= 1000
+    if kind == "days":
+        if value != value.to_integral_value():
+            return None
+        value = int(value)
+    elif kind == "price" and value == 0 and field == LABELS["price_a"]:
+        return None
+    elif value < 0:
+        return None
+    if not isinstance(value, int):
+        value = format(value, "f")
+    if field in LABELS.values():
+        key = next(k for k, label in LABELS.items() if label == field)
+        return {key: value}
+    which = "option_a" if field.startswith("A안") else "option_b"
+    key = next((k for k, label in OPTION_LABELS.items() if label in field), None)
+    return {which: {key: value}} if key else None
+
 def next_pair_question(fields, storage_days):
     """Single missing decision for a manual A/B comparison, without guessing."""
-    first = [LABELS["start_date"], LABELS["quantity"],
-             "A안 보관일", "B안 보관일", LABELS["price_a"], LABELS["price_basis"],
-             "A안 기간 전체 감모율(%)", "B안 기간 전체 감모율(%)",
-             "A안 수수료율(%)", "B안 수수료율(%)",
-             "A안 전체 물량 하루 보관비(원)", "B안 전체 물량 하루 보관비(원)",
-             "A안 별도 비용(원)", "B안 별도 비용(원)", LABELS["price_b"]]
-    target = next((name for name in first if name in fields), fields[0] if fields else None)
+    target = next_pair_field(fields)
     if target is None:
         return "확인된 조건을 유지하겠습니다."
     prompts = {
@@ -379,6 +474,35 @@ class FuturePairState:
         elif result["status"] == "OK":
             self.costs_deferred = False
         return result
+
+
+    def waiting_field(self):
+        """Field asked in the latest manual A/B clarification, if still pending."""
+        pending = self.pending or {}
+        if (self.box_price is not None or pending.get("status") != "NEEDS_INPUT"
+                or not pending.get("comparison_inputs_pending")):
+            return None
+        return next_pair_field(pending.get("missing_fields", ()))
+
+    def apply_short_answer(self, question, *, on_progress=None):
+        """Atomic local continuation; None means leave interpretation to the model."""
+        field = self.waiting_field()
+        patch = _simple_slot_patch(field, question) if field else None
+        if patch is None:
+            return None
+        return self.apply("edit", self.version, patch, on_progress=on_progress)
+
+    def is_compound_value_answer(self, question):
+        """Require an A/B update tool for unmistakable data-only multi-slot replies."""
+        if self.waiting_field() is None:
+            return False
+        if any(word in question for word in (
+                "뜻", "의미", "설명", "조회", "찾아", "출하량", "통계", "과거",
+                "보고서", "예측", "새 비교", "비교해", "어떻게", "왜", "?",
+                "아니면", "혹은", "인지", "일지", "몰라", "모르", "정도", "가량", "대략", "약 ")):
+            return False
+        return bool(re.search(r"[0-9]", question) and
+                    re.search(r"(?:원|%|퍼센트|kg|킬로그램|톤|\b[AB]안\b|감모|수수료|보관비)", question, re.I))
 
     def follow_up_box_price(self, question, *, on_progress=None):
         if self.box_price is None:

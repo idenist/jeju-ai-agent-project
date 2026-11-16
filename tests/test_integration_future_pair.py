@@ -232,6 +232,101 @@ class FuturePairTests(unittest.TestCase):
         self.assertNotIn("같은 날짜의 과거 출하량부터", reply["text"])
         self.assertTrue(agent.future_pair.specs_deferred)
 
+
+    def test_pending_a_b_dialogue_binds_short_values_to_actual_question(self):
+        from agents.agent import AgentSession
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        client = 모의_대화_클라이언트("compare_future_pair", {
+            "action": "new", "expected_version": 0,
+            "patch": {"quantity": 3000, "start_date": "2026-11-16",
+                      "option_a": {"delay_days": 3}, "option_b": {"delay_days": 10},
+                      "price_mode": "manual", "history_filters": None},
+        })
+        agent = AgentSession(client=client)
+        first = agent.run("감귤 3톤, 3일 후와 10일 후 중 언제 출하할지 비교해 주세요. 가격은 몰라요.")
+        self.assertIn("A안의 판매단가", first["text"])
+        self.assertEqual(agent.future_pair.waiting_field(), "A안 가정 단가(원/kg)")
+        version = agent.future_pair.version
+        reply = agent.run("3075원이요")
+        self.assertEqual(reply["metrics"]["model_requests"], 0)
+        self.assertEqual(reply["metrics"]["dialogue_route"], "verified_pending_answer")
+        self.assertEqual(len(client.requests), 1)
+        self.assertEqual(agent.future_pair.inputs["price_a"], "3075")
+        self.assertEqual(agent.future_pair.version, version + 1)
+        self.assertIn("차감 전", reply["text"])
+        self.assertNotIn("A안의 판매단가를 kg당 얼마", reply["text"])
+        self.assertIsNone(agent.future_pair.inputs["price_b"])
+        self.assertIsNone(agent.future_pair.inputs["history_filters"])
+
+    def test_pending_short_answer_is_typed_across_input_classes(self):
+        from agents.future_pair_state import FuturePairState
+        pair = FuturePairState()
+        result = pair.apply("new", 0, {"quantity": 3000, "start_date": "2026-11-16",
+                                       "option_a": {"delay_days": 3}, "option_b": {"delay_days": 10},
+                                       "price_mode": "manual"})
+        self.assertEqual(result["status"], "NEEDS_INPUT")
+        for phrase, expected, field in (
+            ("3,075원/kg", "3075", "price_a"),
+            ("수수료 차감 전이에요", "gross", "price_basis"),
+            ("2%", "2", "option_a.loss_percent"),
+            ("4퍼센트예요", "4", "option_b.loss_percent"),
+            ("5%", "5", "option_a.fee_percent"),
+            ("7%", "7", "option_b.fee_percent"),
+            ("10000원", "10000", "option_a.daily_storage_cost"),
+            ("10000원", "10000", "option_b.daily_storage_cost"),
+            ("5000원", "5000", "option_a.other_cost_krw"),
+            ("5000원", "5000", "option_b.other_cost_krw"),
+            ("3300원", "3300", "price_b"),
+        ):
+            with self.subTest(phrase=phrase, field=field):
+                self.assertIsNotNone(pair.apply_short_answer(phrase))
+                value = pair.inputs
+                for segment in field.split("."):
+                    value = value[segment]
+                self.assertEqual(value, expected)
+        self.assertIsNotNone(pair.current_result())
+
+    def test_pending_reply_parser_is_strict_about_units_and_ambiguity(self):
+        from agents.future_pair_state import FuturePairState
+        pair = FuturePairState()
+        pair.apply("new", 0, {"quantity": 3000, "start_date": "2026-11-16",
+                              "option_a": {"delay_days": 3}, "option_b": {"delay_days": 10},
+                              "price_mode": "manual"})
+        original = pair.snapshot()
+        for unsafe in ("상자당 12,500원", "3,075원 아니면 3,500원", "3일에 팔아요",
+                       "B안 3,075원", "수수료 3%", "등급이 특이에요"):
+            with self.subTest(unsafe=unsafe):
+                self.assertIsNone(pair.apply_short_answer(unsafe))
+                self.assertEqual(pair.snapshot(), original)
+        self.assertIsNone(pair.apply_short_answer("A안 3000원, B안 3300원"))
+        self.assertTrue(pair.is_compound_value_answer("A안 3000원, B안 3300원"))
+        self.assertFalse(pair.is_compound_value_answer("감모율이 무슨 뜻이에요?"))
+        self.assertFalse(pair.is_compound_value_answer("지난 3년 출하량 조회해줘"))
+        self.assertFalse(pair.is_compound_value_answer("3075원 아니면 3500원"))
+
+    def test_compound_pending_response_forces_edit_without_wiping_state(self):
+        from agents.agent import AgentSession
+        from test_integration_ui_journey import 모의_대화_클라이언트
+        client = 모의_대화_클라이언트("compare_future_pair", {
+            "action": "new", "expected_version": 0,
+            "patch": {"quantity": 3000, "start_date": "2026-11-16",
+                      "option_a": {"delay_days": 3}, "option_b": {"delay_days": 10},
+                      "price_mode": "manual"},
+        })
+        agent = AgentSession(client=client)
+        agent.run("감귤 3톤, 3일 후와 10일 후 출하를 비교해줘")
+        version = agent.future_pair.version
+        client.arguments = {"action": "new", "expected_version": version,
+                            "patch": {"price_a": 3075, "price_b": 3300}}
+        reply = agent.run("A안 3075원, B안 3300원")
+        self.assertEqual(client.requests[-1]["tool_choice"],
+                         {"type": "function", "name": "compare_future_pair"})
+        self.assertEqual(agent.future_pair.inputs["quantity"], 3000)
+        self.assertEqual(agent.future_pair.inputs["price_a"], 3075)
+        self.assertEqual(agent.future_pair.inputs["price_b"], 3300)
+        self.assertEqual(reply["metrics"]["model_requests"], 1)
+
     def test_price_source_requires_explicit_historical_intent(self):
         from agents.future_pair_intent import requests_historical_pair_price
         from agents.future_pair_state import future_pair_feedback
