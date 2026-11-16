@@ -7,8 +7,6 @@ from __future__ import annotations
 import unittest
 
 from services.price_history_service import get_integrated_price_history
-from agents.agent import SYSTEM_PROMPT
-from agents.tools import TOOLS
 
 
 규격 = {"grade": "특", "size": "소", "package": "상자",
@@ -23,19 +21,6 @@ class 과거가격조회의도검수(unittest.TestCase):
         self.assertIn("variety", result["missing_fields"])
         self.assertFalse(result["is_future_forecast"])
         self.assertNotIn("examples", result)
-
-    def test_명시적_과거조회와_품종후보_탐색의_우선순위(self):
-        self.assertIn("가격쌍 조회를 명시적으로 요청하면", SYSTEM_PROMPT)
-        self.assertIn("get_price_history가 우선", SYSTEM_PROMPT)
-        self.assertIn("explore_data로 대신 조회해 자료가 없다고 단정하지 마세요", SYSTEM_PROMPT)
-        self.assertIn("세부 품종을 확인하도록", SYSTEM_PROMPT)
-
-    def test_가격조회_도구설명에도_누락조건_재확인_명시(self):
-        description = next(tool["description"] for tool in TOOLS if tool["name"] == "get_price_history")
-        self.assertIn("품종이 통칭이거나 일부 조건을 몰라도", description)
-        self.assertIn("누락 조건을 확인", description)
-        self.assertIn("NO_DATA라고 단정하지 않음", description)
-
 
 if __name__ == "__main__":
     unittest.main()

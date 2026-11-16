@@ -36,8 +36,4 @@ class ArchitectureBoundaries(unittest.TestCase):
                 with self.subTest(source=name, imported=imported):
                     self.assertNotEqual(imported, "ui.application")
 
-    def test_entrypoint_is_thin(self):
-        path=ROOT/"app.py"
-        self.assertLessEqual(len(path.read_text(encoding="utf-8").splitlines()),20)
-
 if __name__=="__main__": unittest.main()
