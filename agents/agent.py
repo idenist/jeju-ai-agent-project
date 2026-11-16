@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from copy import deepcopy
 from uuid import uuid4
@@ -85,6 +86,8 @@ class AgentSession:
         self.messages: list = []
         self.task_context = TaskContext()
         self.policy = policy or ExecutionPolicy()
+        # Default OFF. Controlled A/B tool experiment only, never automatic rollout.
+        self.focused_tools = os.environ.get("JEJU_FOCUSED_TOOLS", "").strip() == "1"
         self.shipment = None
         self.price_history_query = None
         self.price_history_revision = None
@@ -130,7 +133,9 @@ class AgentSession:
         status, calls = "OK", 0
         run_id = uuid4().hex
         metrics = {"model_requests": 0, "input_tokens": 0, "output_tokens": 0, "cached_input_tokens": 0, "request_seconds": [],
-                   "request_input_characters": [], "trimmed_history_turns": 0}
+                   "request_input_characters": [], "trimmed_history_turns": 0,
+                   "tools_offered_per_request": [], "instruction_chars_per_request": [],
+                   "focused_toolset": False}
         phase = "context"
         guard = RepeatGuard(self.policy.identical_calls)
         source_revision = data_revision()
@@ -199,6 +204,13 @@ class AgentSession:
                 "상자 가격을 kg 단가로 넣지 마세요. 환산용 무게와 과거 조회 규격을 사용자가 따로 지정하면 "
                 "history_filters에는 조회 규격만 넣으세요. 나머지 명시한 조건은 함께 저장하세요."
             )
+        from agents.tool_policy import select_offered_tools
+        experimental_tools, focused = select_offered_tools(
+            experimental_tools, enabled=self.focused_tools,
+            future_pair_request=future_pair_route,
+            experimental_forecast=self.experimental_forecast,
+        )
+        metrics["focused_toolset"] = focused
         tool_choice = {"type": "function", "name": forced_tool} if forced_tool else "auto"
         start_context_version = self.task_context.snapshot()["version"]
         try:
@@ -230,6 +242,8 @@ class AgentSession:
                 metrics["trimmed_history_turns"] += bound_history(self.messages, self.policy.history_turns, self.policy.input_characters)
                 model_messages = self.messages[user_starts(self.messages)[-1]:] if new_comparison else self.messages
                 metrics["request_input_characters"].append(encoded_size(model_messages))
+                metrics["tools_offered_per_request"].append(len(experimental_tools))
+                metrics["instruction_chars_per_request"].append(len(experimental_prompt))
                 phase = "model_request"
                 if on_progress and results:
                     on_progress("response")

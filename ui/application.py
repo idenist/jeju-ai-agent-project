@@ -303,8 +303,9 @@ def main():
         _render_csv_manager()
         case_download_slot, case_name = _render_cases(ws, _card_dirty())
     with st.container(key="shipment_views"):
-        chat, direct, tools = st.tabs(["대화", "직접 입력", "자료·도구"],
-                                     key="shipment_view", on_change="rerun")
+        pair, chat, direct, tools = st.tabs(
+            ["두 미래 출하안 A/B 비교", "AI 대화", "오늘과 나중", "자료·도구"],
+            key="shipment_view", on_change="rerun")
         with chat, st.container(key="shipment_chat_area"):
             chat_slot = st.empty()
             chat_report = st.empty()
@@ -319,19 +320,20 @@ def main():
                 _render_shipment_chat(ws, True, dirty_before, settlement_dirty, ws.session.future_pair.current_result())
             _sync_card()
             dirty_before = _card_dirty()
+        with pair:
+            st.caption("① 두 출하일·물량·단가 입력 → ② 감모율·비용 확인 → ③ A/B 손익과 과거 근거 비교")
+            st.caption("과거 경락가격은 미래 단가 예측이 아닙니다. 모르는 비용은 0원 대신 빈칸으로 남겨 주세요.")
+            from ui.future_pair_ui import render_future_pair
+            future_result = render_future_pair(ws.session.future_pair)
+            from ui.shipment_timing_ui import render_shipment_timing_panel
+            render_shipment_timing_panel(ws.session.future_pair)
         with direct:
-            current_tab, future_tab = st.tabs(["오늘과 나중", "두 미래 출하안 비교"])
-            with current_tab:
-                _render_card_summary(ws)
-                if st.button("출하 조건 비교", disabled=dirty_before):
-                    ws.calculate()
-                dirty = _render_cards(ws)
-                comparison_report = st.empty()
-            with future_tab:
-                from ui.future_pair_ui import render_future_pair
-                future_result = render_future_pair(ws.session.future_pair)
-                from ui.shipment_timing_ui import render_shipment_timing_panel
-                render_shipment_timing_panel(ws.session.future_pair)
+            st.caption("현재 판매와 보관 후 판매를 비교하는 추가 기능입니다. 두 미래 출하일의 비교는 첫 번째 탭을 이용하세요.")
+            _render_card_summary(ws)
+            if st.button("출하 조건 비교", disabled=dirty_before):
+                ws.calculate()
+            dirty = _render_cards(ws)
+            comparison_report = st.empty()
         with tools:
             data_tab, tools_tab = st.tabs(["자료 조회", "추가 도구"])
             with data_tab:

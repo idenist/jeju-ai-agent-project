@@ -362,11 +362,23 @@ def summarize(cases: list[dict], reports: list[dict], repeats: int, model: str) 
             "failed_turn_response": timing_summary([turn["response_seconds"] for turn in failed_turns]),
             "failed_turn_statuses": dict(Counter(turn.get("run_status") or "UNKNOWN" for turn in failed_turns)),
         }
+    # Tool count and instruction size are observable cost proxies, not quality scores.
+    footprint_turns = [turn.get("metrics", {}) for item in reports for turn in item.get("turns", [])]
+    footprint = {
+        "tools_offered_per_request": timing_summary([
+            x for m in footprint_turns for x in m.get("tools_offered_per_request", [])]),
+        "instruction_chars_per_request": timing_summary([
+            x for m in footprint_turns for x in m.get("instruction_chars_per_request", [])]),
+        "input_chars_per_request": timing_summary([
+            x for m in footprint_turns for x in m.get("request_input_characters", [])]),
+        "focused_turns": sum(m.get("focused_toolset") is True for m in footprint_turns),
+    }
     return {"model": model, "planned_runs": len(cases) * repeats,
             "completed_runs": completed, "passed_runs": passed,
             "pass_rate": round(passed / completed, 4) if completed else None,
             "complete": completed == len(cases) * repeats,
             "categories": categories, "failure_counts": dict(failures), "usage": metrics,
+            "request_footprint": footprint,
             "first_response_seconds": first_response, "case_metrics": by_case,
             "estimated_cost_usd": None,
             "note": "API 요금 추정 불가: 모델별 실제 가격 정보 미입력. 실제 청구액은 서비스 사용량에서 확인하세요."}

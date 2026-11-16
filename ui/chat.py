@@ -430,7 +430,7 @@ def _render_chat_report(report):
 def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, current_pair):
     if not key_present:
         st.title("감귤, 언제 출하할까요?")
-        st.info("채팅을 사용하려면 연결 설정이 필요합니다. 위의 ‘직접 입력’에서 출하를 비교할 수 있습니다.")
+        st.info("채팅을 사용하려면 연결 설정이 필요합니다. ‘두 미래 출하안 A/B 비교’ 탭에서 API 키 없이 출하 조건을 비교할 수 있습니다.")
         _render_shipment_composer(disabled=True, show_examples=False)
         return
     if draft_pending or settlement_dirty:
