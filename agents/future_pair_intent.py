@@ -9,7 +9,7 @@ _SHIPMENT = re.compile(r"출하|팔[지까면때고]|팔\s|판매")
 _CHOICE = re.compile(r"비교|고민|아니면|언제|\b중\b|나을|낫|유리|대비|팔지|팔까")
 _OTHER_PURPOSE = re.compile(
     r"정산|검산|출하량|출하\s*통계|공급\s*집중도|제주\s*데이터\s*허브|#\s*855\b|"
-    r"민감도|역산|예측|뜻|의미|설명|보고서만|과거\s*(?:경락)?가격만")
+    r"민감도|역산|뜻|의미|설명|보고서만|과거\s*(?:경락)?가격만")
 _TODAY_SALE = re.compile(r"(?:오늘|지금|당장|즉시|바로)\s*(?:출하|판매|팔)|(?<!\d)0\s*일\s*(?:뒤|후)")
 _DAY_NAMES = {name: days for days, name in enumerate(
     ("하루", "이틀", "사흘", "나흘", "닷새", "엿새", "이레", "여드레", "아흐레", "열흘"), 1)}
@@ -36,20 +36,25 @@ _PRICE_BASIS = re.compile(
 )
 _PRICE_BASIS_UNCERTAIN = re.compile(r"^\s*(?:(?:금액|단가|가격)\s*)?(?:인지|일지|이냐|또는|/|·)")
 _CONTINUE_COMPARISON = re.compile(r"(?:기존|현재|직전|아까(?:의)?)\s*(?:출하\s*)?비교|(?:나중\s*출하일|B안\s*(?:날짜|단가))만")
+_HISTORICAL_PRICE = re.compile(r"(?:과거\s*(?:경락\s*)?(?:가격|시세|자료|변동)|경락\s*가격|시장\s*(?:시세|자료)|도매\s*시세|과거가격|자료)")
+_EXCLUDE_HISTORICAL_PRICE = re.compile(
+    r"(?:을|를|은|는|도|와|과)?\s*(?:조회\s*(?:하지\s*말|안\s*(?:해|봐)|하지\s*않)|"
+    r"보지\s*(?:말|마|않아도)|참고하지\s*말|사용하지\s*말|비교하지\s*말|필요\s*없|없이|빼고|제외)"
+)
+
+
+def forbids_historical_pair_price(question: str) -> bool:
+    """True only when the user explicitly excludes historical price evidence."""
+    if not isinstance(question, str):
+        return False
+    return any(_EXCLUDE_HISTORICAL_PRICE.match(question[match.end():].lstrip())
+               for match in _HISTORICAL_PRICE.finditer(question.casefold()))
 
 
 def requests_historical_pair_price(question: str) -> bool:
-    """Explicit opt-in to historical evidence for the later A/B price.
-
-    Unknown future prices alone are NOT permission to force a historical
-    market lookup that needs grade/size/package details.
-    """
+    """Whether the user explicitly names historical price evidence."""
     text = question.casefold()
-    if re.search(
-        r"(?:과거\s*(?:경락\s*)?(?:가격|시세|자료)|경락\s*가격|과거\s*변동)"
-        r"\s*(?:은|는|도)?\s*(?:보지\s*말|필요\s*없|사용하지\s*말|조회하지\s*말|빼고|제외)",
-        text,
-    ):
+    if forbids_historical_pair_price(text):
         return False
     return any(word in text for word in (
         "과거 가격", "과거 경락", "과거 시세", "과거 변동", "경락가격", "경락 가격",
@@ -58,7 +63,9 @@ def requests_historical_pair_price(question: str) -> bool:
 
 
 def requests_manual_price(question: str) -> bool:
-    return any(word in question for word in ("직접 입력", "직접입력", "직접 넣", "정한 단가", "내가 입력"))
+    if any(word in question for word in ("직접 입력", "직접입력", "직접 넣", "정한 단가", "내가 입력")):
+        return True
+    return bool(re.search(r"(?:가격|과거|시장)?\s*(?:자료|데이터)\s*없이\s*(?:손익분기|계산|비교)", question))
 
 
 def starts_new_comparison(question: str) -> bool:

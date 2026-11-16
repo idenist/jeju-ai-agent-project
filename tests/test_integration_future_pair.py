@@ -2,6 +2,7 @@ from decimal import Decimal
 from io import BytesIO
 import json
 import os
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -259,6 +260,58 @@ class FuturePairTests(unittest.TestCase):
         self.assertIsNone(agent.future_pair.inputs["price_b"])
         self.assertIsNone(agent.future_pair.inputs["history_filters"])
 
+    def test_pending_unknown_uses_model_reply_and_preserves_comparison_state(self):
+        from agents.agent import AgentSession
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        client = 모의_대화_클라이언트("compare_future_pair", {
+            "action": "new", "expected_version": 0,
+            "patch": {"quantity": 3000, "start_date": "2026-11-16",
+                      "option_a": {"delay_days": 3}, "option_b": {"delay_days": 10},
+                      "price_mode": "manual"},
+        })
+        agent = AgentSession(client=client)
+        first = agent.run("감귤 3톤, 3일 후와 10일 후 출하를 비교해줘")
+        self.assertIn("A안의 판매단가", first["text"])
+        before = agent.future_pair.snapshot()
+        model_reply = "알겠습니다. A안의 단가는 미확인으로 둘게요. 확인하시면 이어서 비교할 수 있습니다."
+        with patch.object(client, "create", return_value=SimpleNamespace(
+                output=[], output_text=model_reply, status="completed")) as model:
+            reply = agent.run("가격은 아직 몰라요")
+        model.assert_called_once()
+        request = model.call_args.kwargs
+        self.assertIn("A안 가정 단가(원/kg)", request["input"][-1]["content"])
+        self.assertIn("현재 질문에 답을 모른다고", request["instructions"])
+        self.assertEqual(reply["metrics"]["model_requests"], 1)
+        self.assertEqual(reply["metrics"]["no_tool_model_responses"], 1)
+        self.assertEqual(reply["text"], model_reply)
+        self.assertEqual(agent.future_pair.snapshot(), before)
+        self.assertNotIn("얼마로 가정할까요", reply["text"])
+
+        updated = agent.run("3075원이요")
+        self.assertEqual(updated["metrics"]["model_requests"], 0)
+        self.assertEqual(agent.future_pair.inputs["price_a"], "3075")
+        self.assertEqual(agent.future_pair.inputs["quantity"], 3000)
+
+    def test_pending_model_freeform_cannot_insert_an_unverified_amount(self):
+        from agents.agent import AgentSession
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        client = 모의_대화_클라이언트("compare_future_pair", {
+            "action": "new", "expected_version": 0,
+            "patch": {"quantity": 3000, "start_date": "2026-11-16",
+                      "option_a": {"delay_days": 3}, "option_b": {"delay_days": 10},
+                      "price_mode": "manual"},
+        })
+        agent = AgentSession(client=client)
+        agent.run("감귤 3톤, 3일 후와 10일 후 출하를 비교해줘")
+        with patch.object(client, "create", return_value=SimpleNamespace(
+                output=[], output_text="가격은 3,075원으로 가정해 비교하겠습니다.", status="completed")):
+            reply = agent.run("가격은 아직 몰라요")
+        self.assertNotIn("3,075원", reply["text"])
+        self.assertNotIn("A안의 판매단가를 kg당 얼마", reply["text"])
+        self.assertIsNone(agent.future_pair.inputs["price_a"])
+
     def test_pending_short_answer_is_typed_across_input_classes(self):
         from agents.future_pair_state import FuturePairState
         pair = FuturePairState()
@@ -304,6 +357,40 @@ class FuturePairTests(unittest.TestCase):
         self.assertFalse(pair.is_compound_value_answer("감모율이 무슨 뜻이에요?"))
         self.assertFalse(pair.is_compound_value_answer("지난 3년 출하량 조회해줘"))
         self.assertFalse(pair.is_compound_value_answer("3075원 아니면 3500원"))
+
+    def test_question_marked_loss_rate_is_not_confirmed_as_a_short_answer(self):
+        from agents.future_pair_state import FuturePairState
+        pair = FuturePairState()
+        pair.apply("new", pair.version, {
+            "quantity": 3000, "start_date": "2026-11-16", "price_a": 3085,
+            "price_basis": "gross", "option_a": {"delay_days": 3},
+            "option_b": {"delay_days": 10}, "price_mode": "manual",
+        })
+        self.assertIn("A안", pair.waiting_field())
+        before = pair.snapshot()
+        self.assertIsNone(pair.apply_short_answer("5%?"))
+        self.assertFalse(pair.is_compound_value_answer("5%?"))
+        self.assertEqual(pair.snapshot(), before)
+
+    def test_question_marked_model_patch_cannot_confirm_loss_rate(self):
+        from agents.agent import AgentSession
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        client = 모의_대화_클라이언트("compare_future_pair", {
+            "action": "new", "expected_version": 0,
+            "patch": {"quantity": 3000, "start_date": "2026-11-16", "price_a": 3085,
+                      "price_basis": "gross", "option_a": {"delay_days": 3},
+                      "option_b": {"delay_days": 10}, "price_mode": "manual"},
+        })
+        agent = AgentSession(client=client)
+        agent.run("감귤 3톤, 3일 후와 10일 후를 비교해 주세요.")
+        before = agent.future_pair.snapshot()
+        client.arguments = {"action": "edit", "expected_version": agent.future_pair.version,
+                            "patch": {"option_a": {"loss_percent": 5}}}
+        reply = agent.run("5%?")
+        self.assertEqual(agent.future_pair.snapshot(), before)
+        self.assertIn("물음표가 붙은 수치", reply["text"])
+        self.assertNotIn("A안의 3일 보관기간 전체 감모율은 몇 %", reply["text"])
 
     def test_compound_pending_response_forces_edit_without_wiping_state(self):
         from agents.agent import AgentSession
@@ -514,7 +601,7 @@ class FuturePairTests(unittest.TestCase):
     def test_chat_basis_choice_needs_a_missing_basis_and_keeps_unknown_empty(self):
         from agents.agent import AgentSession
         from ui.workspace import SharedWorkspace
-        from ui.chat import _chat_basis_target, _reply_to_chat_basis
+        from ui.chat import _chat_basis_target, _render_pending_pair_price, _reply_to_chat_basis
 
         workspace = SharedWorkspace(AgentSession())
         pair = workspace.session.future_pair
@@ -528,7 +615,12 @@ class FuturePairTests(unittest.TestCase):
         before = pair.snapshot()
         unknown = _reply_to_chat_basis(workspace, *target, None)
         self.assertEqual(unknown["deferred_basis"], target)
+        self.assertIn("미확인", unknown["text"])
+        self.assertNotIn("과거 출하량", unknown["text"])
         self.assertEqual(pair.snapshot(), before)
+        with patch("ui.chat._render_chat_timing_action") as timing_action:
+            _render_pending_pair_price(workspace, [{"reply": unknown}])
+        timing_action.assert_not_called()
         answered = _reply_to_chat_basis(workspace, *target, "commission_net")
         self.assertEqual(answered["status"], "OK")
         self.assertEqual(pair.inputs["price_b"], 2750)

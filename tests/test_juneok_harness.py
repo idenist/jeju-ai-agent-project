@@ -156,7 +156,8 @@ class HarnessTests(unittest.TestCase):
     def test_canonical_help_does_not_request_unrelated_quantity(self):
         session = self.session([response(text="수수료는 이미 차감한 것입니다.")])
         result = session.run("수수료 차감 후 단가의 뜻은 뭐야?")
-        self.assertIn("수수료를 다시 차감하지 않습니다", result["text"])
+        self.assertEqual("수수료는 이미 차감한 것입니다.", result["text"])
+        self.assertEqual(result["tool_results"], [])
         self.assertNotIn("필요한 항목", result["text"])
 
     def test_every_nested_object_is_strict(self):

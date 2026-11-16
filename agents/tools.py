@@ -55,6 +55,12 @@ def with_box_price(tool_definition):
 
 
 TOOLS = [
+    tool("get_price_overview", "연도·월·기간별 과거 가격이 어느 정도인지 넓게 조회. '작년 감귤 가격'은 이 도구가 우선입니다. 시즌 보관자료에서 시장·품종별 가중평균, 실제 기간, 품질 표시와 등급/포장 후보를 제공합니다. 등급·시장·규격은 몰라도 조회 가능. 시장코드는 받지 않습니다. 조회 후 설명하려면 finish_turn=false로 도구 결과를 읽고 자연어로 답하세요.",
+         {"start_date": nullable("string", description="조회 시작일 YYYY-MM-DD. 작년은 오늘(KST)의 전년도 01-01."),
+          "end_date": nullable("string", description="조회 마지막일 YYYY-MM-DD. 작년은 전년도 12-31. 한 번에 최대 366일."),
+          **{k: nullable("string", description="사용자가 선택한 필터만 전달. 모르면 null; 후보를 사용자 조건으로 확정하지 말 것.")
+             for k in ("market", "variety", "grade", "size", "package")},
+          "package_kg": nullable("number", description="선택한 포장 한 개 중량(kg). 총 출하물량과 별개; 모르면 null.")}),
     tool("compare_future_pair", "두 미래 출하일을 비교합니다. 새 비교는 new, 기존 P2 조건 수정은 edit. B안 단가는 직접 입력(manual) 또는 과거 동일규격 변동 가정(history). history는 감모율·보관비가 없어도 과거 근거를 먼저 조회합니다. 사용자가 말한 값만 보내고 변경 없는 값은 null. 날짜 변경 시 새 기간 전체 감모를 확인한 경우에만 같이 전달합니다.",
          {"action": {"type": "string", "enum": ["new", "edit"]}, "expected_version": {"type": "integer"},
           "patch": object_schema({"quantity": nullable("number"), "price_basis": nullable("string", enum=["gross", "commission_net", None]),
@@ -104,7 +110,7 @@ TOOLS = [
     tool("get_historical_shipment_context", "제주데이터허브 #855의 실제 과거 월별 출하량 조회. 경매 품종을 출하 품종으로 자동 매핑하지 말 것. 2026 실시간 공급 아님.",
          {"shipment_variety": {"type": "string"}, "target_month": {"type": "integer", "minimum": 1, "maximum": 12},
           "start_year": nullable("integer"), "end_year": nullable("integer")}),
-    tool("get_market_evidence", "가락시장 확보 CSV의 동일 거래조건 경락가격 참고. 농가 실수취가·실시간 시세가 아님. 조건이 없으면 null로 질문할 항목 확인.",
+    tool("get_market_evidence", "특정 상품의 모든 거래규격을 아는 경우 그 규격의 최근 확보 경락가격 조회. 연도/월/기간 가격 개요나 규격을 모르는 가격 질문은 get_price_overview 사용. 농가 실수취가·실시간 시세가 아님.",
          {"market_code": nullable("string"), "variety": nullable("string"), "grade": nullable("string"),
           "size": nullable("string"), "package": nullable("string"), "package_kg": nullable("number"),
           "as_of": nullable("string")}),
@@ -209,6 +215,9 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
                     on_progress("compare")
                 result = compare_shipment_options(store.scenario)
             return {**result, "scenario_version": store.version}
+        if name == "get_price_overview":
+            from services.price_overview import get_price_overview
+            return get_price_overview(args)
         if name == "get_price_history":
             from services.price_history_service import get_integrated_price_history
             if args.get("limit") is None:
@@ -234,7 +243,7 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
 
 
 def model_receipt_for_tool(name: str, result: dict, *, experimental_forecast: bool = False) -> dict:
-    """Single boundary for model-visible tool results; keep full values in the local UI only."""
+    """Expose tool evidence while keeping settlement and research amounts local."""
     model_output = result
     if name == 'reconcile_settlement':
         from services.settlement import model_receipt

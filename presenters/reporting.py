@@ -25,6 +25,7 @@ TOOL_LABELS.update(reconcile_settlement="출하 기록·정산 검산", get_pric
 TOOL_LABELS["compare_future_pair"] = "두 미래 출하안 비교"
 TOOL_LABELS["analyze_shipment_timing"] = "제주데이터허브 출하 시기 A/B 분석"
 TOOL_LABELS["market_decision"] = "다년도 시장 근거와 조건부 판단"
+TOOL_LABELS["get_price_overview"] = "기간별 시장가격 요약"
 FIELD_NAMES.update(quoted_price_per_kg="제안 단가 또는 미래 단가 가정(원/kg)", option_id="검토할 보관 대안")
 FIELD_NAMES.update(comparison_reference="변경 검토 기준으로 선택한 저장 JSON")
 
@@ -143,6 +144,13 @@ def future_pair_summary(result: dict) -> tuple[str, str, str]:
     a, options = result["option_a"], result["options_b"]
     earlier = _shipment_label("A", a["sale_date"])
     later = _shipment_label("B", options[0]["sale_date"])
+    if result.get("threshold_only"):
+        minimum = _number(result["minimum_whole_krw_per_kg"], 0)
+        return (
+            "B안 가격 미확인 · 실제 유불리 판단 보류",
+            f"미확인 비용 차이를 0원으로 둔 참고 손익분기 가격은 {minimum}원/kg입니다.",
+            "B안 실제 단가와 미확인 비용을 반영하면 기준 가격이 달라집니다.",
+        )
     central = next((row for row in options if _price_assumption(row) == "중앙값"), options[0])
     difference = Decimal(central["difference_vs_a_krw"])
     heading = f"중앙값 가정({_number(central['price_per_kg'])}원/kg)" if len(options) > 1 else "직접 입력한 단가"
@@ -169,6 +177,46 @@ def _render_future_pair(result: dict) -> str:
     conclusion, minimum, favorable = future_pair_summary(result)
     earlier = _shipment_label("A", a["sale_date"])
     later = _shipment_label("B", b["sale_date"])
+    if result.get("threshold_only"):
+        sensitivity = _number(result["unknown_cost_delta_per_10000_krw_per_kg"])
+        missing = ", ".join(result.get("unknown_cost_fields", ())) or "없음"
+        if result.get("history_scenarios"):
+            preview = result["history_preview"]
+            start, end = preview["base_date_range"]
+            lines = [
+                "**가격자료 비교 · 과거 사례 가정이며 미래가격 예측은 아닙니다**",
+                f"A안 {a['sale_date']}와 B안 {b['sale_date']} 사이 {preview['interval_days']}일 간격의 과거 가격쌍 {preview['clean_pairs']}건을 사용했습니다 ({start} ~ {end}).",
+                f"**미확인 비용 차이를 0원으로 둔 참고 손익분기 가격: {_number(result['minimum_whole_krw_per_kg'], 0)}원/kg**",
+                f"A안 확인 가능 금액: {_whole_won(result['a_reference_amount_krw'])} · 미확인 비용 제외",
+                f"계산에 반영한 확인 비용 합계: A안 {_whole_won(a['known_cost_krw'])} · B안 {_whole_won(b['known_cost_krw'])}",
+                "",
+                "| 과거 가격 사례 | 가격 변동 | B안 가정 단가 | 확인한 비용만 반영한 B−A 금액차 |",
+                "| --- | ---: | ---: | ---: |",
+            ]
+            for row in result["options_b"]:
+                lines.append(
+                    f"| {row['label']} | {_number(row['change_pct'])}% | {_number(row['price_per_kg'])}원/kg | "
+                    f"{_won_difference(row['reference_difference_krw'])} |"
+                )
+            lines += [
+                "",
+                f"미확인 비용: {missing}",
+                f"B안 미확인 비용이 A안보다 10,000원 많으면 손익분기 단가는 약 {sensitivity}원/kg 올라갑니다. 비용 차이가 반대면 그만큼 내려갑니다.",
+                "표의 금액차에는 미확인 비용 차이가 반영되지 않았습니다. 실제 어느 안이 유리한지 단정하지 않습니다.",
+            ]
+            return "\n".join(lines)
+        return "\n".join([
+            f"**현재 결론 · {conclusion}**",
+            f"**{minimum}**",
+            f"A안의 확인 가능한 금액은 {_whole_won(result['a_reference_amount_krw'])}입니다. A안의 미확인 비용은 빠져 있습니다.",
+            f"계산에 반영한 확인 비용 합계: A안 {_whole_won(a['known_cost_krw'])} · B안 {_whole_won(b['known_cost_krw'])}",
+            f"A안 {a['sale_date']} 출하 · B안 {b['sale_date']} 출하 · 물량 {_number(result['quantity_kg'])}kg · 단가 {basis}",
+            f"판매 가능 물량: A안 {_number(a['remaining_kg'])}kg · B안 {_number(b['remaining_kg'])}kg",
+            f"미확인 비용: {missing}",
+            f"B안의 미확인 비용이 A안보다 10,000원 많으면 B안 손익분기 단가는 약 {sensitivity}원/kg 올라갑니다. 비용 차이가 반대면 그만큼 내려갑니다.",
+            "",
+            "B안 판매가격이 없어서 어느 출하안이 실제로 유리한지 판단하지 않았습니다. 이 비교에서는 과거 가격을 조회하지 않았고 미래가격을 예측하지 않았습니다.",
+        ])
     warning = manual_price_warning(a["price_per_kg"], b["price_per_kg"]) if b["id"] == "manual_b" else None
     lines = [
         f"**비교 결론 · {conclusion}**",
@@ -224,6 +272,9 @@ def _render_result_body(result: dict) -> str:
     if result.get("analysis_type") == "market_decision":
         from presenters.market_export import market_markdown
         return market_markdown(result)
+    if result.get("analysis_type") == "price_overview":
+        from services.price_overview import render_price_overview
+        return render_price_overview(result)
     if result.get("analysis_type") == "price_history":
         from services.price_history_reporting import render_price_history
         return render_price_history(result)

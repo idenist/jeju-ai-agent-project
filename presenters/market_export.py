@@ -13,7 +13,8 @@ STATUS_LABELS = {
     "NOT_PREPARED": "시즌 가공본 없음", "AMBIGUOUS_CODES": "분류코드 모호",
     "DATA_ERROR": "가격 자료 오류", "INVALID_CALENDAR_DATE": "날짜 오류",
     "PARTIAL_DATA": "일부 관측", "NEEDS_SPEC": "거래규격 확인 필요",
-    "NOT_COMPARABLE": "가격 기준이 달라 비교 불가",
+    "NOT_COMPARABLE": "가격 기준이 달라 비교 불가", "NOT_REQUESTED": "조회하지 않음",
+    "NOT_APPLICABLE": "추가 연결 생략",
 }
 
 
@@ -33,6 +34,12 @@ def _money(value):
 
 def export_market_record(pair_result: dict, stored: dict | None) -> dict:
     """Use only the joined analysis just rendered for this A/B result."""
+    if pair_result.get("suppress_market_evidence"):
+        used = pair_result.get("historical_price_lookup") == "used"
+        return {"analysis_type": "market_decision",
+                "status": "NOT_APPLICABLE" if used else "NOT_REQUESTED",
+                "message": ("과거 가격쌍을 비교에 사용했습니다. 현재는 비용 차이가 미확인이라 별도 시장 근거 연결을 생략했습니다."
+                            if used else "이 비교에서는 과거 가격·시장 근거를 조회하지 않았습니다.")}
     record = stored.get("result") if isinstance(stored, dict) else None
     if isinstance(record, dict) and record.get("analysis_type") == "market_decision":
         return record

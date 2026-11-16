@@ -79,8 +79,8 @@ def _show_agent_reply(reply, current_version, draft_pending=False, past_future_p
         display_text = display_text.replace(render_settlement(result), render_settlement(result, details=False))
     version = reply.get("state", {}).get("version")
     if past_future_pair:
-        with st.expander("이전 두 출하일 비교 응답"):
-            st.markdown(display_text)
+        st.caption("이 답변은 이전 비교 조건에 대한 응답입니다.")
+        st.markdown(display_text)
     elif draft_pending or (version != current_version and not any(
             entry["tool"] == "compare_future_pair" for entry in reply.get("visible_results", []))):
         suffix = "카드에 저장 전 수정이 있습니다" if draft_pending else f"현재 버전 {current_version}"
@@ -276,19 +276,15 @@ def _render_chat_basis(ws, messages):
                       on_click=_submit_shipment_question, args=(answer,), kwargs={"basis_choice": (*target, basis)})
 
 def _reply_to_chat_basis(ws, scope, version, basis, *, on_progress=None):
-    from agents.future_pair_state import SUGGEST_TIMING
-    from services.shipment_timing import resolve_pair_dates
-
     pair = ws.session.future_pair
     current_version = pair.version if scope == "future_pair" else ws.store.version
     if version != current_version:
         return {"status": "INVALID_INPUT", "state": ws.store.snapshot(),
                 "text": "비교 조건이 바뀌었어요. 현재 조건에서 다시 선택해 주세요."}
     if basis is None:
-        if scope == "future_pair" and resolve_pair_dates(pair.inputs)[0]:
-            text = SUGGEST_TIMING
-        else:
-            text = "과거 출하량부터 볼까요? 품종과 비교하고 싶은 날짜를 알려주세요."
+        text = ("수수료 차감 기준은 아직 미확인으로 둘게요. 임의로 전·후를 정하지 않습니다. "
+                "기준을 확인하거나 계산을 위한 가정을 직접 정하면 이어서 비교할 수 있어요. "
+                "기준을 모르는 동안에는 이 단가로 총수취액을 계산할 수 없습니다.")
         return {"status": "OK", "state": ws.store.snapshot(), "text": text, "deferred_basis": (scope, version)}
     if scope == "future_pair":
         return _reply_to_future_pair_edit(ws, version, {"price_basis": basis}, on_progress=on_progress)
@@ -310,9 +306,7 @@ def _render_pending_pair_price(ws, messages):
     pair = state.pending
     if not pair or pair["future_pair_version"] != state.version:
         return
-    basis_deferred = any(message.get("reply", {}).get("deferred_basis") == ("future_pair", state.version)
-                         for message in messages)
-    if not pair.get("manual_price_required") and (state.specs_deferred or state.costs_deferred or basis_deferred):
+    if not pair.get("manual_price_required") and (state.specs_deferred or state.costs_deferred):
         earlier, later = resolve_pair_dates(state.inputs)
         _, active_report = _latest_chat_report(messages, ws.store.version, None, state.version)
         if earlier and not (active_report and active_report["kind"] == "shipment_timing"):

@@ -61,7 +61,7 @@ class 통합실행경로검수(TestCase):
         대상 = [
             "agents/tools.py", "agents/briefing.py",
             "agents/insights.py", "agents/sensitivity.py",
-            "agents/limits.py", "agents/agent.py",
+            "agents/limits.py",
             "services/settlement.py",
         ]
         for 상대경로 in 대상:

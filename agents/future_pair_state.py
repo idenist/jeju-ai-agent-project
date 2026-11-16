@@ -5,7 +5,11 @@ from decimal import Decimal
 import re
 
 from services.data_contract import PAIR_FILES, PRICE_FILE, REPORT_FILE
-from services.future_pair import compare_future_pair, preview_future_pair_history
+from services.future_pair import (
+    compare_future_pair, compare_future_pair_history_reference,
+    compare_future_pair_threshold_reference,
+    preview_future_pair_history,
+)
 from services.economics import decimal
 from core.config import PROJECT_ROOT
 from services.data_refresh import digest, resolve_market_root
@@ -26,16 +30,19 @@ COST_QUESTIONS = {
     OPTION_LABELS["fee_percent"]: "판매 수수료는 몇 %인가요?",
 }
 COST_NAMES = dict(zip(COST_QUESTIONS, ("하루 보관비", "별도 비용", "판매 수수료")))
-SUGGEST_TIMING = "같은 날짜의 과거 출하량부터 볼까요?"
 UNKNOWN_SPEC_RECOVERY = (
-    "경매 거래규격을 모르셔도 출하 비교는 이어갈 수 있습니다. "
-    "동일 규격의 과거 경락가격 조회는 잠시 보류하고, "
-    "A안과 B안의 가정 판매단가를 직접 입력해 비교할 수 있습니다. "
-    "실제 제시가격이 없다면 가정값임을 표시해 주세요."
+    "상품 규격이 확인되지 않아 다른 감귤의 과거 가격을 연결하지 않겠습니다. "
+    "출하명세나 포장 라벨의 품종·등급·크기·포장·상자중량을 확인하면 자료 후보와 맞춰 볼 수 있어요. "
+    "지금 확인하기 어렵다면 ‘자료 없이 손익분기’라고 말씀해 주세요. 현재 A안 가격만으로 가능한 기준을 계산하고, "
+    "B안 미래가격은 임의로 만들지 않겠습니다."
 )
 UNKNOWN_COST_RECOVERY = (
     "모르는 감모율·비용은 미확인으로 보존합니다. 0으로 간주하지 않습니다. "
     "확인 가능한 조건부터 알려주시거나 가정값을 직접 정해 주세요."
+)
+AMBIGUOUS_NUMERIC_RECOVERY = (
+    "물음표가 붙은 수치는 확정값으로 저장하지 않았어요. "
+    "확정값이면 물음표 없이 알려주시고, 가정값이면 가정으로 정해 주세요."
 )
 _UNKNOWN_INPUT = re.compile(r"모르|몰라|몰랐|확인\s*(?:못|할\s*수\s*없)|아직\s*(?:정해지지\s*않|안\s*나왔)")
 _UNKNOWN_COST = re.compile(r"비용|보관[비료]|저장[료비]|수수료|감모|감량|줄(?:어|지|는)")
@@ -88,6 +95,12 @@ def is_bare_unknown_reply(question: str) -> bool:
     ))
 
 
+def is_questioned_numeric_reply(question: str) -> bool:
+    """A numeric statement ending in a question mark is not a confirmed value."""
+    return (isinstance(question, str) and bool(re.search(r"\d", question))
+            and question.rstrip().endswith(("?", "？")))
+
+
 def unavailable_cost(question):
     return unavailable_input(question, _UNKNOWN_COST)
 
@@ -107,6 +120,8 @@ def asks_where_to_check(question):
 
 
 def future_pair_feedback(result, *, pause_costs=False):
+    if result.get("ambiguous_input"):
+        return AMBIGUOUS_NUMERIC_RECOVERY
     message = result.get("message") or "비교 조건을 확인해 주세요."
     if preview := result.get("history_preview"):
         start, end = preview["base_date_range"]
@@ -141,11 +156,22 @@ def history_clarification(result, question="", *, pause_specs=False):
     fields = [field for field in result.get("missing_fields", ()) if field in HISTORY_QUESTIONS]
     if not fields:
         return None
+    asks_for_help = asks_where_to_check(question)
+    if len(fields) > 1 and not pause_specs and not unavailable_input(question, _UNKNOWN_SPEC):
+        lines = ["가격자료를 맞춰 보려면 출하명세나 포장 라벨의 거래규격이 필요해요. 확인되는 항목을 한 번에 알려주세요."]
+        if asks_for_help:
+            lines.append("품종·등급·크기·포장·상자중량은 포장 라벨이나 출하명세에서, 시장·거래방식은 출하처나 경락 내역에서 확인할 수 있어요.")
+        for field in fields:
+            choices = [choice for choice in result.get("choices", {}).get(field, [])
+                       if choice not in {"미상", ".", "-"}][:4]
+            suffix = f" · 자료 후보: {', '.join(choices)}" if choices else ""
+            lines.append(f"- {HISTORY_FIELDS[field]}{suffix}")
+        lines.append("모르는 항목은 ‘모름’이라고 하셔도 됩니다. 거래규격이 확인되지 않으면 가격자료를 억지로 연결하지 않고 손익분기 조건부터 보여드릴게요.")
+        return "\n".join(lines)
     first = fields[0]
     mentioned = [field for field in fields if HISTORY_FIELDS[field] in question]
     if "package_kg" in fields and "package_kg" not in mentioned and ("상자 무게" in question or "상자 중량" in question):
         mentioned.append("package_kg")
-    asks_for_help = asks_where_to_check(question)
     if pause_specs or unavailable_input(question, _UNKNOWN_SPEC):
         guidance = " ".join(HISTORY_HELP[field] for field in (mentioned or [first])) if asks_for_help else ""
         return f"{UNKNOWN_SPEC_RECOVERY}\n\n{guidance}" if guidance else UNKNOWN_SPEC_RECOVERY
@@ -196,7 +222,8 @@ def _simple_slot_patch(field, question):
     """
     if not isinstance(question, str) or not isinstance(field, str):
         return None
-    text = question.strip().rstrip(".!?。 ").strip()
+    # Keep question marks: "5%?" is tentative, not a confirmed 5% input.
+    text = question.strip().rstrip(".!。 ").strip()
     text = _SIMPLE_REPLY_SUFFIX.sub("", text).strip()
     side = None
     if found := _SIMPLE_SIDE.match(text):
@@ -373,9 +400,27 @@ class FuturePairState:
     def calculate(self, *, preview_history=False, on_progress=None):
         self.clear_result()
         historical = self.inputs["history_filters"] is not None
+        if not historical and self._threshold_reference_ready(self.inputs):
+            result = compare_future_pair_threshold_reference(**{
+                key: self.inputs[key] for key in (
+                    "quantity", "price_basis", "start_date", "option_a", "option_b", "price_a",
+                )
+            })
+            if result["status"] == "OK":
+                result["future_pair_version"] = self.version
+                self.result = deepcopy(result)
+                return result
+            if result["status"] != "NEEDS_INPUT":
+                return {**result, "analysis_type": "future_pair", "future_pair_version": self.version}
         if missing := self._missing(self.inputs):
             if preview_history and historical:
                 return self._preview_history(missing, on_progress)
+            if not historical and self.inputs["price_b"] is None:
+                optional_cost_fields = {
+                    f"{side}안 {OPTION_LABELS[field]}"
+                    for side in ("A", "B") for field in ("daily_storage_cost", "other_cost_krw")
+                }
+                missing = [field for field in missing if field not in optional_cost_fields]
             return self._response("NEEDS_INPUT", "비교 조건을 확인해 주세요.", missing_fields=missing,
                                   comparison_inputs_pending=preview_history, storage_days=self._storage_days())
         revision = _price_revision() if historical else None
@@ -405,9 +450,26 @@ class FuturePairState:
                                       manual_price_required=True)
             preview = {key: result[key] for key in ("interval_days", "clean_pairs", "base_date_range",
                                                     "scenarios", "conditions", "source")}
+            if self._threshold_reference_ready(self.inputs):
+                reference = compare_future_pair_history_reference(
+                    **{key: self.inputs[key] for key in (
+                        "quantity", "price_basis", "start_date", "option_a", "option_b", "price_a",
+                    )},
+                    history_preview=preview,
+                )
+                if reference["status"] == "OK":
+                    reference["future_pair_version"] = self.version
+                    self.result = deepcopy(reference)
+                    self.source_revision = revision
+                    return reference
+            optional_cost_fields = {
+                f"{side}안 {OPTION_LABELS[field]}"
+                for side in ("A", "B") for field in ("daily_storage_cost", "other_cost_krw")
+            }
+            missing = [field for field in missing if field not in optional_cost_fields]
             return self._response("NEEDS_INPUT", "과거 가격 근거를 확인했습니다. 손익 계산 조건을 이어서 확인해 주세요.",
                                   source_status="HISTORY_READY", missing_fields=missing, history_preview=preview,
-                                  storage_days=self._storage_days())
+                                  comparison_inputs_pending=True, storage_days=self._storage_days())
         return self._agent_result({**result, "analysis_type": "future_pair", "future_pair_version": self.version})
 
     @staticmethod
@@ -437,11 +499,27 @@ class FuturePairState:
     @staticmethod
     def _missing(inputs):
         missing = [label for field, label in LABELS.items()
-                   if inputs[field] is None and (field != "price_b" or inputs["history_filters"] is None)]
+                   if inputs[field] is None and field != "price_b"]
         for key, side in (("option_a", "A"), ("option_b", "B")):
             missing += [f"{side}안 {OPTION_LABELS[field]}" for field in OPTION_FIELDS
                         if inputs[key][field] is None and (field != "fee_percent" or inputs["price_basis"] == "gross")]
         return missing
+
+    @staticmethod
+    def _threshold_reference_ready(inputs):
+        """Minimum confirmed inputs for a useful conditional break-even result."""
+        if inputs["price_b"] is not None:
+            return False
+        required = ("quantity", "price_basis", "start_date", "price_a")
+        if any(inputs[field] is None for field in required):
+            return False
+        for side in ("option_a", "option_b"):
+            option = inputs[side]
+            if option["delay_days"] is None or option["loss_percent"] is None:
+                return False
+            if inputs["price_basis"] == "gross" and option["fee_percent"] is None:
+                return False
+        return True
 
     def apply(self, action, expected_version, patch, clear_fields=None, *, on_progress=None,
               box_price=None, unresolved_box_price=False):
@@ -482,7 +560,8 @@ class FuturePairState:
         if (self.box_price is not None or pending.get("status") != "NEEDS_INPUT"
                 or not pending.get("comparison_inputs_pending")):
             return None
-        return next_pair_field(pending.get("missing_fields", ()))
+        fields = pending.get("missing_fields", ())
+        return next_pair_field(fields) if len(fields) == 1 else None
 
     def apply_short_answer(self, question, *, on_progress=None):
         """Atomic local continuation; None means leave interpretation to the model."""
@@ -494,11 +573,13 @@ class FuturePairState:
 
     def is_compound_value_answer(self, question):
         """Require an A/B update tool for unmistakable data-only multi-slot replies."""
-        if self.waiting_field() is None:
+        pending = self.pending or {}
+        if (self.box_price is not None or pending.get("status") != "NEEDS_INPUT"
+                or not pending.get("comparison_inputs_pending")):
             return False
         if any(word in question for word in (
                 "뜻", "의미", "설명", "조회", "찾아", "출하량", "통계", "과거",
-                "보고서", "예측", "새 비교", "비교해", "어떻게", "왜", "?",
+                "보고서", "예측", "새 비교", "비교해", "어떻게", "왜", "?", "？",
                 "아니면", "혹은", "인지", "일지", "몰라", "모르", "정도", "가량", "대략", "약 ")):
             return False
         return bool(re.search(r"[0-9]", question) and

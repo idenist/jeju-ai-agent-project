@@ -115,6 +115,15 @@ def render_threshold_evidence(pair_result: dict, location: str):
     if not isinstance(pair_result, dict) or pair_result.get("status") != "OK":
         st.session_state.pop(storage_key, None)
         return
+    if pair_result.get("suppress_market_evidence"):
+        st.session_state.pop(storage_key, None)
+        with st.container(border=True):
+            st.markdown("**다년도 시장 근거**")
+            if pair_result.get("historical_price_lookup") == "used":
+                st.info("과거 가격쌍은 위 시나리오에 반영했습니다. 미확인 비용이 있어 별도 다년도 시장 비교는 연결하지 않았습니다.")
+            else:
+                st.info("이 비교에서는 과거 가격과 시장 자료를 조회하지 않았습니다.")
+        return
     if pair_result.get("price_basis") != "gross":
         st.session_state.pop(storage_key, None)
         with st.container(border=True):

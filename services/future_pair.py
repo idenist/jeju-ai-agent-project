@@ -49,6 +49,165 @@ def preview_future_pair_history(start_date, days_a, days_b, price_a, filters):
     return result
 
 
+def compare_future_pair_threshold_reference(*, quantity, price_basis, start_date,
+                                            option_a, option_b, price_a):
+    """Return a conditional break-even reference without inventing unknown costs.
+
+    The displayed threshold sets the *net difference* between unconfirmed costs
+    to zero. Known costs are included, while missing costs remain explicit and
+    their effect is shown as a sensitivity per 10,000 KRW.
+    """
+    days_a, days_b = option_a.get("delay_days"), option_b.get("delay_days")
+    if (type(days_a) is not int or type(days_b) is not int
+            or not 1 <= days_a < days_b <= 365):
+        return {"status": "INVALID_INPUT", "message": "보관일은 1~365일이며 B가 A보다 길어야 합니다."}
+    if price_basis not in {"gross", "commission_net"}:
+        return {"status": "NEEDS_INPUT", "message": "단가의 수수료 기준을 확인해 주세요."}
+    try:
+        q = decimal(quantity, "비교 물량")
+        pa = decimal(price_a, "A안 단가")
+        loss_a = decimal(option_a.get("loss_percent"), "A안 감모율") / 100
+        loss_b = decimal(option_b.get("loss_percent"), "B안 감모율") / 100
+        if q <= 0 or pa <= 0:
+            raise ValueError("비교 물량과 A안 단가는 0보다 커야 합니다.")
+        fee_a = fee_b = Decimal(0)
+        if price_basis == "gross":
+            fee_a = decimal(option_a.get("fee_percent"), "A안 수수료") / 100
+            fee_b = decimal(option_b.get("fee_percent"), "B안 수수료") / 100
+        start = date.fromisoformat(start_date)
+    except (ValueError, TypeError, ArithmeticError) as exc:
+        return {"status": "NEEDS_INPUT", "message": str(exc)}
+
+    def known_cost(option, days):
+        total = Decimal(0)
+        missing = []
+        for field, label, multiplier in (
+            ("daily_storage_cost", "하루 보관비", days),
+            ("other_cost_krw", "별도 비용", 1),
+        ):
+            value = option.get(field)
+            if value is None:
+                missing.append(label)
+            else:
+                total += decimal(value, label) * multiplier
+        return total, missing
+
+    cost_a, missing_a = known_cost(option_a, days_a)
+    cost_b, missing_b = known_cost(option_b, days_b)
+    sale_a = (start + timedelta(days=days_a)).isoformat()
+    sale_b = (start + timedelta(days=days_b)).isoformat()
+    remaining_a = q * (1 - loss_a)
+    remaining_b = q * (1 - loss_b)
+    denominator = remaining_b * (1 - fee_b)
+    if denominator <= 0:
+        return {"status": "INVALID_INPUT", "message": "B안 판매 가능 물량 또는 수수료를 확인해 주세요."}
+    a_reference_amount = remaining_a * pa * (1 - fee_a) - cost_a
+    threshold = max(Decimal(0), (a_reference_amount + cost_b) / denominator)
+    missing_fields = [*(f"A안 {name}" for name in missing_a), *(f"B안 {name}" for name in missing_b)]
+
+    def number(value):
+        return fixed(value.normalize())
+
+    def row(name, days, sale_date, loss, fee, option, remaining, price, ref_amount=None):
+        return {
+            "id": name, "sale_date": sale_date, "delay_days": days,
+            "loss_percent": number(loss * 100),
+            "daily_storage_cost": number(option["daily_storage_cost"]) if option.get("daily_storage_cost") is not None else None,
+            "other_cost_krw": number(option["other_cost_krw"]) if option.get("other_cost_krw") is not None else None,
+            "fee_percent": number(fee * 100) if price_basis == "gross" else None,
+            "remaining_kg": number(remaining), "price_per_kg": number(price) if price is not None else None,
+            "proceeds_krw": None, "difference_vs_a_krw": None,
+            "known_cost_krw": number(cost_a if name == "option_a" else cost_b),
+            "reference_amount_krw": number(ref_amount) if ref_amount is not None else None,
+        }
+
+    return {
+        "status": "OK", "analysis_type": "future_pair", "threshold_only": True,
+        "quantity_kg": number(q), "price_basis": price_basis, "start_date": start_date,
+        "interval_days": days_b - days_a,
+        "option_a": row("option_a", days_a, sale_a, loss_a, fee_a, option_a, remaining_a, pa,
+                         a_reference_amount),
+        "options_b": [row("manual_b", days_b, sale_b, loss_b, fee_b, option_b, remaining_b, None)],
+        "break_even_vs_a_krw_per_kg": number(threshold),
+        "minimum_whole_krw_per_kg": str(threshold.to_integral_value(rounding=ROUND_CEILING)),
+        "a_reference_amount_krw": number(a_reference_amount),
+        "unknown_cost_fields": missing_fields,
+        "unknown_cost_difference_definition": "B안 미확인 비용 합계 - A안 미확인 비용 합계",
+        "unknown_cost_delta_per_10000_krw_per_kg": number(Decimal(10000) / denominator),
+        "threshold_assumption": "미확인 비용 차이를 0원으로 놓은 참고 손익분기 가격",
+        "evidence": {"option_a": {"summary": "A안 단가 · 사용자 입력 가정", "sale_date": sale_a},
+                     "manual_b": {"summary": "B안 단가 미확인 · 과거 가격 자료 미조회", "sale_date": sale_b}},
+        "historical_price_lookup": "not_used",
+        "suppress_market_evidence": True,
+        "is_future_forecast": False,
+        "warnings": [
+            "B안 단가가 없어 실제 수취액과 어느 안이 유리한지 판단하지 않았습니다.",
+            "표시한 손익분기 가격은 미확인 비용 차이를 0원으로 둔 참고값입니다.",
+            "미래가격 전망이나 실행 권고가 아닙니다.",
+        ],
+    }
+
+
+def compare_future_pair_history_reference(*, quantity, price_basis, start_date,
+                                          option_a, option_b, price_a, history_preview):
+    """Join historical B-price scenarios to a conditional cost-aware threshold."""
+    reference = compare_future_pair_threshold_reference(
+        quantity=quantity, price_basis=price_basis, start_date=start_date,
+        option_a=option_a, option_b=option_b, price_a=price_a,
+    )
+    if reference["status"] != "OK":
+        return reference
+    scenarios = history_preview.get("scenarios") if isinstance(history_preview, dict) else None
+    if not scenarios:
+        return {"status": "NO_DATA", "message": "과거 가격 시나리오를 확인할 수 없습니다."}
+
+    b = reference["options_b"][0]
+    remaining_b = Decimal(b["remaining_kg"])
+    fee_b = Decimal(b["fee_percent"] or "0") / 100 if price_basis == "gross" else Decimal(0)
+    known_cost_b = Decimal(b["known_cost_krw"])
+    a_amount = Decimal(reference["a_reference_amount_krw"])
+    rows = []
+    for scenario in scenarios:
+        price = scenario.get("option_b_price_per_kg")
+        if price is None:
+            return {"status": "NEEDS_INPUT", "message": "A안 가정 단가가 있어야 과거 가격 시나리오의 금액을 계산할 수 있습니다."}
+        price_value = decimal(price, "과거 가격 시나리오")
+        b_reference_amount = remaining_b * price_value * (1 - fee_b) - known_cost_b
+        rows.append({
+            "id": f"past_{scenario['basis']}_{history_preview['interval_days']}d",
+            "sale_date": b["sale_date"], "delay_days": b["delay_days"],
+            "loss_percent": b["loss_percent"], "fee_percent": b["fee_percent"],
+            "daily_storage_cost": b["daily_storage_cost"], "other_cost_krw": b["other_cost_krw"],
+            "basis": scenario["basis"], "label": scenario["label"],
+            "change_pct": str(scenario["change_pct"]),
+            "price_per_kg": fixed(price_value),
+            "reference_amount_krw": fixed(b_reference_amount),
+            "reference_difference_krw": fixed(b_reference_amount - a_amount),
+            "known_cost_krw": b["known_cost_krw"],
+            "remaining_kg": b["remaining_kg"],
+        })
+    reference.update({
+        "history_scenarios": True,
+        "history_preview": {key: history_preview[key] for key in
+                            ("interval_days", "clean_pairs", "base_date_range", "conditions", "source")
+                            if key in history_preview},
+        "options_b": rows,
+        "evidence": {
+            "option_a": {"summary": "A안 단가 · 사용자 입력 가정", "sale_date": reference["option_a"]["sale_date"]},
+            **{row["id"]: {"summary": f"B안 {row['price_per_kg']}원/kg · 과거 {row['change_pct']}% 변동 사례 가정",
+                           "price_type": "historical_scenario"} for row in rows},
+        },
+        "historical_price_lookup": "used",
+        "suppress_market_evidence": True,
+        "warnings": [
+            "과거 동일규격 가격변동 사례를 B안 가격 가정으로 적용했습니다. 미래가격 예측 확률이 아닙니다.",
+            "표의 비교금액 차이는 미확인 비용 차이를 반영하기 전의 참고값이며 실제 유불리 판단이 아닙니다.",
+            "미확인 비용 차이를 0원으로 둔 참고 손익분기 가격입니다.",
+        ],
+    })
+    return reference
+
+
 def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b,
                         price_a, price_b=None, history_filters=None, on_progress=None):
     """The historical interval is B minus A. Storage costs start at day zero."""
@@ -144,4 +303,6 @@ def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b
                           for result, option in zip(result_b["options"], options_b)],
             "break_even_vs_a_krw_per_kg": fixed(threshold),
             "minimum_whole_krw_per_kg": str(threshold.to_integral_value(rounding=ROUND_CEILING)),
+            "historical_price_lookup": "used" if history_filters is not None else "not_used",
+            "suppress_market_evidence": history_filters is None,
             "warnings": [*result_b["warnings"], *cautions]}

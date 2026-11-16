@@ -44,19 +44,27 @@ def render_dialogue(results: list[dict], *, question: str = "", pair_costs_defer
             sections.append(f"{result['confirmed_box_side']}안에 **{_number(result['confirmed_box_price'])}원/kg**을 적용했어요.")
         if result.get("analysis_type") == "future_pair" and result.get("status") == "OK":
             conclusion, minimum, favorable = future_pair_summary(result)
-            a, b = result["option_a"], result["options_b"][0]
-            warning = manual_price_warning(a["price_per_kg"], b["price_per_kg"]) if b["id"] == "manual_b" else None
-            sections.insert(0, "\n\n".join(part for part in
-                                            (f"**{conclusion}**", minimum, favorable, warning) if part))
+            if result.get("threshold_only"):
+                from presenters.reporting import _render_future_pair
+                sections.insert(0, _render_future_pair(result))
+            else:
+                a, b = result["option_a"], result["options_b"][0]
+                warning = manual_price_warning(a["price_per_kg"], b["price_per_kg"]) if b["id"] == "manual_b" else None
+                sections.insert(0, "\n\n".join(part for part in
+                                                (f"**{conclusion}**", minimum, favorable, warning) if part))
         elif result.get("analysis_type") == "future_pair":
             from agents.future_pair_state import future_pair_feedback, history_clarification, unavailable_cost
             sections.append(history_clarification(result, question, pause_specs=pair_specs_deferred) or
                             future_pair_feedback(result, pause_costs=pair_costs_deferred or unavailable_cost(question)))
-        elif result.get("analysis_type") == "price_history":
+        elif result.get("analysis_type") in {"price_history", "price_overview"}:
             sections.append(render_result(result))
         elif result.get("analysis_type") == "shipment_timing":
             from services.shipment_timing import format_timing_report
             sections.append(format_timing_report(result, details=False))
+        elif entry["tool"] == "get_market_evidence" and result.get("status") == "NEEDS_INPUT":
+            sections.append("이 조회는 특정 상품 규격의 가격을 확인하는 기능입니다. "
+                            "대략적인 가격은 등급·포장을 몰라도 기간별 시장가격 요약으로 볼 수 있습니다. "
+                            "시장코드 대신 시장 이름으로 말씀하시면 됩니다.")
         elif result.get("status") == "NEEDS_INPUT" and result.get("missing_fields"):
             fields = result["missing_fields"]
             from agents.future_pair_state import asks_where_to_check, unavailable_cost
