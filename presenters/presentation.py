@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from ui.reporting import future_pair_summary, manual_price_warning, render_report, render_result, FIELD_NAMES, _field, _number
+from presenters.reporting import future_pair_summary, manual_price_warning, render_report, render_result, FIELD_NAMES, _field, _number
 
 
 def select_results(results: list[dict], version: int) -> list[dict]:

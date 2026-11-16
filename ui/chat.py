@@ -12,12 +12,12 @@ from datetime import date, timedelta
 import streamlit as st
 
 from agents.agent import AgentSession
-from agents.config import PROJECT_ROOT, Settings
-from agents.latency import latency_logging_enabled, log_latency
-from ui.reporting import manual_price_warning, render_report, render_result, FIELD_NAMES
-from ui.presentation import connection_label, render_dialogue
+from core.config import PROJECT_ROOT, Settings
+from core.latency import latency_logging_enabled, log_latency
+from presenters.reporting import manual_price_warning, render_report, render_result, FIELD_NAMES
+from presenters.presentation import connection_label, render_dialogue
 from ui.ui_workflow import COST_LABELS, INPUT_CONTEXTS, form_snapshot, condition_rows
-from agents.workspace import SharedWorkspace, card_values
+from ui.workspace import SharedWorkspace, card_values
 
 _REPORT_REQUEST = re.compile(
     r"(?:방금|아까|직전|마지막|최근)\s*(?:한\s*)?(?:출하\s*)?비교\s*(?:결과)?\s*(?:를|을)?\s*"
@@ -29,7 +29,7 @@ _BASIS_CHOICES = {"빼기 전": "gross", "뺀 뒤": "commission_net", "잘 모�
 
 
 
-from ui.application import (
+from ui.context import (
     _workspace,
     _preload_model_sdk,
     _card_dirty,
@@ -80,7 +80,7 @@ _SHIPMENT_STEP_DETAILS = {
 }
 
 def _show_agent_reply(reply, current_version, draft_pending=False, past_future_pair=False):
-    from ui.settlement_reporting import render_settlement, citation_details
+    from presenters.settlement_reporting import render_settlement, citation_details
     settlements = [x['result'] for x in reply.get('visible_results', []) if x['result'].get('analysis_type') == 'settlement' and 'citations' in x['result']]
     display_text = reply.get("text", "응답을 확인할 수 없습니다.")
     for result in settlements:

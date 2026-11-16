@@ -16,8 +16,8 @@ from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
-from agents.config import Settings
-from ui.reporting import render_report
+from core.config import Settings
+from presenters.reporting import render_report
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -264,7 +264,7 @@ class 통합화면사용자흐름검수(unittest.TestCase):
     def test_직접조회와_계산을_번갈아_실행해도_화면_pdf_json이_일치(self):
         import streamlit as st
         from pypdf import PdfReader
-        from agents.casefiles import parse_case
+        from services.casefiles import parse_case
 
         app = self._app()
         self._run(app, "가상 예시 조건 불러오기")

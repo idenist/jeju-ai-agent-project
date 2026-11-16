@@ -9,13 +9,13 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from pathlib import Path
 from agents.agent import AgentSession
-from agents.config import PROJECT_ROOT, Settings
-from agents.quality import assess_turn
+from core.config import PROJECT_ROOT, Settings
+from evals.quality import assess_turn
 
 
 def preflight(cases: list[dict]) -> list[dict]:
     """Check evidence fixtures against real files before spending model tokens."""
-    from agents.evidence import get_historical_shipment_context, get_market_evidence
+    from services.evidence import get_historical_shipment_context, get_market_evidence
     fixtures = {
         "J05": {"shipment_variety": "노지온주", "target_month": 11, "start_year": 2018, "end_year": 2024},
         "J06": {"shipment_variety": "노지온주", "target_month": 11, "start_year": 2025, "end_year": 2025},
@@ -150,7 +150,7 @@ def main() -> int:
                 "expected_runs": len(cases) * args.repeat,
                 "case_definitions": cases, "evidence_preflight": evidence_checks,
                 "source_sha256": {p: hashlib.sha256((PROJECT_ROOT / p).read_bytes()).hexdigest() for p in sources}}
-    from agents.data_refresh import resolve_market_root, market_status
+    from services.data_refresh import resolve_market_root, market_status
     selected = resolve_market_root()
     metadata["market_snapshot"] = market_status()
     metadata["market_csv_sha256"] = hashlib.sha256((selected / "data/processed/daily_prices.csv").read_bytes()).hexdigest()

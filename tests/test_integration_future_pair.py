@@ -6,10 +6,10 @@ import unittest
 from unittest.mock import patch
 
 from services.future_pair import compare_future_pair
-from agents.config import PROJECT_ROOT
+from core.config import PROJECT_ROOT
 from ui.pdf_report import render_pdf_report
-from ui.presentation import select_results
-from ui.reporting import render_report
+from presenters.presentation import select_results
+from presenters.reporting import render_report
 
 
 FILTERS = {"variety": "조생귤", "grade": "특", "size": "소", "package": "상자", "package_kg": "5"}
@@ -248,8 +248,8 @@ class FuturePairTests(unittest.TestCase):
 
     def test_unknown_cost_can_continue_with_historical_volume_without_losing_inputs(self):
         from agents.agent import AgentSession
-        from ui.presentation import render_dialogue
-        from agents.workspace import SharedWorkspace
+        from presenters.presentation import render_dialogue
+        from ui.workspace import SharedWorkspace
 
         workspace = SharedWorkspace(AgentSession())
         pair = workspace.session.future_pair
@@ -308,7 +308,7 @@ class FuturePairTests(unittest.TestCase):
         self.assertLess(report.index("A안 대비 차액"), report.index("기간 전체 감모"))
         self.assertIn("과거 동일 규격 경락가격쌍", report)
         self.assertNotIn("trade_type", report)
-        from ui.presentation import render_dialogue
+        from presenters.presentation import render_dialogue
         reply = render_dialogue([{"tool": "compare_future_pair", "result": result}])
         for output in (reply, report):
             self.assertIn("중앙값 가정(2,409.37원/kg)에서 A안(11/15)의 비교금액이 B안(11/22)보다 670,493원", output)
@@ -380,7 +380,7 @@ class FuturePairTests(unittest.TestCase):
 
     def test_chat_basis_choice_needs_a_missing_basis_and_keeps_unknown_empty(self):
         from agents.agent import AgentSession
-        from agents.workspace import SharedWorkspace
+        from ui.workspace import SharedWorkspace
         from ui.chat import _chat_basis_target, _reply_to_chat_basis
 
         workspace = SharedWorkspace(AgentSession())
@@ -536,8 +536,8 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(app.text_input(key="future_pair_filter_variety").value, "")
 
     def test_manual_price_over_twice_a_warns_without_altering_the_comparison(self):
-        from ui.presentation import render_dialogue
-        from ui.reporting import manual_price_warning
+        from presenters.presentation import render_dialogue
+        from presenters.reporting import manual_price_warning
         self.assertIsNone(manual_price_warning(2500, 5000))
         self.assertIsNone(manual_price_warning(2500, 2600))
         result = compare_future_pair(**COMMON, option_b=OPTION_B, price_b=26000)

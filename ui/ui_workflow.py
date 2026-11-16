@@ -4,7 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 COST_LABELS = {"수수료": "commission", "선별비": "sorting", "포장비": "packaging", "운송비": "transport", "보관비": "storage", "기타": "other"}
-INPUT_CONTEXTS = ["실제값·가정 구분 미확인", "사용자가 실제 조건을 바탕으로 입력", "가상 예시·사용자 가정"]
+from core.input_context import INPUT_CONTEXTS
 FIELD_LABELS = {"quantity": "물량", "price": "현재 단가", "basis": "가격 기준", "current_fee": "현재 수수료율",
                 "included": "단가에 반영된 비용", "included_confirmed": "포함 비용 확인", "policy": "기타 비용 처리",
                 "option_count": "보관 대안 수", "storage_available": "저장 가능 여부",

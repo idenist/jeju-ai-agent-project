@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from statistics import median
 
-from agents.config import PROJECT_ROOT
+from core.config import PROJECT_ROOT
 
 
 class DataError(ValueError):
@@ -217,7 +217,7 @@ def get_market_evidence(args: dict, root: Path = PROJECT_ROOT, *, on_progress=No
     except ValueError as exc:
         return _error("INVALID_INPUT", str(exc))
     try:
-        from agents.data_refresh import resolve_market_root
+        from services.data_refresh import resolve_market_root
         selected_root = resolve_market_root(Path(root))
         if on_progress:
             on_progress("market_csv")

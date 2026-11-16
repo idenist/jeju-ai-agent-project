@@ -1,7 +1,7 @@
 import unittest
 
-from agents.comparison import compare_shipment_options
-from ui.reporting import render_result, render_report
+from services.economics import compare_shipment_options
+from presenters.reporting import render_result, render_report
 from agents.state import demo_scenario
 from ui.ui_workflow import INPUT_CONTEXTS, condition_rows, form_snapshot, manual_scenario
 

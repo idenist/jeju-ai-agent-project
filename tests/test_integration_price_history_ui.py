@@ -10,8 +10,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from agents.agent import AgentSession
-from agents.config import Settings
-from agents.workspace import SharedWorkspace
+from core.config import Settings
+from ui.workspace import SharedWorkspace
 
 
 ROOT = Path(__file__).resolve().parents[1]

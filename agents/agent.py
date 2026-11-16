@@ -5,16 +5,16 @@ import json
 import time
 from copy import deepcopy
 from uuid import uuid4
-from agents.config import Settings
+from core.config import Settings
 from agents.box_price import mentions_box_price, pending_box_arguments
 from agents.future_pair_intent import (
     continues_comparison, explicit_shipment_quantity, is_future_pair_request, requests_manual_price,
     starts_new_comparison, states_price_basis,
 )
-from agents.latency import log_latency
+from core.latency import log_latency
 from agents.state import ScenarioStore, empty_scenario
 from agents.tools import TOOLS, TIMING_TOOL, execute_tool, explain_term, with_box_price
-from agents.task_context import TaskContext, data_revision
+from services.task_context import TaskContext, data_revision
 from agents.harness import ExecutionPolicy, RunStopped, RepeatGuard, bound_history, encoded_size, user_starts, classify_failure, FAILURE_GUIDANCE
 
 
@@ -100,8 +100,8 @@ class AgentSession:
             self.experimental_forecast_draft = ExperimentalForecastDraft()
 
     def run(self, question: str, *, on_progress=None) -> dict:
-        from agents.data_refresh import kst_today
-        from ui.presentation import select_results, render_dialogue, report_for
+        from services.data_refresh import kst_today
+        from presenters.presentation import select_results, render_dialogue, report_for
         from agents.future_pair_state import resume_pair_inputs, unavailable_cost, unavailable_pair_inputs
         settings = self.settings or Settings.load()
         if not isinstance(question, str) or not question.strip() or len(question) > 6000:

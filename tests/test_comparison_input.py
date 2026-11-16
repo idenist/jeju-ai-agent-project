@@ -2,7 +2,7 @@ import unittest
 
 from services.comparison_input import build_comparison_input
 
-# integration/agents의 agents/comparison.py에 정의된 대안 필드 (2026-11-10 기준)
+# integration/agents의 services/economics.py에 정의된 대안 필드 (2026-11-10 기준)
 TEAM_OPTION_FIELDS = {"id", "delay_days", "loss_percent", "daily_storage_cost", "fee_percent",
                       "future_price_per_kg", "costs", "loss_confirmed_for_period"}
 ARGS = {"variety": "조생귤", "grade": "특등급", "size": "소과", "package": "상자", "package_kg": 5,

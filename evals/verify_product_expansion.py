@@ -6,9 +6,9 @@ from decimal import Decimal
 import hashlib
 import json
 from agents.agent import AgentSession
-from agents.config import PROJECT_ROOT, Settings
+from core.config import PROJECT_ROOT, Settings
 from agents.state import ScenarioStore, demo_scenario
-from agents.quality import assess_turn
+from evals.quality import assess_turn
 
 CASES = {
     "P01": ("내 조건은 아직 정하지 않았어. 지금 확보한 경매자료에는 어떤 실제 거래규격 조합이 있는지 먼저 찾아서 보여줘. 내 가격이나 품종으로 자동 저장하지 마.", "explore_data", None),
@@ -48,8 +48,8 @@ def main():
             if unknown: scenario["options"][0][unknown] = None
             if case != "P01": session.store = ScenarioStore(scenario)
             if case == "P07":
-                from agents.workspace import SharedWorkspace
-                from agents.casefiles import parse_case
+                from ui.workspace import SharedWorkspace
+                from services.casefiles import parse_case
                 baseline = SharedWorkspace(AgentSession()); baseline.load_demo()
                 session.comparison_reference = parse_case(baseline.export_case("지난 가상 비교"))
                 session.comparison_input_context = baseline.input_context

@@ -12,12 +12,12 @@ from datetime import date, timedelta
 import streamlit as st
 
 from agents.agent import AgentSession
-from agents.config import PROJECT_ROOT, Settings
-from agents.latency import latency_logging_enabled, log_latency
-from ui.reporting import manual_price_warning, render_report, render_result, FIELD_NAMES
-from ui.presentation import connection_label, render_dialogue
+from core.config import PROJECT_ROOT, Settings
+from core.latency import latency_logging_enabled, log_latency
+from presenters.reporting import manual_price_warning, render_report, render_result, FIELD_NAMES
+from presenters.presentation import connection_label, render_dialogue
 from ui.ui_workflow import COST_LABELS, INPUT_CONTEXTS, form_snapshot, condition_rows
-from agents.workspace import SharedWorkspace, card_values
+from ui.workspace import SharedWorkspace, card_values
 
 _REPORT_REQUEST = re.compile(
     r"(?:방금|아까|직전|마지막|최근)\s*(?:한\s*)?(?:출하\s*)?비교\s*(?:결과)?\s*(?:를|을)?\s*"
@@ -104,92 +104,30 @@ _SHIPMENT_SCROLL_SCRIPT = """
 </script>
 """
 
-def _workspace():
-    if "workspace" not in st.session_state:
-        session = st.session_state.get("agent_session") or AgentSession(settings=Settings.load())
-        st.session_state.workspace = SharedWorkspace(session)
-        st.session_state.agent_session = session
-    return st.session_state.workspace
 
-@st.cache_resource(show_spinner=False)
-def _preload_model_sdk():
-    def load():
-        from agents.agent import load_model_sdk
 
-        try:
-            load_model_sdk()
-        except ImportError:
-            # The normal request path handles a missing or broken SDK.
-            return
 
-    worker = Thread(target=load, name="openai-sdk-preload", daemon=True)
-    worker.start()
-    return worker
 
-def _card_dirty():
-    saved = st.session_state.get("card_form_snapshot")
-    return saved is not None and form_snapshot(st.session_state) != saved
 
-def _sync_card(force=False):
-    ws = _workspace()
-    if force or "card_base_version" not in st.session_state or (st.session_state.card_base_version != ws.store.version and not _card_dirty()):
-        values, ids = card_values(ws.store.snapshot())
-        st.session_state.update(values)
-        st.session_state.input_context = ws.input_context
-        st.session_state.card_option_ids = ids
-        st.session_state.card_base_version = ws.store.version
-        st.session_state.card_form_snapshot = form_snapshot(st.session_state)
-        st.session_state.pop("_period_change_notice", None)
 
-def _load_demo():
-    _workspace().load_demo()
-    _sync_card(force=True)
 
-def _reload_cards():
-    _sync_card(force=True)
 
-def _on_period_edit(index):
-    st.session_state[f"period_{index}"] = False
-    st.session_state._period_change_notice = index + 1
 
-def _clear_chat_only():
-    _workspace().clear_conversation(preserve_conditions=True)
-    st.session_state.agent_messages = []
-    st.session_state.pop("last_agent_reply", None)
-    st.session_state.pop("sensitivity_result", None)
 
-def _reset_all():
-    _workspace().clear_conversation(preserve_conditions=False)
-    st.session_state.agent_messages = []
-    st.session_state.pop("last_agent_reply", None)
-    st.session_state.pop("sensitivity_result", None)
-    for key in ['pdf_cache', 'settlement_pdf', 'settlement_transfer']:
-        st.session_state.pop(key, None)
-    st.session_state.pop("future_pair_shared_costs", None)
-    st.session_state.pop("future_pair_applied_shared_costs", None)
-    st.session_state.pop("future_pair_separate_costs", None)
-    st.session_state.pop("future_pair_price_drafts", None)
-    for key in ("future_pair_missing", "future_pair_history_open", "future_pair_costs_open"):
-        st.session_state.pop(key, None)
-    for key in list(st.session_state):
-        if key == "future_pair_price_b" or key.startswith("future_pair_filter_"):
-            del st.session_state[key]
-    # 새 비교는 직접 입력한 과거 경락가격의 화면 조건도 초기화합니다.
-    for key in ("price_history_variety", "price_history_grade", "price_history_size",
-                "price_history_package", "price_history_package_kg", "price_history_market_code",
-                "price_history_trade_type", "price_history_interval_days", "price_history_base_date",
-                "price_history_limit", "price_history_submitted_query", "show_price_history"):
-        st.session_state.pop(key, None)
-    _sync_card(force=True)
 
-def _clear_sensitivity():
-    st.session_state.pop("sensitivity_result", None)
-    ws = _workspace()
-    ws.entries = [] if any(x["tool"] in {"build_review_brief", "explain_decision_conditions"} for x in ws.entries) else [x for x in ws.entries if x["tool"] != "compare_sensitivity"]
-
-def _clear_review():
-    _workspace().entries = []
-    st.session_state.pop("sensitivity_result", None)
+from ui.context import (
+    _workspace,
+    _preload_model_sdk,
+    _card_dirty,
+    _sync_card,
+    _load_demo,
+    _reload_cards,
+    _on_period_edit,
+    _clear_chat_only,
+    _reset_all,
+    _clear_sensitivity,
+    _clear_review,
+)
 
 def main():
     st.set_page_config(page_title="제주 감귤 출하 대안 비교", page_icon="🍊",
@@ -351,7 +289,7 @@ def main():
         connection_slot = st.empty()
         st.caption("준비된 CSV로 시작합니다. 키 없는 조건 카드·통계·PDF도 사용할 수 있습니다.")
         try:
-            from agents.data_refresh import market_status
+            from services.data_refresh import market_status
             market = market_status()
             st.caption(f"가격자료 {market['snapshot_id']}: {market['observed_first_date']} ~ {market['observed_last_date']}. 실시간 시세가 아닙니다.")
             st.caption("#855 출하통계: 2018-01-01 ~ 2025-09-17. 현재 공급량이 아닙니다.")

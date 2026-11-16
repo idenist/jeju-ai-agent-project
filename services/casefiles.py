@@ -3,9 +3,9 @@ from copy import deepcopy
 from datetime import datetime, timezone, timedelta
 import hashlib
 import json
-from agents.comparison import validate_partial, TOP_FIELDS
-from ui.ui_workflow import INPUT_CONTEXTS
-from agents.task_context import validate_context
+from services.economics import validate_partial, TOP_FIELDS
+from core.input_context import INPUT_CONTEXTS
+from services.task_context import validate_context
 
 MAX_BYTES = 1024 * 1024
 FORMAT = "jeju-shipping-case"

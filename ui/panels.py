@@ -12,12 +12,12 @@ from datetime import date, timedelta
 import streamlit as st
 
 from agents.agent import AgentSession
-from agents.config import PROJECT_ROOT, Settings
-from agents.latency import latency_logging_enabled, log_latency
-from ui.reporting import manual_price_warning, render_report, render_result, FIELD_NAMES
-from ui.presentation import connection_label, render_dialogue
+from core.config import PROJECT_ROOT, Settings
+from core.latency import latency_logging_enabled, log_latency
+from presenters.reporting import manual_price_warning, render_report, render_result, FIELD_NAMES
+from presenters.presentation import connection_label, render_dialogue
 from ui.ui_workflow import COST_LABELS, INPUT_CONTEXTS, form_snapshot, condition_rows
-from agents.workspace import SharedWorkspace, card_values
+from ui.workspace import SharedWorkspace, card_values
 
 _REPORT_REQUEST = re.compile(
     r"(?:방금|아까|직전|마지막|최근)\s*(?:한\s*)?(?:출하\s*)?비교\s*(?:결과)?\s*(?:를|을)?\s*"
@@ -29,7 +29,7 @@ _BASIS_CHOICES = {"빼기 전": "gross", "뺀 뒤": "commission_net", "잘 모�
 
 
 
-from ui.application import (
+from ui.context import (
     _workspace,
     _preload_model_sdk,
     _card_dirty,
@@ -44,7 +44,7 @@ from ui.application import (
 )
 
 def _render_cases(ws, disabled):
-    from agents.casefiles import parse_case
+    from services.casefiles import parse_case
     with st.expander("비교 건 저장·불러오기"):
         st.caption("조건과 당시 결과를 로컬 JSON으로 보관합니다. 대화·API 키는 포함하지 않습니다. 가져온 값의 사실 여부는 별도로 확인하세요.")
         name = st.text_input("저장할 비교 이름", value="내 출하 비교", max_chars=80, key="case_name")
@@ -54,7 +54,7 @@ def _render_cases(ws, disabled):
             try:
                 raw = uploaded.getvalue()
                 saved = parse_case(raw)
-                from agents.workspace import data_revision
+                from ui.workspace import data_revision
                 st.session_state.case_preview = {"digest": hashlib.sha256(raw).hexdigest(), "version": ws.store.version,
                     "name": saved["name"], "created": saved["created_at_kst"], "data_changed": saved["data_revision"] != list(data_revision()),
                     "archive_count": len(saved["archived_results"])}
@@ -96,11 +96,11 @@ def _discovery_changed(source, index, fields):
 
 @st.cache_data(show_spinner=False, max_entries=64)
 def _discovery_choices(source, filters, revision):
-    from agents.catalog import explore_data
+    from services.catalog import explore_data
     return explore_data(source, filters)
 
 def _render_discovery(ws, disabled):
-    from agents.catalog import explore_data, MARKET, SHIPMENT
+    from services.catalog import explore_data, MARKET, SHIPMENT
     with st.expander("확보 자료 탐색·선택 · 키 없이 사용"):
         for entry in ws.current_entries():
             result = entry["result"]
@@ -204,7 +204,7 @@ def _render_task_context(ws):
         query = context["sensitivity_query"]
         if query and query.get("loss_values"):
             st.write({"기간 전체 감모 가정(%)": query["loss_values"], "미래 단가 가정(원/kg)": query.get("price_values")})
-        from ui.reporting import _field
+        from presenters.reporting import _field
         pending = list(dict.fromkeys(x for items in context["pending"].values() for x in items))
         if pending:
             st.write("남은 확인: " + ", ".join(_field(x) for x in pending))
@@ -215,7 +215,7 @@ def _clear_csv_preview():
     st.session_state.pop("csv_preview", None)
 
 def _render_csv_manager():
-    from agents.csv_import import preview_auction_csv, apply_auction_preview
+    from services.csv_import import preview_auction_csv, apply_auction_preview
     with st.expander("자료 관리자 · 경매 CSV 추가"):
         st.caption("일반 사용자는 파일을 추가하지 않고 준비된 자료로 시작할 수 있습니다. #855 출하통계는 기존 자료를 유지합니다.")
         st.write("지원: 배포 경매 원본과 같은 36개 컬럼의 CSV, UTF-8/CP949, 최대 20MiB. 가공 가격표와 임의 CSV는 지원하지 않습니다.")

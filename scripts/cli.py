@@ -1,4 +1,4 @@
-"""Run from the product root: python -m agents.cli --check/--demo."""
+"""Run from the product root: python -m scripts.cli --check/--demo."""
 from __future__ import annotations
 
 import argparse
@@ -6,7 +6,7 @@ import json
 import sys
 from copy import deepcopy
 from pathlib import Path
-from agents.config import PROJECT_ROOT, Settings
+from core.config import PROJECT_ROOT, Settings
 from agents.state import ScenarioStore, demo_scenario
 from agents.tools import execute_tool
 
@@ -45,7 +45,7 @@ def main() -> int:
         print(json.dumps(Settings.load().public_status(), ensure_ascii=False, indent=2))
         return 0
     if args.demo:
-        from ui.reporting import render_report
+        from presenters.reporting import render_report
         results = offline_demo()
         if [x["result"]["status"] for x in results] != ["OK", "OK", "OK", "NO_DATA"]:
             print("오프라인 시연의 예상 결과와 다릅니다. 데이터·계산 결과를 확인하세요.")

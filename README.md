@@ -16,11 +16,14 @@ py -3 -m venv .venv
 ## 구조
 
 - `app.py`: Streamlit 진입점만 담당
-- `ui/application.py`: 앱 구성 및 공유 UI 상태
+- `ui/application.py`: 전체 화면 구성
+- `ui/context.py`: 공유 Streamlit 세션 동작
 - `ui/chat.py`: 대화형 화면
 - `ui/panels.py`: 비교 카드 및 자료/도구 화면
 - `ui/`: 보고서, PDF, 화면 표시와 기타 UI 도우미
-- `agents/`: 대화 엔진, 도구 라우팅, 대화 상태/하네스
+- `agents/`: 대화 엔진, 도구 라우팅 및 대화 상태/하네스
+- `core/`: 공통 설정·입력 규약
+- `presenters/`: 텍스트·표·보고서 출력 규칙
 - `services/`: 가격 조회, 경제성 계산, 출하량, 정산 및 데이터 계약
 - `experiments/`: 운영 MVP 밖의 실험용 미래가격 모델
 - `data/raw/`, `data/processed/`, `data/seasons/`: 원천/가공/시즌별 데이터
@@ -34,7 +37,7 @@ py -3 -m venv .venv
 
 ```cmd
 .venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"
-.venv\Scripts\python.exe -m scripts.verify_integration_handoff
+.venv\Scripts\python.exe -m scripts.verify_integration_handoff --offline-only
 ```
 
 실제 모델 E2E 평가는 API 키 및 호출비용이 필요하므로 별도 수행합니다.
@@ -47,3 +50,5 @@ py -3 -m venv .venv
 라이선스 고지·데이터 원본·정규화 보고서는 정리 대상에서 제외했습니다.
 
 이전 버전의 상세 설명과 개발 과정은 Git 기록 및 `docs/`의 기술 문서에서 확인할 수 있습니다.
+
+2차 구조·검증 기준은 [`docs/07_2차_리팩토링_운영기준.md`](docs/07_2차_리팩토링_운영기준.md)을 참조하세요.

@@ -8,12 +8,12 @@ import unittest
 from unittest.mock import patch
 
 from agents.agent import AgentSession
-from agents.workspace import SharedWorkspace
+from ui.workspace import SharedWorkspace
 from services.settlement import ShipmentStore, empty_values, reconcile, digest, _canonical, normalize
-from ui.settlement_reporting import render_settlement
-from ui.reporting import render_report
+from presenters.settlement_reporting import render_settlement
+from presenters.reporting import render_report
 from agents.tools import execute_tool
-from agents.config import Settings
+from core.config import Settings
 
 
 def sample():
@@ -268,7 +268,7 @@ class SettlementTests(unittest.TestCase):
         self.assertNotIn('C:\\', text)
 
     def test_public_pdf_urls_are_clickable_and_plain_address_retained(self):
-        from agents.evidence import get_historical_shipment_context
+        from services.evidence import get_historical_shipment_context
         from ui.pdf_report import render_pdf_report, _inline
         from pypdf import PdfReader
         result = get_historical_shipment_context({'shipment_variety':'노지온주','target_month':11,'start_year':2018,'end_year':2024})

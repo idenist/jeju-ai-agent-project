@@ -6,7 +6,7 @@ import streamlit as st
 
 from agents.future_pair_state import HISTORY_FIELDS, MAX_RATE_PERCENT, OPTION_LABELS, future_pair_feedback
 from ui.pdf_report import render_pdf_report
-from ui.reporting import manual_price_warning, render_report
+from presenters.reporting import manual_price_warning, render_report
 
 
 def _storage_period(side, default_days):
@@ -225,7 +225,7 @@ def render_future_pair(state):
 def render_future_pair_result(result, location, *, report_json=None):
     # Build the market record before creating download payloads. The market panel
     # refreshes its local cache when A/B inputs, trade specs, or season files change.
-    from ui.market_export import export_market_record, report_entries
+    from presenters.market_export import export_market_record, report_entries
     from ui.seasonal_threshold_ui import render_threshold_evidence
 
     base_entries = [{"tool": "compare_future_pair", "result": result}]
@@ -261,7 +261,7 @@ def _render_future_pair_pdf(entries, location):
 
 def _render_future_pair_json(result, location, content=None, *, market_result=None):
     if market_result is not None:
-        from ui.market_export import export_json
+        from presenters.market_export import export_json
         content = export_json(result, market_result, content)
     elif content is None:
         content = json.dumps({"format": "jeju-future-pair", "version": 1, "result": result}, ensure_ascii=False, indent=2)

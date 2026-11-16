@@ -26,7 +26,7 @@ def _state_inputs_and_economic(pair_state_or_inputs):
 
 def render_integrated_downloads(entries: list[dict], report_json: str, context: str) -> None:
     """One PDF/JSON pair based on the same entries; used by direct UI and chat."""
-    from ui.reporting import render_report
+    from presenters.reporting import render_report
 
     if any(entry["tool"] == "compare_future_pair" for entry in entries):
         label, filename = "출하 시기·경제성 통합", "제주감귤_출하시기_경제성_통합"
@@ -102,7 +102,7 @@ def render_shipment_timing_panel(pair_state_or_inputs=None):
         if economic is None:
             st.caption("현재 출하량 분석은 완료됐습니다. 위쪽 경제성 비교 조건까지 입력·계산하면 같은 날짜의 경제성 결과도 함께 저장됩니다.")
         else:
-            from ui.reporting import future_pair_summary
+            from presenters.reporting import future_pair_summary
             conclusion, minimum, favorable = future_pair_summary(economic)
             st.markdown("\n\n".join(part for part in
                                       (f"**현재 A/B 경제성 계산과 함께 보기** · {conclusion}", minimum, favorable)

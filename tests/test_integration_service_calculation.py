@@ -7,7 +7,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from services.calculation_service import compare_shipment_options as service_calculate
-from agents.comparison import compare_shipment_options as original_calculate
+from services.economics import compare_shipment_options as original_calculate
 from agents.state import ScenarioStore, demo_scenario
 
 

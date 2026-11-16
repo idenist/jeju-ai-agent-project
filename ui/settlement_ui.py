@@ -3,7 +3,7 @@ import json
 from copy import deepcopy
 import streamlit as st
 from services.settlement import empty_values, normalize, reconcile, parse_shipment, SCALARS, FLAGS, KINDS, CATEGORIES
-from ui.settlement_reporting import render_settlement, citation_details
+from presenters.settlement_reporting import render_settlement, citation_details
 
 
 def _revoke(ws):

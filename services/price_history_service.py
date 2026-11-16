@@ -5,7 +5,7 @@ from copy import deepcopy
 
 from services.data_contract import verify_integrated_price_sources
 from services.result_contract import normalize_tool_result
-from agents.config import PROJECT_ROOT
+from core.config import PROJECT_ROOT
 from services.price_history import DEFAULT_FILE, execute_tool as execute_legacy_tool
 
 

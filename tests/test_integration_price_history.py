@@ -13,13 +13,13 @@ from services.price_history_service import (
     get_integrated_price_history, price_history_model_receipt,
 )
 from agents.agent import AgentSession, SYSTEM_PROMPT
-from agents.config import Settings
+from core.config import Settings
 from ui.pdf_report import render_pdf_report
-from ui.presentation import render_dialogue
-from ui.reporting import render_report
+from presenters.presentation import render_dialogue
+from presenters.reporting import render_report
 from agents.state import ScenarioStore, demo_scenario
 from agents.tools import TOOLS, execute_tool
-from agents.workspace import SharedWorkspace
+from ui.workspace import SharedWorkspace
 
 
 조건 = {

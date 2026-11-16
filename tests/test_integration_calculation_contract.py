@@ -7,7 +7,7 @@ from decimal import Decimal, ROUND_CEILING
 import unittest
 
 from services.baseline import calculate_break_even
-from agents.comparison import compare_shipment_options
+from services.economics import compare_shipment_options
 from agents.state import ScenarioStore, demo_scenario
 
 

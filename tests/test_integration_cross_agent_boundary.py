@@ -19,12 +19,12 @@ from services.comparison_input import build_comparison_input
 from services.price_history import execute_tool as 기존_조회
 from services.price_scenario import content_sha256, get_price_scenarios
 from agents.agent import AgentSession
-from agents.config import PROJECT_ROOT, Settings
+from core.config import PROJECT_ROOT, Settings
 from ui.pdf_report import render_pdf_report
-from ui.reporting import render_report
+from presenters.reporting import render_report
 from agents.state import ScenarioStore, demo_scenario
 from agents.tools import TOOLS, execute_tool
-from agents.workspace import SharedWorkspace
+from ui.workspace import SharedWorkspace
 
 
 조회조건 = {"variety": "조생귤", "grade": "특", "size": "소", "package": "상자",

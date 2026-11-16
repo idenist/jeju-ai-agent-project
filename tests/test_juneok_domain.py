@@ -3,7 +3,7 @@ from copy import deepcopy
 from decimal import Decimal
 import unittest
 
-from agents.comparison import compare_shipment_options
+from services.economics import compare_shipment_options
 from agents.state import ScenarioStore, demo_scenario, empty_scenario
 
 

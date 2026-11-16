@@ -134,12 +134,12 @@ class ActualRepositoryAcceptanceTests(unittest.TestCase):
 
     def test_latest_market_price_agrees_with_independent_baseline(self):
         from services.baseline import load_price_observations
-        from agents.evidence import get_market_evidence
+        from services.evidence import get_market_evidence
 
         query = {"market_code": "110001", "variety": "조생귤", "grade": "특",
                  "size": "소", "package": "상자", "package_kg": 5}
         # 운영자가 별도 활성화한 스냅샷과 동결 자료 검사를 혼동하지 않습니다.
-        with patch("agents.data_refresh.resolve_market_root", return_value=ROOT):
+        with patch("services.data_refresh.resolve_market_root", return_value=ROOT):
             result = get_market_evidence(query, ROOT)
         self.assertEqual(result["status"], "OK", result)
         baseline = load_price_observations(ROOT / "data/processed/daily_prices.csv",
@@ -169,7 +169,7 @@ class ActualRepositoryAcceptanceTests(unittest.TestCase):
 
 
     def test_missing_sale_price_is_not_guessed_from_market(self):
-        from agents.comparison import compare_shipment_options
+        from services.economics import compare_shipment_options
         from agents.state import empty_scenario
         result = normalize_tool_result("compare_shipment_options", compare_shipment_options(empty_scenario()))
         self.assertEqual(result["status"], "NEEDS_INPUT")

@@ -7,10 +7,10 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from agents.config import PROJECT_ROOT
-from agents.csv_import import preview_auction_csv, apply_auction_preview
-from agents.data_refresh import market_status, snapshot_dir
-from agents.evidence import get_market_evidence
+from core.config import PROJECT_ROOT
+from services.csv_import import preview_auction_csv, apply_auction_preview
+from services.data_refresh import market_status, snapshot_dir
+from services.evidence import get_market_evidence
 from scripts.preprocess_auction import run
 
 

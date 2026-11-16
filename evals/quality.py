@@ -1,7 +1,7 @@
 """Outcome checks independent of the model's exact sequence of tool calls."""
 from __future__ import annotations
 
-from ui.reporting import render_report
+from presenters.reporting import render_report
 
 
 def assess_turn(turn: dict) -> dict:

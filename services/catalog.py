@@ -4,9 +4,9 @@ from datetime import date
 from decimal import Decimal
 import calendar
 import re
-from agents.config import PROJECT_ROOT
-from agents.evidence import _market_rows, _shipment_rows, _shipment_source
-from agents.data_refresh import resolve_market_root
+from core.config import PROJECT_ROOT
+from services.evidence import _market_rows, _shipment_rows, _shipment_source
+from services.data_refresh import resolve_market_root
 
 MARKET = ("market_code", "variety", "grade", "size", "package", "package_kg")
 SHIPMENT = ("shipment_variety", "year", "target_month")
@@ -20,7 +20,7 @@ def explore_data(source, filters=None, offset=0, limit=20, root=PROJECT_ROOT, *,
         fields = MARKET if source == "market" else SHIPMENT
         if set(filters) - set(fields) or type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 20:
             raise ValueError("허용된 선택 조건·페이지 범위를 확인하세요.")
-        from agents.comparison import decimal
+        from services.economics import decimal
         for k, v in filters.items():
             if k == "package_kg":
                 if decimal(v, k) <= 0: raise ValueError("포장중량은 양수여야 합니다.")

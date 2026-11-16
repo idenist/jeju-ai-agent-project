@@ -15,8 +15,8 @@ RANGE_FIELDS = {"option_id", "loss_values", "price_values", "delay_days"}
 
 
 def data_revision():
-    from agents.config import PROJECT_ROOT
-    from agents.data_refresh import digest, resolve_market_root
+    from core.config import PROJECT_ROOT
+    from services.data_refresh import digest, resolve_market_root
     try:
         selected = resolve_market_root()
         manifest = PROJECT_ROOT / "data/metadata/juneok_manifest.json"
@@ -43,7 +43,7 @@ def validate_context(value):
         for key, item in query.items():
             if key in {"loss_values", "price_values"}:
                 if item is not None:
-                    from agents.comparison import decimal
+                    from services.economics import decimal
                     if not isinstance(item, list) or not 1 <= len(item) <= 7:
                         raise ValueError("과업 가정 목록이 잘못됐습니다.")
                     for number in item:
@@ -55,7 +55,7 @@ def validate_context(value):
                 if item is not None and (type(item) is not int or not 1 <= item <= maximum):
                     raise ValueError("과업 조회기간이 잘못됐습니다.")
             elif key == "package_kg":
-                from agents.comparison import decimal
+                from services.economics import decimal
                 if item is not None and decimal(item, key) <= 0:
                     raise ValueError("과업 포장중량이 잘못됐습니다.")
             elif key == "as_of" and item is not None:

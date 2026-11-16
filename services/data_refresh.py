@@ -7,7 +7,7 @@ import re
 import shutil
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from agents.config import PROJECT_ROOT
+from core.config import PROJECT_ROOT
 
 
 def kst_today():
@@ -67,7 +67,7 @@ def market_status(root: Path = PROJECT_ROOT, today=None) -> dict:
 
 def stage_snapshot(inputs: list[Path], name: str, root: Path = PROJECT_ROOT, today=None, collection=None) -> dict:
     from scripts.preprocess_auction import run
-    from agents.evidence import _market_rows
+    from services.evidence import _market_rows
     today = today or kst_today()
     staged = snapshot_dir(root, name)
     if staged.exists():
@@ -112,7 +112,7 @@ def activate_snapshot(name: str, root: Path = PROJECT_ROOT, today=None) -> dict:
     if set(manifest["files"]) != files or any(digest(staged / p) != v for p, v in manifest["files"].items()):
         raise ValueError("검증 후 파일이 변경됐습니다.")
     # Re-read actual rows; do not trust manifest date claims at activation time.
-    from agents.evidence import _market_rows
+    from services.evidence import _market_rows
     dates = sorted({r["date"] for r in _market_rows(staged)})
     if dates != manifest["observed_dates"] or not dates or max(dates) > today.isoformat():
         raise ValueError("관측 날짜가 명세와 다르거나 미래 날짜입니다.")

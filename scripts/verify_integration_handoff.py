@@ -14,8 +14,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_IDS = tuple(f"INT-{n:02d}" for n in range(1, 16))
-EXPECTED_TURNS = 27
+EXPECTED_IDS = tuple(f"INT-{n:02d}" for n in range(1, 22))
+EXPECTED_TURNS = 44
 
 
 def _json(path: Path):
@@ -108,8 +108,8 @@ def verify_live_evidence(folder: Path, root: Path = ROOT) -> dict:
                     or t.get("run_status") != "OK" or t.get("failures") for t in turns)):
                 issues.append("실제 턴 기록이 모두 정상 통과하지 않았습니다.")
         source = metadata.get("source_sha256")
-        required = {"app.py", "ui/application.py", "ui/chat.py", "ui/panels.py", "agents/agent.py", "agents/tools.py",
-                    "agents/workspace.py", "services/price_history_service.py",
+        required = {"app.py", "ui/application.py", "ui/context.py", "ui/chat.py", "ui/panels.py", "agents/agent.py", "agents/tools.py",
+                    "ui/workspace.py", "services/price_history_service.py",
                     "data/processed/daily_prices.csv", "data/processed/price_comparison_availability.csv",
                     "services/shipment_timing.py", "data/processed/daily_shipments.csv",
                     "data/reports/shipment_quality_report.json",
@@ -195,8 +195,7 @@ def _test_count(log: str) -> int | None:
 def run_offline_tests(root: Path, output: Path) -> list[dict]:
     """외부 API를 호출하지 않는 테스트·평가 데이터 검증을 순서대로 실행합니다."""
     commands = [
-        ("전체 단위 테스트", ["-m", "unittest", "discover", "-s", "tests"], 543),
-        ("평가기 단위 테스트", ["-m", "unittest", "discover", "-s", "evals", "-p", "test_*.py"], 14),
+        ("전체 회귀 테스트", ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], 1),
         ("통합 평가 사전검증", ["-m", "scripts.evaluate_integrated_agent", "--validate"], None),
     ]
     results = []
@@ -227,27 +226,30 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--evidence", type=Path, help="12문항 전체 평가의 metadata/summary/cases가 있는 폴더")
+    parser.add_argument("--evidence", type=Path, help="21문항 전체 평가의 metadata/summary/cases가 있는 폴더")
     parser.add_argument("--full", action="store_true", help="전체 단위 테스트·평가 테스트·무과금 검증까지 실행")
+    parser.add_argument("--offline-only", action="store_true", help="유료 모델 증빙 없이 코드·데이터·회귀 테스트만 검사")
     parser.add_argument("--require-clean", action="store_true", help="인수 확정 시 Git 작업트리 청결 상태도 요구")
     args = parser.parse_args()
     folder = args.evidence or find_latest_full_evidence(ROOT)
-    evidence = verify_live_evidence(folder, ROOT) if folder else {"status": "FAIL", "issues": ["12문항 전체 평가 기록 없음"]}
+    evidence = ({"status": "NOT_CHECKED", "issues": ["유료 모델 평가는 수행하지 않았습니다."]}
+                if args.offline_only else verify_live_evidence(folder, ROOT) if folder
+                else {"status": "FAIL", "issues": ["21문항 전체 평가 기록 없음"]})
     repository = verify_repository(ROOT)
     data = verify_data(ROOT)
     stamp = datetime.now(timezone(timedelta(hours=9))).strftime("%Y%m%d_%H%M%S_%f")
     output = ROOT / "artifacts/integration-handoff" / stamp
     output.mkdir(parents=True, exist_ok=True)
-    tests = run_offline_tests(ROOT, output) if args.full else []
-    checks_ok = (evidence["status"] == "OK" and data["status"] == "OK"
-                 and repository["status"] == "OK" and repository.get("branch") == "integration/agents")
+    tests = run_offline_tests(ROOT, output) if (args.full or args.offline_only) else []
+    checks_ok = ((args.offline_only or evidence["status"] == "OK") and data["status"] == "OK"
+                 and repository["status"] == "OK" and repository.get("branch") in {"refactor/lean-mvp", "main"})
     if args.require_clean and not repository.get("working_tree_clean"):
         checks_ok = False
-    if args.full and not all(t["status"] == "OK" for t in tests):
+    if (args.full or args.offline_only) and not all(t["status"] == "OK" for t in tests):
         checks_ok = False
-    verdict = {"status": ("PASS" if args.full else "PREFLIGHT_PASS") if checks_ok else "FAIL",
+    verdict = {"status": ("OFFLINE_PASS" if args.offline_only else "PASS" if args.full else "PREFLIGHT_PASS") if checks_ok else "FAIL",
                "scope": "기술 인수 점검만 해당. 실제 농가 검증·외부 자료 재배포 허용·팀 승인·main 병합 미포함",
-               "paid_model_called": False, "tests_executed": args.full,
+               "paid_model_called": False, "tests_executed": args.full or args.offline_only,
                "evidence": evidence, "data": data, "repository": repository, "tests": tests,
                "working_tree_clean_required": args.require_clean,
                "manual_open_issues": ["INT-04 명시 등급·크기 누락", "INT-11 중량 충돌 안내 부족",

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
-from agents.comparison import TOP_FIELDS, validate_partial
+from services.economics import TOP_FIELDS, validate_partial
 
 
 def empty_scenario() -> dict:

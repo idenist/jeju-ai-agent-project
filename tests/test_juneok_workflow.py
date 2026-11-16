@@ -4,10 +4,10 @@ import unittest
 
 from test_juneok_harness import FakeClient, call, response
 from agents.agent import AgentSession
-from agents.config import Settings
+from core.config import Settings
 from agents.state import ScenarioStore, demo_scenario
-from ui.presentation import connection_label
-from agents.quality import assess_turn
+from presenters.presentation import connection_label
+from evals.quality import assess_turn
 
 
 class WorkflowTests(unittest.TestCase):

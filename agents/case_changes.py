@@ -1,7 +1,7 @@
 """Read-only saved/current comparison; archived outputs never establish facts."""
 from copy import deepcopy
 from decimal import Decimal
-from agents.comparison import compare_shipment_options, fixed
+from services.economics import compare_shipment_options, fixed
 
 NUMBERS = {"quantity_kg", "current_price_per_kg", "current_fee_percent", "delay_days", "loss_percent", "daily_storage_cost", "fee_percent", "future_price_per_kg", "package_kg", "amount_krw"}
 

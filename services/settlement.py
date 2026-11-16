@@ -13,7 +13,7 @@ import json
 import re
 from uuid import uuid4
 
-from agents.casefiles import _canonical, parse_case, MAX_BYTES
+from services.casefiles import _canonical, parse_case, MAX_BYTES
 
 FORMAT = "jeju-shipment-record"
 RULE = "settlement-v1-decimal-half-up-0.01krw"

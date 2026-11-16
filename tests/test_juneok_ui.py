@@ -7,8 +7,8 @@ import unittest
 from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
-from ui.reporting import render_report, render_result
-from agents.comparison import compare_shipment_options
+from presenters.reporting import render_report, render_result
+from services.economics import compare_shipment_options
 from agents.state import demo_scenario
 from test_juneok_harness import FakeClient, call, response
 
@@ -79,16 +79,16 @@ class UiTests(unittest.TestCase):
     def test_csv_preview_apply_is_explicit_and_resets_only_chat(self):
         import io
         from test_juneok_csv_import import CsvImportTests
-        from agents.csv_import import preview_auction_csv, apply_auction_preview
-        from agents.data_refresh import market_status
+        from services.csv_import import preview_auction_csv, apply_auction_preview
+        from services.data_refresh import market_status
         fixture = CsvImportTests()
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
         upload = io.BytesIO(fixture.payload([fixture.new]))
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}), \
                 patch("streamlit.file_uploader", return_value=upload), \
-                patch("agents.csv_import.preview_auction_csv", side_effect=lambda b: preview_auction_csv(b, fixture.root, fixture.today)), \
-                patch("agents.csv_import.apply_auction_preview", side_effect=lambda p: apply_auction_preview(p, fixture.root, fixture.today)):
+                patch("services.csv_import.preview_auction_csv", side_effect=lambda b: preview_auction_csv(b, fixture.root, fixture.today)), \
+                patch("services.csv_import.apply_auction_preview", side_effect=lambda p: apply_auction_preview(p, fixture.root, fixture.today)):
             app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
             next(b for b in app.button if b.label == "가상 예시 조건 불러오기").click().run()
             next(b for b in app.button if b.label == "CSV 검사 · 변경 내용 미리보기").click().run()

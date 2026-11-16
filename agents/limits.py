@@ -1,7 +1,7 @@
 """Solve one economic boundary with the existing comparison cost contract."""
 from copy import deepcopy
 from decimal import Decimal, ROUND_FLOOR
-from agents.comparison import validate_partial, decimal, fixed
+from services.economics import validate_partial, decimal, fixed
 from services.calculation_service import compare_shipment_options
 
 

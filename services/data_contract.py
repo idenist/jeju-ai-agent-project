@@ -100,7 +100,7 @@ def verify_price_pair_sources(project_root: Path, market_root: Path | None = Non
     root = Path(project_root)
     try:
         if market_root is None:
-            from agents.data_refresh import resolve_market_root
+            from services.data_refresh import resolve_market_root
             selected_root = resolve_market_root(root)
         else:
             selected_root = Path(market_root)
@@ -252,7 +252,7 @@ def _verified_price_source_version(root, selected, fingerprint):
 
 def verify_cached_price_sources(project_root: Path) -> dict:
     """Reuse a full verification only while every input has the same content hash."""
-    from agents.data_refresh import resolve_market_root
+    from services.data_refresh import resolve_market_root
 
     root = Path(project_root)
     try:

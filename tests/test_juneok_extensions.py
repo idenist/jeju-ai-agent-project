@@ -10,13 +10,13 @@ import unittest
 from unittest.mock import patch
 
 from agents.agent import AgentSession
-from agents.casefiles import parse_case, MAX_BYTES
-from agents.config import Settings
+from services.casefiles import parse_case, MAX_BYTES
+from core.config import Settings
 from agents.insights import decision_conditions
 from agents.state import demo_scenario
-from agents.workspace import SharedWorkspace
-from ui.presentation import select_results
-from ui.reporting import render_report
+from ui.workspace import SharedWorkspace
+from presenters.presentation import select_results
+from presenters.reporting import render_report
 from agents.tools import execute_tool
 
 
@@ -154,7 +154,7 @@ class ExtensionTests(unittest.TestCase):
 
     def test_changed_data_recomputes_and_flags_difference(self):
         ws = self.workspace(); content = ws.export_case("예시")
-        with patch("agents.workspace.data_revision", return_value=("NEW_DATA",)):
+        with patch("ui.workspace.data_revision", return_value=("NEW_DATA",)):
             result = ws.restore_case(content, ws.store.version)
             self.assertTrue(result["data_changed"])
             self.assertIn("3,109원/kg", render_report(ws.current_entries()))

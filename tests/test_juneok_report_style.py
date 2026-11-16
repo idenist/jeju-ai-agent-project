@@ -4,8 +4,8 @@ from io import BytesIO
 import unittest
 
 from pypdf import PdfReader
-from agents.comparison import compare_shipment_options
-from ui.reporting import render_report, REPORT_FOOTER, REPORT_NOTICES_HEADING
+from services.economics import compare_shipment_options
+from presenters.reporting import render_report, REPORT_FOOTER, REPORT_NOTICES_HEADING
 from ui.pdf_report import render_pdf_report
 from agents.state import demo_scenario
 

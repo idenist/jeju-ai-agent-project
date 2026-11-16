@@ -19,13 +19,14 @@ class 인수증빙검수(unittest.TestCase):
         self.evidence = self.root / "artifacts/integration-e2e/전체평가"
         self.evidence.mkdir(parents=True)
         ids = list(검수.EXPECTED_IDS)
-        turn_counts = [1, 2, 2, 1, 1, 1, 2, 1, 1, 1, 1, 2, 6, 3, 2]
+        actual_cases = json.loads((Path(__file__).resolve().parents[1] / "evals/integration_e2e_cases.json").read_text(encoding="utf-8"))
+        turn_counts = [len(case["turns"]) for case in actual_cases]
         self.assertEqual(sum(turn_counts), 검수.EXPECTED_TURNS)
         cases = [{"id": name, "turns": [{"user": "평가 질문"}] * count}
                  for name, count in zip(ids, turn_counts)]
         self._write(self.root / "evals/integration_e2e_cases.json", cases)
-        required = ["app.py", "ui/application.py", "ui/chat.py", "ui/panels.py", "agents/agent.py", "agents/tools.py",
-                    "agents/workspace.py", "services/price_history_service.py",
+        required = ["app.py", "ui/application.py", "ui/context.py", "ui/chat.py", "ui/panels.py", "agents/agent.py", "agents/tools.py",
+                    "ui/workspace.py", "services/price_history_service.py",
                     "data/processed/daily_prices.csv", "data/processed/price_comparison_availability.csv",
                     "services/shipment_timing.py", "data/processed/daily_shipments.csv",
                     "data/reports/shipment_quality_report.json",
@@ -64,7 +65,7 @@ class 인수증빙검수(unittest.TestCase):
     def test_정상_전체_평가와_코드_해시는_통과(self):
         result = self.check()
         self.assertEqual(result["status"], "OK", result["issues"])
-        self.assertEqual((result["passed_cases"], result["passed_turns"]), (15, 27))
+        self.assertEqual((result["passed_cases"], result["passed_turns"]), (21, 44))
         self.assertEqual(검수._test_count("Ran 543 tests in 99.0s\nOK"), 543)
         self.assertIsNone(검수._test_count("진단 결과만 출력"))
 
@@ -129,7 +130,7 @@ class 인수실행검수(unittest.TestCase):
             with (patch.object(검수, "ROOT", root), patch("sys.argv", ["인수검수"]),
                   patch.object(검수, "find_latest_full_evidence", return_value=Path("임시")),
                   patch.object(검수, "verify_live_evidence", return_value={"status": "OK"}),
-                  patch.object(검수, "verify_repository", return_value={"status": "OK", "branch": "integration/agents"}),
+                  patch.object(검수, "verify_repository", return_value={"status": "OK", "branch": "refactor/lean-mvp"}),
                   patch.object(검수, "verify_data", return_value={"status": "OK"}),
                   patch.object(검수, "run_offline_tests") as runner):
                 self.assertEqual(검수.main(), 0)

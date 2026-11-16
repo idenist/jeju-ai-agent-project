@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 from pypdf import PdfReader
 
-from agents.comparison import compare_shipment_options
-from agents.evidence import get_historical_shipment_context
+from services.economics import compare_shipment_options
+from services.evidence import get_historical_shipment_context
 from ui.pdf_report import render_pdf_report
 from agents.sensitivity import compare_sensitivity
 from agents.state import demo_scenario
@@ -24,8 +24,8 @@ def read_pdf(results):
 class PdfTests(unittest.TestCase):
     def test_handoff_reports_do_not_split_short_notice_box(self):
         from agents.agent import AgentSession
-        from agents.config import Settings
-        from agents.workspace import SharedWorkspace, card_values
+        from core.config import Settings
+        from ui.workspace import SharedWorkspace, card_values
         ws = SharedWorkspace(AgentSession(Settings(api_key="", model="offline-demo")))
         ws.load_demo()
         for grid in [False, True]:

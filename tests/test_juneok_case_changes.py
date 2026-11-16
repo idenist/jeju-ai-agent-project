@@ -6,9 +6,9 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 from agents.agent import AgentSession
-from agents.workspace import SharedWorkspace
-from agents.config import Settings
-from agents.casefiles import parse_case, _canonical
+from ui.workspace import SharedWorkspace
+from core.config import Settings
+from services.casefiles import parse_case, _canonical
 from agents.case_changes import compare_cases
 from agents.tools import execute_tool
 from test_juneok_harness import FakeClient, call, response

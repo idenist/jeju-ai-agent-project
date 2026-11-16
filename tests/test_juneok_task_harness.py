@@ -12,13 +12,13 @@ import httpx
 from openai import APITimeoutError, APIConnectionError, AuthenticationError, RateLimitError
 
 from agents.agent import AgentSession
-from agents.config import Settings
+from core.config import Settings
 from agents.harness import ExecutionPolicy, RepeatGuard, RunStopped, encoded_size, user_starts
-from agents.task_context import TaskContext
-from agents.workspace import SharedWorkspace
+from services.task_context import TaskContext
+from ui.workspace import SharedWorkspace
 from agents.state import ScenarioStore, demo_scenario
-from agents.casefiles import parse_case
-from ui.reporting import render_report
+from services.casefiles import parse_case
+from presenters.reporting import render_report
 from test_juneok_harness import FakeClient, call, response
 
 
@@ -164,7 +164,7 @@ class TaskHarnessTests(unittest.TestCase):
         self.assertIn("current_price_per_kg", context["pending"]["compare_shipment_options"])
 
     def test_card_period_change_reconfirms_in_shared_context(self):
-        from agents.workspace import card_values
+        from ui.workspace import card_values
         ws = self.workspace(); ws.sensitivity("seven_days", [1, 2, 4], [3300])
         self.assertEqual(ws.session.task_context.snapshot()["sensitivity_query"]["delay_days"], 7)
         values, ids = card_values(ws.store.snapshot())
@@ -210,7 +210,7 @@ class TaskHarnessTests(unittest.TestCase):
 
     def test_data_change_clears_task_selections_preserving_scenario(self):
         ws = self.workspace(); ws.history(self.query()); before = ws.store.snapshot()
-        with patch("agents.workspace.data_revision", return_value=("NEW",)):
+        with patch("ui.workspace.data_revision", return_value=("NEW",)):
             self.assertTrue(ws.check_data_change())
         self.assertEqual(before, ws.store.snapshot())
         self.assertIsNone(ws.session.task_context.snapshot()["shipment_query"])

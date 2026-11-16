@@ -11,7 +11,7 @@ from decimal import Decimal
 from services.price_history import InputError, number
 from services.price_scenario import MANUAL_PRICE, execute_scenario_tool
 
-# integration/agents의 agents/comparison.py OPTION_FIELDS 중 이 변환이 채우는 필드
+# integration/agents의 services/economics.py OPTION_FIELDS 중 이 변환이 채우는 필드
 OPTION_KEYS = ("id", "delay_days", "loss_percent", "daily_storage_cost", "future_price_per_kg")
 MANUAL = "B안 단가를 직접 입력해 손익 비교를 이어가 주세요."
 SHORT = {"min": "가장 크게 내린 사례", "median": "중앙값", "max": "가장 크게 오른 사례"}

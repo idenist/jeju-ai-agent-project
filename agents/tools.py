@@ -176,7 +176,7 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
             if type(args.get("expected_version")) is not int or args["expected_version"] != store.version:
                 return {"status": "INVALID_INPUT", "message": "변경 검토 기준 조건이 바뀌었습니다."}
             from agents.case_changes import compare_cases
-            from agents.task_context import data_revision
+            from services.task_context import data_revision
             return compare_cases(reference_case, store.snapshot(), task_context or {}, data_revision(), input_context)
         if name == "update_scenario":
             return store.update(args.get("patch"), args.get("expected_version"), args.get("clear_fields"),
@@ -184,7 +184,7 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
         if name == "explain_term":
             return explain_term(args.get("topic"))
         if name == "explore_data":
-            from agents.catalog import explore_data
+            from services.catalog import explore_data
             return explore_data(args.get("source"), args.get("filters"), args.get("offset", 0), args.get("limit", 20),
                                 on_progress=on_progress)
         if name in {"compare_shipment_options", "compare_sensitivity", "build_review_brief", "explain_decision_conditions", "solve_offer_limits"}:
@@ -224,7 +224,7 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
             if on_progress:
                 on_progress("shipment_csv")
             return analyze_shipment_timing(query)
-        from agents.evidence import get_historical_shipment_context, get_market_evidence
+        from services.evidence import get_historical_shipment_context, get_market_evidence
         query = get_historical_shipment_context if name == "get_historical_shipment_context" else get_market_evidence
         return query(deepcopy(args), on_progress=on_progress)
     except (KeyError, TypeError, ValueError):

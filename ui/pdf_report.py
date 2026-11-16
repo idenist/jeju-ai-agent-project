@@ -16,7 +16,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import CondPageBreak, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from ui.reporting import render_report, render_result, REPORT_FOOTER, REPORT_NOTICES_HEADING
+from presenters.reporting import render_report, render_result, REPORT_FOOTER, REPORT_NOTICES_HEADING
 
 FONT_DIR = Path(__file__).resolve().parents[1] / "assets/fonts"
 REGULAR = "JejuNanumGothic"

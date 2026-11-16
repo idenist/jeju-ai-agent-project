@@ -15,7 +15,7 @@ class ResultContractTests(unittest.TestCase):
         self.assertEqual({item["name"] for item in TOOLS}, JUNEOK_TOOLS)
 
     def test_juneok_success_preserves_numbers_and_source(self):
-        from agents.comparison import compare_shipment_options
+        from services.economics import compare_shipment_options
         from agents.state import demo_scenario
         original = compare_shipment_options(demo_scenario())
         before = deepcopy(original)

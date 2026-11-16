@@ -4,9 +4,9 @@ from datetime import date
 from pathlib import Path
 import tempfile
 import unittest
-from agents.data_refresh import stage_snapshot, activate_snapshot, resolve_market_root, market_status, snapshot_dir
-from agents.evidence import get_market_evidence
-from agents.config import PROJECT_ROOT
+from services.data_refresh import stage_snapshot, activate_snapshot, resolve_market_root, market_status, snapshot_dir
+from services.evidence import get_market_evidence
+from core.config import PROJECT_ROOT
 
 
 class RefreshTests(unittest.TestCase):

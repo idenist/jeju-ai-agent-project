@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from agents.comparison import decimal
+from services.economics import decimal
 from services.calculation_service import compare_shipment_options
 
 

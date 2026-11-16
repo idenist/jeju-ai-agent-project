@@ -4,7 +4,7 @@ import unittest
 from agents.state import ScenarioStore, demo_scenario
 from agents.sensitivity import compare_sensitivity
 from agents.tools import execute_tool
-from ui.reporting import render_result
+from presenters.reporting import render_result
 
 
 class SensitivityTests(unittest.TestCase):

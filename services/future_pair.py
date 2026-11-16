@@ -5,9 +5,9 @@ from time import monotonic
 
 from services.calculation_service import compare_shipment_options
 from services.data_contract import verify_cached_price_sources
-from agents.comparison import decimal, fixed
-from agents.config import PROJECT_ROOT
-from agents.latency import log_latency
+from services.economics import decimal, fixed
+from core.config import PROJECT_ROOT
+from core.latency import log_latency
 
 
 def _engine_option(option, template):

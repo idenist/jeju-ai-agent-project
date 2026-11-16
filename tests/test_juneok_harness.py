@@ -8,7 +8,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import patch
 
 from agents.agent import AgentSession
-from agents.config import Settings
+from core.config import Settings
 from agents.state import ScenarioStore, demo_scenario
 from agents.tools import TOOLS, execute_tool
 
@@ -199,7 +199,7 @@ class EvaluationTests(unittest.TestCase):
 
     def test_all_current_evidence_fixtures_have_real_data(self):
         from evals.evaluate_harness import preflight
-        from agents.config import PROJECT_ROOT
+        from core.config import PROJECT_ROOT
         cases = json.loads((PROJECT_ROOT / "evals/juneok_cases.json").read_text(encoding="utf-8"))
         checks = preflight(cases)
         self.assertEqual(len(checks), 6)
@@ -207,7 +207,7 @@ class EvaluationTests(unittest.TestCase):
 
     def test_missing_hypothesis_fails_evaluation_without_crashing(self):
         from evals.evaluate_harness import score
-        from agents.comparison import compare_shipment_options
+        from services.economics import compare_shipment_options
         case = {"id": "test", "expected_tool": "compare_shipment_options", "expected_status": "OK", "difference_krw": "562000"}
         turns = [{"status": "OK", "tool_results": [{"tool": "compare_shipment_options", "result": compare_shipment_options(demo_scenario())}]}]
         scored = score(case, turns)

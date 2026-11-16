@@ -222,13 +222,13 @@ def _render_result_body(result: dict) -> str:
         from agents.future_pair_state import future_pair_feedback
         return future_pair_feedback(result)
     if result.get("analysis_type") == "market_decision":
-        from ui.market_export import market_markdown
+        from presenters.market_export import market_markdown
         return market_markdown(result)
     if result.get("analysis_type") == "price_history":
         from services.price_history_reporting import render_price_history
         return render_price_history(result)
     if result.get("analysis_type") == "settlement":
-        from ui.settlement_reporting import render_settlement
+        from presenters.settlement_reporting import render_settlement
         return render_settlement(result)
     if result.get("analysis_type") == "review_brief":
         labels = {"OK": "확인 완료", "NO_DATA": "관측자료 없음", "NEEDS_INPUT": "추가 입력 필요", "INVALID_INPUT": "입력 확인", "DATA_ERROR": "자료 오류"}

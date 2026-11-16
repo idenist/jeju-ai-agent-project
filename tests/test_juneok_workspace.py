@@ -4,8 +4,8 @@ import unittest
 from unittest.mock import patch
 
 from agents.agent import AgentSession
-from agents.config import Settings
-from agents.workspace import SharedWorkspace, card_values
+from core.config import Settings
+from ui.workspace import SharedWorkspace, card_values
 from ui.ui_workflow import INPUT_CONTEXTS
 from test_juneok_harness import FakeClient, call, response
 
@@ -108,17 +108,17 @@ class WorkspaceTests(unittest.TestCase):
         result = ws.calculate()
         # Independent of provider error formatting: preserve verified output and failure together.
         ws._freeze([{"tool": "compare_shipment_options", "result": result}], "대화", execution_status="API_ERROR")
-        from ui.reporting import render_report
+        from presenters.reporting import render_report
         report = render_report(ws.current_entries())
         self.assertIn("3,109원/kg", report)
         self.assertIn("요청 전체가 완료된 것은 아닙니다", report)
 
     def test_external_data_change_hides_export_and_preserves_conditions(self):
-        with patch("agents.workspace.data_revision", return_value=("old",)):
+        with patch("ui.workspace.data_revision", return_value=("old",)):
             ws = self.workspace()
             ws.load_demo()
             before = ws.store.snapshot()
-        with patch("agents.workspace.data_revision", return_value=("new",)):
+        with patch("ui.workspace.data_revision", return_value=("new",)):
             self.assertEqual(ws.current_entries(), [])
             self.assertTrue(ws.check_data_change())
             self.assertEqual(ws.store.snapshot(), before)
@@ -128,7 +128,7 @@ class WorkspaceTests(unittest.TestCase):
         ws = self.workspace()
         ws.load_demo()
         ws.history({"shipment_variety": "노지온주", "target_month": 11, "start_year": 2018, "end_year": 2024})
-        from ui.reporting import render_report
+        from presenters.reporting import render_report
         report = render_report(ws.current_entries())
         self.assertIn("원출처 관측자료 조회", report)
         self.assertNotIn("가상 예시·사용자 가정", report)
@@ -166,7 +166,7 @@ class WorkspaceTests(unittest.TestCase):
 
     def test_result_cannot_be_exported_if_data_changed_during_operation(self):
         ws = self.workspace()
-        with patch("agents.workspace.data_revision", return_value=("new",)):
+        with patch("ui.workspace.data_revision", return_value=("new",)):
             ws._freeze([], "자료 조회", expected_data_revision=("old",))
             self.assertNotEqual(ws.result_data_revision, ("new",))
             self.assertEqual(ws.current_entries(), [])

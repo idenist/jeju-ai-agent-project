@@ -6,7 +6,7 @@ Juneok 계산 엔진만 실행하며, Seunghyuk 계산기는 독립 회귀 검�
 from __future__ import annotations
 
 from services.result_contract import normalize_tool_result
-from agents.comparison import compare_shipment_options as _primary_calculate
+from services.economics import compare_shipment_options as _primary_calculate
 
 
 def compare_shipment_options(scenario: dict) -> dict:

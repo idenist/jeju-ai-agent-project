@@ -10,9 +10,9 @@ import socket
 import sys
 from pathlib import Path
 from uuid import uuid4
-from agents.config import PROJECT_ROOT, Settings
-from agents.data_refresh import market_status
-from agents.cli import offline_demo
+from core.config import PROJECT_ROOT, Settings
+from services.data_refresh import market_status
+from scripts.cli import offline_demo
 
 
 def main():

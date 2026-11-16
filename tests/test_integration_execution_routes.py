@@ -16,12 +16,12 @@ from unittest.mock import patch
 
 from services.calculation_service import compare_shipment_options
 from agents.agent import AgentSession
-from agents.comparison import compare_shipment_options as 원래_계산
-from agents.config import Settings
+from services.economics import compare_shipment_options as 원래_계산
+from core.config import Settings
 from ui.pdf_report import render_pdf_report
-from ui.reporting import render_report
+from presenters.reporting import render_report
 from services.settlement import empty_values
-from agents.workspace import SharedWorkspace
+from ui.workspace import SharedWorkspace
 
 
 프로젝트_경로 = Path(__file__).resolve().parents[1]

@@ -172,7 +172,7 @@ class ExperimentalAgentBridgeTests(unittest.TestCase):
     def test_기존_대화Agent에_실험도구는_옵트인으로만_등록(self):
         # 실제 API를 사용하지 않고 Responses 함수 호출을 흉내 내어 라우팅을 검증한다.
         from agents.agent import AgentSession
-        from agents.config import Settings
+        from core.config import Settings
 
         class DummyClient:
             def __init__(self):
@@ -232,7 +232,7 @@ class ExperimentalAgentBridgeTests(unittest.TestCase):
     # mock 응답이므로 실제 LLM의 품질까지 통과했다고 주장하지 않는다.
     def test_반복질문_및_다음턴_답변에서_일반계산기로_빠지지_않음(self):
         from agents.agent import AgentSession
-        from agents.config import Settings
+        from core.config import Settings
 
         class ReplyClient:
             def __init__(self):

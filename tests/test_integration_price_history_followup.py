@@ -11,9 +11,9 @@ from services.price_history_followup import (
     MissingPreviousPriceQuery, resolve_price_history_query,
 )
 from agents.agent import AgentSession
-from agents.config import Settings
+from core.config import Settings
 from agents.state import ScenarioStore, demo_scenario
-from agents.workspace import SharedWorkspace
+from ui.workspace import SharedWorkspace
 
 
 기준조건 = {

@@ -8,9 +8,9 @@ from agents.agent import AgentSession
 from agents.state import demo_scenario
 from agents.tools import execute_tool
 from ui.ui_workflow import INPUT_CONTEXTS, COST_LABELS, manual_scenario
-from ui.reporting import FIELD_NAMES
-from agents.config import PROJECT_ROOT
-from agents.task_context import TaskContext, data_revision
+from presenters.reporting import FIELD_NAMES
+from core.config import PROJECT_ROOT
+from services.task_context import TaskContext, data_revision
 from agents.harness import FAILURE_GUIDANCE
 
 
@@ -212,7 +212,7 @@ class SharedWorkspace:
         revision = data_revision()
         result = execute_tool("build_review_brief", {"expected_version": self.store.version, **args}, self.store)
         self.session.task_context.record("build_review_brief", args, result, scenario=self.store.scenario)
-        from ui.presentation import select_results
+        from presenters.presentation import select_results
         self._freeze(select_results([{"tool": "build_review_brief", "result": result}], self.store.version),
                      "출하 검토", expected_data_revision=revision)
         return result
@@ -227,11 +227,11 @@ class SharedWorkspace:
         return result
 
     def export_case(self, name):
-        from agents.casefiles import export_case
+        from services.casefiles import export_case
         return export_case(self, name)
 
     def compare_case(self, content, expected_version):
-        from agents.casefiles import parse_case
+        from services.casefiles import parse_case
         if type(expected_version) is not int or expected_version != self.store.version:
             return {"status": "INVALID_INPUT", "message": "변경 검토 기준 조건이 바뀌었습니다. 다시 확인하세요."}
         try: saved = parse_case(content)
@@ -247,7 +247,7 @@ class SharedWorkspace:
         return result
 
     def restore_case(self, content, expected_version):
-        from agents.casefiles import parse_case
+        from services.casefiles import parse_case
         if type(expected_version) is not int or expected_version != self.store.version:
             return {"status": "INVALID_INPUT", "message": "복원 기준 조건이 바뀌었습니다. 파일을 다시 확인하세요."}
         try:
@@ -327,7 +327,7 @@ class SharedWorkspace:
 
     def lookup_shipment_timing(self, variety, pair_version, *, on_progress=None):
         from services.shipment_timing import resolve_pair_dates
-        from ui.presentation import render_dialogue
+        from presenters.presentation import render_dialogue
 
         pair = self.session.future_pair
         earlier, later = resolve_pair_dates(pair.inputs)
