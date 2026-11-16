@@ -34,7 +34,7 @@ class FuturePairTests(unittest.TestCase):
                     "box_price": {"side": "A", "phrase": "상자당 12,500원"},
                 })
                 agent = AgentSession(client=client)
-                first = agent.run("감귤 3톤을 사흘 뒤와 열흘 뒤에 출하할 때 비교해 주세요. A안은 상자당 12,500원이에요." + weight)
+                first = agent.run("감귤 3톤을 사흘 뒤와 열흘 뒤에 출하할 때 비교해 주세요. A안은 상자당 12,500원이에요." + weight + " B안 단가는 과거 경락가격을 참고해 주세요.")
                 self.assertIn(expected, first["text"])
                 self.assertIsNone(agent.future_pair.inputs["price_a"])
                 self.assertIsNone(agent.future_pair.current_result())
@@ -59,7 +59,7 @@ class FuturePairTests(unittest.TestCase):
                               "price_mode": "history", "history_filters": FILTERS},
                 })
                 agent = AgentSession(client=client)
-                first = agent.run(f"감귤 3톤을 사흘 뒤와 열흘 뒤에 출하할 때를 비교해 주세요. A안은 {quote}예요.")
+                first = agent.run(f"감귤 3톤을 사흘 뒤와 열흘 뒤에 출하할 때를 비교해 주세요. A안은 {quote}예요. B안 가격은 과거 경락가격을 참고해 주세요.")
                 self.assertIn(f"{unit_price:,}원/kg", first["text"])
                 self.assertIsNone(agent.future_pair.inputs["price_a"])
                 self.assertIsNone(agent.future_pair.current_result())
@@ -145,7 +145,7 @@ class FuturePairTests(unittest.TestCase):
         reply = agent.run("감귤 3톤인데 사흘 뒤에 팔지 열흘 뒤에 팔지 고민이에요.")
         self.assertEqual(client.requests[0]["tool_choice"], {"type": "function", "name": "compare_future_pair"})
         self.assertEqual(agent.future_pair.inputs["quantity"], 3000)
-        self.assertIsNotNone(agent.future_pair.inputs["history_filters"])
+        self.assertIsNone(agent.future_pair.inputs["history_filters"])
         self.assertEqual(reply["visible_results"][0]["tool"], "compare_future_pair")
         self.assertNotIn("비교 물량(kg)", reply["visible_results"][0]["result"]["missing_fields"])
 
@@ -183,7 +183,7 @@ class FuturePairTests(unittest.TestCase):
                       "history_filters": {"variety": "조생귤", "size": "소", "package": "상자"}},
         })
         agent = AgentSession(client=client)
-        first = agent.run("3일 뒤와 10일 뒤를 비교해 주세요.")
+        first = agent.run("과거 경락가격 근거로 3일 뒤와 10일 뒤를 비교해 주세요.")
         self.assertIn("감귤의 등급은 어떻게 되나요?", first["text"])
         self.assertNotIn("몇 kg 들어가나요?", first["text"])
         before = agent.future_pair.snapshot()
@@ -195,8 +195,8 @@ class FuturePairTests(unittest.TestCase):
         self.assertIn("등급은 포장 라벨", reply["text"])
         self.assertIn("상자 라벨", reply["text"])
         self.assertNotIn("비교할 감귤은 몇 kg", reply["text"])
-        self.assertTrue(reply["text"].startswith("같은 날짜의 과거 출하량부터 볼까요?"))
-        self.assertNotIn("직접 단가", reply["text"])
+        self.assertIn("출하 비교는 이어갈 수", reply["text"])
+        self.assertIn("가정 판매단가를 직접 입력", reply["text"])
         self.assertNotIn("몇 kg 들어가나요?", reply["text"])
         self.assertNotIn("감귤의 등급은 어떻게 되나요?", reply["text"])
         self.assertEqual(term["visible_results"][0]["tool"], "explain_term")
@@ -209,6 +209,44 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(result["visible_results"][0]["result"]["status"], "OK")
         self.assertEqual(agent.future_pair.inputs["quantity"], 3000)
         self.assertIsNone(agent.future_pair.pending)
+
+    def test_bare_unknown_grade_preserves_ab_task_without_model_call(self):
+        from agents.agent import AgentSession
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        client = 모의_대화_클라이언트("compare_future_pair", {
+            "action": "new", "expected_version": 0,
+            "patch": {**COMMON, "option_b": OPTION_B, "price_mode": "history",
+                      "history_filters": {"variety": "조생귤", "size": "소", "package": "상자"}},
+        })
+        agent = AgentSession(client=client)
+        first = agent.run("과거 경락가격 근거로 3일 후와 10일 후 출하를 비교해 주세요.")
+        self.assertIn("등급", first["text"])
+        self.assertEqual(len(client.requests), 1)
+        before = agent.future_pair.snapshot()
+        reply = agent.run("몰라")
+        self.assertEqual(reply["metrics"]["model_requests"], 0)
+        self.assertEqual(len(client.requests), 1)
+        self.assertEqual(agent.future_pair.snapshot(), before)
+        self.assertIn("가정 판매단가를 직접 입력", reply["text"])
+        self.assertNotIn("같은 날짜의 과거 출하량부터", reply["text"])
+        self.assertTrue(agent.future_pair.specs_deferred)
+
+    def test_price_source_requires_explicit_historical_intent(self):
+        from agents.future_pair_intent import requests_historical_pair_price
+        from agents.future_pair_state import future_pair_feedback
+        self.assertFalse(requests_historical_pair_price("감귤 3톤, 사흘 뒤와 열흘 뒤 중 언제 팔까요?"))
+        self.assertTrue(requests_historical_pair_price("과거 경락가격 근거로 두 미래 출하일 비교해 주세요"))
+        self.assertFalse(requests_historical_pair_price("과거 가격은 보지 말고 두 출하일만 비교해 주세요"))
+        self.assertFalse(requests_historical_pair_price("과거 경락가격은 필요 없어요"))
+        text = future_pair_feedback({"status": "NEEDS_INPUT", "analysis_type": "future_pair",
+            "comparison_inputs_pending": True, "missing_fields": [
+                "A안 가정 단가(원/kg)", "B안 가정 단가(원/kg)",
+                "A안 기간 전체 감모율(%)", "B안 기간 전체 감모율(%)"],
+            "storage_days": {"A안": 3, "B안": 10}})
+        self.assertIn("A안의 판매단가", text)
+        self.assertNotIn("아직 확인할 조건", text)
+        self.assertNotIn("과거 출하량", text)
 
     def test_history_precedes_missing_costs_and_manual_recovery_preserves_inputs(self):
         from agents.future_pair_state import FuturePairState, future_pair_feedback
@@ -261,9 +299,9 @@ class FuturePairTests(unittest.TestCase):
         entry = {"tool": "compare_future_pair", "result": preview}
         question = "감귤이 몇 퍼센트 줄지 모르고 보관료도 아직 몰라요. 지금 알 수 있는 건 뭐예요?"
         text = render_dialogue([entry], question=question)
-        self.assertTrue(text.startswith("같은 날짜의 과거 출하량부터 볼까요?"))
+        self.assertIn("모르는 감모율·비용은 미확인", text)
         self.assertIn("가격쌍 20개", text)
-        self.assertIn("과거 출하량", text)
+        self.assertNotIn("과거 출하량부터 볼까요", text)
         self.assertNotIn("**아직 확인할 조건**", text)
         cost_prompt = render_dialogue([entry])
         self.assertEqual(cost_prompt.count("하루 보관비"), 1)

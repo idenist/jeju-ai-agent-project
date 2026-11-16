@@ -38,6 +38,25 @@ _PRICE_BASIS_UNCERTAIN = re.compile(r"^\s*(?:(?:금액|단가|가격)\s*)?(?:인
 _CONTINUE_COMPARISON = re.compile(r"(?:기존|현재|직전|아까(?:의)?)\s*(?:출하\s*)?비교|(?:나중\s*출하일|B안\s*(?:날짜|단가))만")
 
 
+def requests_historical_pair_price(question: str) -> bool:
+    """Explicit opt-in to historical evidence for the later A/B price.
+
+    Unknown future prices alone are NOT permission to force a historical
+    market lookup that needs grade/size/package details.
+    """
+    text = question.casefold()
+    if re.search(
+        r"(?:과거\s*(?:경락\s*)?(?:가격|시세|자료)|경락\s*가격|과거\s*변동)"
+        r"\s*(?:은|는|도)?\s*(?:보지\s*말|필요\s*없|사용하지\s*말|조회하지\s*말|빼고|제외)",
+        text,
+    ):
+        return False
+    return any(word in text for word in (
+        "과거 가격", "과거 경락", "과거 시세", "과거 변동", "경락가격", "경락 가격",
+        "가격쌍", "시장 시세", "도매 시세", "과거 자료", "과거 근거", "과거가격",
+    ))
+
+
 def requests_manual_price(question: str) -> bool:
     return any(word in question for word in ("직접 입력", "직접입력", "직접 넣", "정한 단가", "내가 입력"))
 

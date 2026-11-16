@@ -27,6 +27,16 @@ COST_QUESTIONS = {
 }
 COST_NAMES = dict(zip(COST_QUESTIONS, ("하루 보관비", "별도 비용", "판매 수수료")))
 SUGGEST_TIMING = "같은 날짜의 과거 출하량부터 볼까요?"
+UNKNOWN_SPEC_RECOVERY = (
+    "경매 거래규격을 모르셔도 출하 비교는 이어갈 수 있습니다. "
+    "동일 규격의 과거 경락가격 조회는 잠시 보류하고, "
+    "A안과 B안의 가정 판매단가를 직접 입력해 비교할 수 있습니다. "
+    "실제 제시가격이 없다면 가정값임을 표시해 주세요."
+)
+UNKNOWN_COST_RECOVERY = (
+    "모르는 감모율·비용은 미확인으로 보존합니다. 0으로 간주하지 않습니다. "
+    "확인 가능한 조건부터 알려주시거나 가정값을 직접 정해 주세요."
+)
 _UNKNOWN_INPUT = re.compile(r"모르|몰라|몰랐|확인\s*(?:못|할\s*수\s*없)|아직\s*(?:정해지지\s*않|안\s*나왔)")
 _UNKNOWN_COST = re.compile(r"비용|보관[비료]|저장[료비]|수수료|감모|감량|줄(?:어|지|는)")
 _UNKNOWN_SPEC = re.compile(r"품종|등급|크기|포장|상자\s*(?:무게|중량)|도매시장|시장코드|거래\s*방식")
@@ -70,6 +80,14 @@ def unavailable_input(question, subject):
     )) for clause in clauses)
 
 
+def is_bare_unknown_reply(question: str) -> bool:
+    """Only a plain uncertainty answer; never intercept a compound request."""
+    return bool(re.fullmatch(
+        r"\s*(?:아직\s*|잘\s*|그건\s*)?(?:몰라\S*|모르\S*|확인\s*못\s*하\S*)[.!?\s]*",
+        question,
+    ))
+
+
 def unavailable_cost(question):
     return unavailable_input(question, _UNKNOWN_COST)
 
@@ -102,7 +120,7 @@ def future_pair_feedback(result, *, pause_costs=False):
             lines.append(f"나중 출하 가정 단가(원/kg) · 최저 {prices[0]} · 중앙 {prices[1]} · 최고 {prices[2]}")
         lines.append("과거 가격 변동을 참고한 가정입니다.")
         if pause_costs:
-            return "\n\n".join([SUGGEST_TIMING, *lines, "손익은 보관비와 줄어드는 양을 확인한 뒤 계산할게요."])
+            return "\n\n".join([*lines, UNKNOWN_COST_RECOVERY])
         next_step = _missing_questions(result["missing_fields"], result.get("storage_days", {}))
         return "\n\n".join([*lines, next_step])
     fields = result.get("missing_fields", [])
@@ -110,11 +128,8 @@ def future_pair_feedback(result, *, pause_costs=False):
         return message
     if result.get("comparison_inputs_pending"):
         if pause_costs:
-            if LABELS["price_basis"] in fields and LABELS["price_a"] not in fields:
-                return ("먼저 출하 단가는 판매 수수료를 빼기 전인가요, 뺀 뒤인가요? "
-                        "입력하신 단가는 그대로 둘게요.")
-            return f"{SUGGEST_TIMING} 입력하신 조건은 그대로 둘게요."
-        return _missing_questions(fields, result.get("storage_days", {}))
+            return UNKNOWN_COST_RECOVERY
+        return next_pair_question(fields, result.get("storage_days", {}))
     lines = [message, "", "확인할 항목: " + ", ".join(HISTORY_FIELDS.get(field, field) for field in fields)]
     for field, choices in result.get("choices", {}).items():
         if field in HISTORY_FIELDS and choices:
@@ -133,7 +148,7 @@ def history_clarification(result, question="", *, pause_specs=False):
     asks_for_help = asks_where_to_check(question)
     if pause_specs or unavailable_input(question, _UNKNOWN_SPEC):
         guidance = " ".join(HISTORY_HELP[field] for field in (mentioned or [first])) if asks_for_help else ""
-        return f"{SUGGEST_TIMING}\n\n{guidance}" if guidance else SUGGEST_TIMING
+        return f"{UNKNOWN_SPEC_RECOVERY}\n\n{guidance}" if guidance else UNKNOWN_SPEC_RECOVERY
     if asks_for_help:
         guidance = " ".join(HISTORY_HELP[field] for field in (mentioned or [first]))
         if next_field := next((field for field in fields if field not in (mentioned or [first])), None):
@@ -143,6 +158,41 @@ def history_clarification(result, question="", *, pause_specs=False):
                if choice not in {"미상", ".", "-"}][:3]
     examples = f"\n\n자료에 있는 예시 · {', '.join(choices)}" if choices else ""
     return HISTORY_QUESTIONS[first] + examples
+
+
+def next_pair_question(fields, storage_days):
+    """Single missing decision for a manual A/B comparison, without guessing."""
+    first = [LABELS["start_date"], LABELS["quantity"],
+             "A안 보관일", "B안 보관일", LABELS["price_a"], LABELS["price_basis"],
+             "A안 기간 전체 감모율(%)", "B안 기간 전체 감모율(%)",
+             "A안 수수료율(%)", "B안 수수료율(%)",
+             "A안 전체 물량 하루 보관비(원)", "B안 전체 물량 하루 보관비(원)",
+             "A안 별도 비용(원)", "B안 별도 비용(원)", LABELS["price_b"]]
+    target = next((name for name in first if name in fields), fields[0] if fields else None)
+    if target is None:
+        return "확인된 조건을 유지하겠습니다."
+    prompts = {
+        LABELS["start_date"]: "감귤을 보관하기 시작하는 날이 언제인가요?",
+        LABELS["quantity"]: "비교할 감귤은 몇 kg인가요? 톤으로 알려주셔도 됩니다.",
+        "A안 보관일": "먼저 출하하는 A안은 며칠 보관하시나요?",
+        "B안 보관일": "나중 출하하는 B안은 며칠 보관하시나요?",
+        LABELS["price_a"]: "먼저 출하하는 A안의 판매단가를 kg당 얼마로 가정할까요?",
+        LABELS["price_basis"]: "A안 판매단가는 수수료 차감 전인가요, 차감 후인가요?",
+        LABELS["price_b"]: "나중 출하하는 B안의 가정 판매단가를 아시나요? 모르면 미확인으로 유지하겠습니다.",
+    }
+    if target in prompts:
+        return prompts[target]
+    side = "먼저 출하하는 A안" if target.startswith("A안") else "나중 출하하는 B안"
+    days = storage_days.get("A안" if target.startswith("A안") else "B안")
+    if "감모율" in target:
+        return f"{side}의 {days}일 보관기간 전체 감모율은 몇 %인가요?" if days else f"{side}의 전체 감모율은 몇 %인가요?"
+    if "보관비" in target:
+        return f"{side}의 전체 물량 하루 보관비는 얼마인가요?"
+    if "수수료율" in target:
+        return f"{side}의 판매 수수료는 몇 %인가요?"
+    if "별도 비용" in target:
+        return f"{side}의 별도 비용은 얼마인가요?"
+    return f"{target}을 알려주세요."
 
 
 def _missing_questions(fields, storage_days):

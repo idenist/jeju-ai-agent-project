@@ -141,7 +141,7 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         })
         ws.session.client = client
         app.text_input(key="shipment_question").set_value(
-            "감귤 3톤, 사흘 뒤와 열흘 뒤 출하 손익을 비교해 주세요. A안 상자당 12,500원, 상자는 5kg이에요."
+            "감귤 3톤, 사흘 뒤와 열흘 뒤 출하 손익을 비교해 주세요. A안 상자당 12,500원, 상자는 5kg이에요. B안은 과거 경락가격을 참고해 주세요."
         )
         self._run(app, "보내기", key=True)
         pair = ws.session.future_pair

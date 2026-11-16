@@ -11,7 +11,7 @@ from core.config import Settings
 from agents.box_price import mentions_box_price, pending_box_arguments
 from agents.future_pair_intent import (
     continues_comparison, explicit_shipment_quantity, is_future_pair_request, requests_manual_price,
-    starts_new_comparison, states_price_basis,
+    starts_new_comparison, states_price_basis, requests_historical_pair_price,
 )
 from core.latency import log_latency
 from agents.state import ScenarioStore, empty_scenario
@@ -53,7 +53,7 @@ update의 patch에서 변경하지 않을 항목은 null. options를 바꾸면 �
 오늘과 미래를 비교할 조건은 계산 전에 update_scenario에 저장하세요. 두 날짜가 모두 미래인 비교에는 compare_future_pair를 사용하세요. expected_version은 현재 P2 조건의 version입니다. 시작일과 각 보관일은 사용자 표현으로 확정 가능한 값만 전달하세요. B안만 수정하거나 누락 답변을 보완할 때는 edit로 지정하고 확인한 값만 보내세요. 보관일을 바꿀 때 새 기간 전체 감모율을 사용자가 함께 확인한 경우에만 그 값과 loss_confirmed_for_period=true를 전달하세요. 값 철회는 clear_fields에 넣고(거래규격 예: history_filters.grade), 확인 질문이나 계산 결과를 받으면 finish_turn=true로 종료하세요. 용어·자료 해석 질문에는 explain_term 도구를 사용하세요.
 사용자가 B안에 과거 변동을 반영해 달라고 하면 price_mode=history로 선택하고 명시한 동일 거래규격만 history_filters에 넣으세요. 과거 모드의 날짜 수정은 모드와 규격을 유지합니다. 과거자료가 없거나 검증에 실패하면 도구 안내를 표시하고 사용자가 B 단가를 직접 제공한 경우에만 manual로 전환합니다. A 단가는 사용자가 정합니다. 과거 가격 가정과 직접 단가를 같은 요청에서 섞거나 후보를 임의 선택하지 마세요.
 두 미래 출하안에서 과거 가격을 먼저 보고 싶거나 B안 가격을 과거 변동으로 가정하려면, 감모율·보관비·수수료·A 단가가 미확인이어도 compare_future_pair를 price_mode=history로 호출하세요. 이미 저장된 과거 모드의 후속 답변은 edit로 이번에 알려준 값만 반영하세요. 모르는 값은 null로 두며, 0은 사용자가 확인한 경우에만 넣으세요. 도구가 가격 근거와 누락 조건을 표시하므로 HISTORY_READY, NEEDS_INPUT, NO_DATA가 나오면 그 응답으로 턴을 끝내세요.
-새 미래 출하안 비교에서 나중 단가를 모른다고 말하면 동일 규격의 과거 근거를 먼저 확인하세요. 직접 입력을 명시한 경우 그 방식을 사용하세요. 사용자가 비용을 두 안에 공통으로 적용한다고 말하면, 한 번 말한 보관비·별도 비용·수수료율을 option_a와 option_b의 해당 항목에 함께 넣으세요. 안별 값도 명시했으면 해당 안에 그 값을 사용하세요. 특정 안에만 말한 비용은 그 안에만 반영하세요. 감모율은 각각의 보관기간에 해당하는 값만 반영하세요.
+새 미래 출하안 비교에서 나중 단가를 모르면 미확인으로 유지하고, 입력된 조건으로 이어가세요. 사용자가 과거 경락가격 근거를 명시적으로 요청한 경우에만 과거 가격을 조회하세요. 미확인 값을 예측하거나 임의로 가정하지 마세요. 사용자가 비용을 두 안에 공통으로 적용한다고 말하면, 한 번 말한 보관비·별도 비용·수수료율을 option_a와 option_b의 해당 항목에 함께 넣으세요. 안별 값도 명시했으면 해당 안에 그 값을 사용하세요. 특정 안에만 말한 비용은 그 안에만 반영하세요. 감모율은 각각의 보관기간에 해당하는 값만 반영하세요.
 확인 중인 비교에서 사용자가 규격이나 비용을 모른다고 답하면, 이번에 새로 알려준 조건만 기존 비교에 반영하고 완료하세요. 확인된 물량·날짜·단가를 지우거나 누락값을 추정하지 마세요. 사용자가 출하량 조회를 요청하면 해당 도구를 사용하세요. 모르는 값을 말하는 것과 용어의 뜻을 묻는 것을 구분하고, 뜻이나 자료 해석을 요청할 때만 explain_term을 사용하세요.
 두 미래 출하안 비교가 확인을 기다릴 때 규격을 모르겠거나 확인 방법을 묻는 답변은 현재 비교의 후속입니다. 사용자가 새 비교나 다른 도구를 명시하지 않으면 현재 비교를 이어가세요. 새로 확인된 값이 있으면 compare_future_pair의 edit에 넣고, 확인 방법만 물으면 비교 조건을 변경하지 않습니다.
 새 기간 감모를 사용자가 명시 확인한 경우에만 loss_confirmed_for_period=true.
@@ -182,8 +182,11 @@ class AgentSession:
                             ]}
                 if quantity is not None:
                     patch["quantity"] = quantity
-                if allow_price_history and action == "new" and patch.get("price_b") is None:
-                    patch["price_mode"] = "history"
+                if future_pair_route and action == "new" and patch.get("price_b") is None:
+                    # Unknown price is not authorization for an unrelated market lookup.
+                    patch["price_mode"] = "history" if allow_price_history else "manual"
+                    if not allow_price_history:
+                        patch["history_filters"] = None
                 arguments = {**arguments, "action": action, "patch": patch}
                 if future_pair_route:
                     arguments["finish_turn"] = True
@@ -254,6 +257,19 @@ class AgentSession:
                                                            pair_costs_deferred=self.future_pair.costs_deferred),
                     "report": report_for([entry]), "tool_results": [entry], "visible_results": [entry],
                     "events": [], "state": self.store.snapshot(), "metrics": {"model_requests": 0}}
+        from agents.future_pair_state import is_bare_unknown_reply
+        pending = self.future_pair.pending
+        if (not new_comparison and pending is not None
+                and pending.get("source_status") == "NEEDS_CLARIFICATION"
+                and is_bare_unknown_reply(question)):
+            # No tools or model needed to preserve state and offer a manual path.
+            self.future_pair.specs_deferred = True
+            entry = {"tool": "compare_future_pair", "result": deepcopy(pending)}
+            return {"status": "OK", "text": render_dialogue(
+                        [entry], question=question, pair_specs_deferred=True),
+                    "report": report_for([entry]), "tool_results": [entry],
+                    "visible_results": [entry], "events": [],
+                    "state": self.store.snapshot(), "metrics": {"model_requests": 0}}
         if self.client is None:
             import_started = time.monotonic()
             OpenAI = load_model_sdk()
@@ -313,7 +329,8 @@ class AgentSession:
         keep_pair = not new_comparison and self.future_pair.inputs["price_a"] is not None and continues_comparison(question)
         has_box_price = not forced_forecast and mentions_box_price(question)
         quantity = explicit_shipment_quantity(question) if future_pair_route else None
-        allow_price_history = future_pair_route and not requests_manual_price(question)
+        allow_price_history = (future_pair_route and requests_historical_pair_price(question)
+                               and not requests_manual_price(question))
         forced_tool = "compare_experimental_forecast" if forced_forecast else None
         if future_pair_route:
             forced_tool = "compare_future_pair"
@@ -321,7 +338,7 @@ class AgentSession:
                 "\n이번 요청은 서로 다른 두 미래 출하일의 단일 비교입니다. 총 물량은 kg으로 반영하세요. "
                 "'며칠 뒤'의 기준일이 따로 없으면 위 오늘 날짜를 사용하고, 달력 날짜는 보관 시작일과 구분하세요. "
                 "명시된 날짜·기간·단가를 사용하고 불분명한 값만 확인하세요. "
-                "나중 단가와 직접 입력 의사가 없으면 price_mode=history로 과거 근거부터 확인하세요."
+                "사용자가 과거 가격 근거를 명시적으로 요청한 경우에만 price_mode=history로 조회하고, 그렇지 않으면 price_mode=manual로 미확인 단가를 보존하세요."
             )
         if new_comparison:
             experimental_prompt += (
