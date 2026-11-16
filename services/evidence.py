@@ -217,7 +217,7 @@ def get_market_evidence(args: dict, root: Path = PROJECT_ROOT, *, on_progress=No
     except ValueError as exc:
         return _error("INVALID_INPUT", str(exc))
     try:
-        from services.data_refresh import resolve_market_root
+        from services.market_snapshot import resolve_market_root
         selected_root = resolve_market_root(Path(root))
         if on_progress:
             on_progress("market_csv")

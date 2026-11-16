@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 import time
 from copy import deepcopy
 from uuid import uuid4
@@ -14,7 +15,7 @@ from agents.future_pair_intent import (
 )
 from core.latency import log_latency
 from agents.state import ScenarioStore, empty_scenario
-from agents.tools import TOOLS, TIMING_TOOL, execute_tool, explain_term, with_box_price
+from agents.tools import TOOLS, TIMING_TOOL, execute_tool, explain_term, with_box_price, model_receipt_for_tool
 from services.task_context import TaskContext, data_revision
 from agents.harness import ExecutionPolicy, RunStopped, RepeatGuard, bound_history, encoded_size, user_starts, classify_failure, FAILURE_GUIDANCE
 
@@ -77,6 +78,20 @@ update의 patch에서 변경하지 않을 항목은 null. options를 바꾸면 �
 """
 
 
+@dataclass
+class _TurnRouting:
+    """Ephemeral routing facts for one user turn; never persisted as user data."""
+    new_comparison: bool
+    basis_stated: bool
+    keep_pair: bool
+    has_box_price: bool
+    quantity: float | None
+    allow_price_history: bool
+    future_pair_route: bool
+    forced_forecast: bool
+    comparison_started: bool = False
+
+
 class AgentSession:
     def __init__(self, settings: Settings | None = None, client=None, policy=None,
                  experimental_forecast: bool = False):
@@ -101,6 +116,126 @@ class AgentSession:
         if experimental_forecast:
             from experiments.forecast_agent import ExperimentalForecastDraft
             self.experimental_forecast_draft = ExperimentalForecastDraft()
+
+
+    def _execute_requested_tool(self, name: str, arguments, question: str, routing: _TurnRouting,
+                                *, on_progress=None):
+        """The sole session-aware dispatch point for stateful tool calls.
+
+        Preserve confirmed state, tool revisions and the existing execution
+        order. Deliberately do not decide the next question or format results.
+        """
+        new_comparison = routing.new_comparison
+        comparison_started = routing.comparison_started
+        basis_stated = routing.basis_stated
+        keep_pair = routing.keep_pair
+        has_box_price = routing.has_box_price
+        quantity = routing.quantity
+        allow_price_history = routing.allow_price_history
+        future_pair_route = routing.future_pair_route
+        forced_forecast = routing.forced_forecast
+        recorded_arguments = arguments
+        if name == "get_price_history":
+            from services.price_history_followup import (
+                MissingPreviousPriceQuery, resolve_price_history_request,
+            )
+            try:
+                recorded_arguments, clarification = resolve_price_history_request(arguments, self.price_history_query)
+            except MissingPreviousPriceQuery:
+                result = {"analysis_type": "price_history", "status": "NEEDS_INPUT",
+                          "source_status": "MISSING_PREVIOUS_QUERY", "reason": "MISSING_PREVIOUS_QUERY",
+                          "missing_fields": ["previous_price_history"],
+                          "message": "이전에 사용한 과거 가격 조회 조건이 없습니다. 조회할 규격을 다시 알려주세요.",
+                          "is_future_forecast": False}
+            except ValueError as exc:
+                result = {"analysis_type": "price_history", "status": "INVALID_INPUT",
+                          "source_status": "INVALID_INPUT", "reason": "INVALID_INPUT",
+                          "message": str(exc), "is_future_forecast": False}
+            else:
+                if not clarification and on_progress:
+                    on_progress("price_history")
+                result = clarification or execute_tool(name, recorded_arguments, self.store)
+                if result.get("status") in {"OK", "NEEDS_INPUT", "NO_DATA"}:
+                    self.price_history_query = deepcopy(recorded_arguments)
+                    self.price_history_revision = data_revision()
+        elif name == "reconcile_settlement":
+            result = execute_tool(name, arguments, self.store, shipment=self.shipment)
+        elif name == "review_case_changes":
+            result = execute_tool(name, arguments, self.store, reference_case=getattr(self, "comparison_reference", None),
+                task_context=self.task_context.snapshot(), input_context=getattr(self, "comparison_input_context", None))
+        elif name == "compare_future_pair":
+            box_price = None
+            if isinstance(arguments, dict) and isinstance(arguments.get("patch"), dict):
+                patch = dict(arguments["patch"])
+                action = arguments.get("action")
+                if new_comparison:
+                    action = "edit" if comparison_started else "new"
+                    if not basis_stated:
+                        patch.pop("price_basis", None)
+                elif keep_pair:
+                    action = "edit"
+                    if not basis_stated and "수수료" not in question:
+                        patch.pop("price_basis", None)
+                        if isinstance(arguments.get("clear_fields"), list):
+                            arguments = {**arguments, "clear_fields": [
+                                field for field in arguments["clear_fields"] if field != "price_basis"
+                            ]}
+                if quantity is not None:
+                    patch["quantity"] = quantity
+                if allow_price_history and action == "new" and patch.get("price_b") is None:
+                    patch["price_mode"] = "history"
+                arguments = {**arguments, "action": action, "patch": patch}
+                if future_pair_route:
+                    arguments["finish_turn"] = True
+                recorded_arguments = arguments
+            if has_box_price and isinstance(arguments, dict) and isinstance(arguments.get("patch"), dict):
+                arguments, box_price = pending_box_arguments(question, arguments)
+            result = execute_tool(name, arguments, self.store, future_pair=self.future_pair,
+                                  on_progress=on_progress, box_price=box_price,
+                                  unresolved_box_price=has_box_price and box_price is None)
+            comparison_started |= result["status"] != "INVALID_INPUT"
+        elif name == "update_scenario" and new_comparison and isinstance(arguments, dict) and isinstance(arguments.get("patch"), dict):
+            patch = dict(arguments["patch"])
+            if not basis_stated:
+                patch.pop("price_basis", None)
+            recorded_arguments = arguments = {**arguments, "patch": patch}
+            result = execute_tool(name, arguments, self.store, start_new_comparison=not comparison_started)
+            comparison_started |= result["status"] == "OK"
+        elif name == "analyze_shipment_timing":
+            result = execute_tool(name, arguments, self.store, future_pair=self.future_pair,
+                                  on_progress=on_progress)
+        elif name == "compare_experimental_forecast" and self.experimental_forecast:
+            # [트러블슈팅] LLM이 입력 보완 턴을 new로 잘못 분류하면
+            # 기존 3톤·규격·일자가 삭제됩니다. 동일 비교라면 edit로 교정합니다.
+            if (forced_forecast and self.experimental_forecast_draft.awaiting_input
+                    and isinstance(arguments, dict) and arguments.get("action") == "new"
+                    and not any(word in question for word in
+                                ("새 비교", "처음부터", "초기화", "이전 조건 무시", "새로 시작"))):
+                patch = arguments.get("patch") or {}
+                saved = self.experimental_forecast_draft.inputs
+                changes_identity = any(
+                    patch.get(key) is not None and saved.get(key) is not None
+                    and patch[key] != saved[key] for key in ("as_of", "quantity")
+                )
+                changes_identity |= any(
+                    patch.get("spec", {}).get(key) is not None
+                    and saved["spec"].get(key) is not None
+                    and patch["spec"][key] != saved["spec"][key]
+                    for key in ("variety", "grade", "size", "package", "package_kg")
+                ) if isinstance(patch.get("spec"), dict) else False
+                if not changes_identity:
+                    arguments = {**arguments, "action": "edit"}
+                    recorded_arguments = arguments
+            result = self.experimental_forecast_draft.apply(arguments)
+        elif name == "compare_shipment_options" and new_comparison and not comparison_started:
+            result = {"status": "INVALID_INPUT", "message": "새 비교에 사용할 출하 조건을 먼저 확인해 주세요."}
+        elif on_progress and name in {"compare_shipment_options", "explore_data", "build_review_brief",
+                                           "get_historical_shipment_context", "get_market_evidence"}:
+            result = execute_tool(name, arguments, self.store, on_progress=on_progress)
+        else:
+            result = execute_tool(name, arguments, self.store)
+        routing.comparison_started = comparison_started
+        return result, arguments, recorded_arguments
 
     def run(self, question: str, *, on_progress=None) -> dict:
         from services.data_refresh import kst_today
@@ -174,7 +309,6 @@ class AgentSession:
                 experimental_prompt = SYSTEM_PROMPT + EXPERIMENTAL_PROMPT
         future_pair_route = not forced_forecast and is_future_pair_request(question, today)
         new_comparison = new_comparison and not forced_forecast
-        comparison_started = False
         basis_stated = states_price_basis(question)
         keep_pair = not new_comparison and self.future_pair.inputs["price_a"] is not None and continues_comparison(question)
         has_box_price = not forced_forecast and mentions_box_price(question)
@@ -212,6 +346,16 @@ class AgentSession:
         )
         metrics["focused_toolset"] = focused
         tool_choice = {"type": "function", "name": forced_tool} if forced_tool else "auto"
+        routing = _TurnRouting(
+            new_comparison=new_comparison,
+            basis_stated=basis_stated,
+            keep_pair=keep_pair,
+            has_box_price=has_box_price,
+            quantity=quantity,
+            allow_price_history=allow_price_history,
+            future_pair_route=future_pair_route,
+            forced_forecast=forced_forecast,
+        )
         start_context_version = self.task_context.snapshot()["version"]
         try:
             for _ in range(self.policy.model_requests):
@@ -226,7 +370,7 @@ class AgentSession:
                     "연구용 ML 가격 실험 조건: " + json.dumps(
                         self.experimental_forecast_draft.snapshot(), ensure_ascii=False) + "\n"
                 ) if self.experimental_forecast else ""
-                starting = new_comparison and not comparison_started
+                starting = new_comparison and not routing.comparison_started
                 scenario = ({"version": self.store.version, "scenario": empty_scenario(), "provenance": {}}
                             if starting else self.store.snapshot())
                 self.messages[latest_user]["content"] = (
@@ -295,105 +439,8 @@ class AgentSession:
                     tool_started = time.monotonic()
                     self.store.origin_turn_id = run_id
                     recorded_arguments = arguments
-                    if call.name == "get_price_history":
-                        from services.price_history_followup import (
-                            MissingPreviousPriceQuery, resolve_price_history_request,
-                        )
-                        try:
-                            recorded_arguments, clarification = resolve_price_history_request(arguments, self.price_history_query)
-                        except MissingPreviousPriceQuery:
-                            result = {"analysis_type": "price_history", "status": "NEEDS_INPUT",
-                                      "source_status": "MISSING_PREVIOUS_QUERY", "reason": "MISSING_PREVIOUS_QUERY",
-                                      "missing_fields": ["previous_price_history"],
-                                      "message": "이전에 사용한 과거 가격 조회 조건이 없습니다. 조회할 규격을 다시 알려주세요.",
-                                      "is_future_forecast": False}
-                        except ValueError as exc:
-                            result = {"analysis_type": "price_history", "status": "INVALID_INPUT",
-                                      "source_status": "INVALID_INPUT", "reason": "INVALID_INPUT",
-                                      "message": str(exc), "is_future_forecast": False}
-                        else:
-                            if not clarification and on_progress:
-                                on_progress("price_history")
-                            result = clarification or execute_tool(call.name, recorded_arguments, self.store)
-                            if result.get("status") in {"OK", "NEEDS_INPUT", "NO_DATA"}:
-                                self.price_history_query = deepcopy(recorded_arguments)
-                                self.price_history_revision = data_revision()
-                    elif call.name == "reconcile_settlement":
-                        result = execute_tool(call.name, arguments, self.store, shipment=self.shipment)
-                    elif call.name == "review_case_changes":
-                        result = execute_tool(call.name, arguments, self.store, reference_case=getattr(self, "comparison_reference", None),
-                            task_context=self.task_context.snapshot(), input_context=getattr(self, "comparison_input_context", None))
-                    elif call.name == "compare_future_pair":
-                        box_price = None
-                        if isinstance(arguments, dict) and isinstance(arguments.get("patch"), dict):
-                            patch = dict(arguments["patch"])
-                            action = arguments.get("action")
-                            if new_comparison:
-                                action = "edit" if comparison_started else "new"
-                                if not basis_stated:
-                                    patch.pop("price_basis", None)
-                            elif keep_pair:
-                                action = "edit"
-                                if not basis_stated and "수수료" not in question:
-                                    patch.pop("price_basis", None)
-                                    if isinstance(arguments.get("clear_fields"), list):
-                                        arguments = {**arguments, "clear_fields": [
-                                            field for field in arguments["clear_fields"] if field != "price_basis"
-                                        ]}
-                            if quantity is not None:
-                                patch["quantity"] = quantity
-                            if allow_price_history and action == "new" and patch.get("price_b") is None:
-                                patch["price_mode"] = "history"
-                            arguments = {**arguments, "action": action, "patch": patch}
-                            if future_pair_route:
-                                arguments["finish_turn"] = True
-                            recorded_arguments = arguments
-                        if has_box_price and isinstance(arguments, dict) and isinstance(arguments.get("patch"), dict):
-                            arguments, box_price = pending_box_arguments(question, arguments)
-                        result = execute_tool(call.name, arguments, self.store, future_pair=self.future_pair,
-                                              on_progress=on_progress, box_price=box_price,
-                                              unresolved_box_price=has_box_price and box_price is None)
-                        comparison_started |= result["status"] != "INVALID_INPUT"
-                    elif call.name == "update_scenario" and new_comparison and isinstance(arguments, dict) and isinstance(arguments.get("patch"), dict):
-                        patch = dict(arguments["patch"])
-                        if not basis_stated:
-                            patch.pop("price_basis", None)
-                        recorded_arguments = arguments = {**arguments, "patch": patch}
-                        result = execute_tool(call.name, arguments, self.store, start_new_comparison=not comparison_started)
-                        comparison_started |= result["status"] == "OK"
-                    elif call.name == "analyze_shipment_timing":
-                        result = execute_tool(call.name, arguments, self.store, future_pair=self.future_pair,
-                                              on_progress=on_progress)
-                    elif call.name == "compare_experimental_forecast" and self.experimental_forecast:
-                        # [트러블슈팅] LLM이 입력 보완 턴을 new로 잘못 분류하면
-                        # 기존 3톤·규격·일자가 삭제됩니다. 동일 비교라면 edit로 교정합니다.
-                        if (forced_forecast and self.experimental_forecast_draft.awaiting_input
-                                and isinstance(arguments, dict) and arguments.get("action") == "new"
-                                and not any(word in question for word in
-                                            ("새 비교", "처음부터", "초기화", "이전 조건 무시", "새로 시작"))):
-                            patch = arguments.get("patch") or {}
-                            saved = self.experimental_forecast_draft.inputs
-                            changes_identity = any(
-                                patch.get(key) is not None and saved.get(key) is not None
-                                and patch[key] != saved[key] for key in ("as_of", "quantity")
-                            )
-                            changes_identity |= any(
-                                patch.get("spec", {}).get(key) is not None
-                                and saved["spec"].get(key) is not None
-                                and patch["spec"][key] != saved["spec"][key]
-                                for key in ("variety", "grade", "size", "package", "package_kg")
-                            ) if isinstance(patch.get("spec"), dict) else False
-                            if not changes_identity:
-                                arguments = {**arguments, "action": "edit"}
-                                recorded_arguments = arguments
-                        result = self.experimental_forecast_draft.apply(arguments)
-                    elif call.name == "compare_shipment_options" and new_comparison and not comparison_started:
-                        result = {"status": "INVALID_INPUT", "message": "새 비교에 사용할 출하 조건을 먼저 확인해 주세요."}
-                    elif on_progress and call.name in {"compare_shipment_options", "explore_data", "build_review_brief",
-                                                       "get_historical_shipment_context", "get_market_evidence"}:
-                        result = execute_tool(call.name, arguments, self.store, on_progress=on_progress)
-                    else:
-                        result = execute_tool(call.name, arguments, self.store)
+                    result, arguments, recorded_arguments = self._execute_requested_tool(
+                        call.name, arguments, question, routing, on_progress=on_progress)
                     if call.name in {"update_scenario", "compare_shipment_options"} and result["status"] != "INVALID_INPUT":
                         self.future_pair.pending = None
                     self.task_context.record(call.name, recorded_arguments or {}, result, scenario=self.store.scenario)
@@ -403,22 +450,8 @@ class AgentSession:
                                    "task_context_version": self.task_context.snapshot()["version"],
                                    "elapsed_seconds": round(time.monotonic() - tool_started, 3)})
                     log_latency("tool_execution", tool_started, tool=call.name, status=result["status"])
-                    model_output = result
-                    if call.name == 'reconcile_settlement':
-                        from services.settlement import model_receipt
-                        model_output = model_receipt(result)
-                    elif call.name == "compare_future_pair":
-                        model_output = {key: result[key] for key in (
-                            "status", "source_status", "message", "missing_fields", "choices",
-                            "manual_price_required", "future_pair_version",
-                        ) if key in result}
-                    elif call.name == "compare_experimental_forecast" and self.experimental_forecast:
-                        # [근거 격리] 연구용 예측가격·손익은 LLM에게 재전송하지 않습니다.
-                        from experiments.forecast_agent import model_receipt
-                        model_output = model_receipt(result)
-                    elif call.name == "get_price_history":
-                        from services.price_history_service import price_history_model_receipt
-                        model_output = price_history_model_receipt(result)
+                    model_output = model_receipt_for_tool(
+                        call.name, result, experimental_forecast=self.experimental_forecast)
                     self.messages.append({"type": "function_call_output", "call_id": call.call_id,
                                           "output": json.dumps(model_output, ensure_ascii=False)})
                     if time.monotonic() - started >= self.policy.seconds:
@@ -444,7 +477,7 @@ class AgentSession:
             starts = user_starts(self.messages)
             if starts:
                 del self.messages[starts[-1]:]
-        elif new_comparison and comparison_started:
+        elif new_comparison and routing.comparison_started:
             del self.messages[:user_starts(self.messages)[-1]]
         comparisons = [x for x in results if x["tool"] == "compare_shipment_options"]
         updated = any(x["tool"] == "update_scenario" and x["result"]["status"] == "OK" for x in results)
@@ -459,7 +492,7 @@ class AgentSession:
             events.append({"tool": "compare_shipment_options", "status": refreshed["status"],
                            "scenario_version": self.store.version, "origin": "application_refresh"})
         visible = select_results(results, self.store.version)
-        if not visible and not (new_comparison and not comparison_started):
+        if not visible and not (new_comparison and not routing.comparison_started):
             # A free-form final response cannot establish market facts or money.
             # Missing-field guidance is generated from application state too.
             from services.calculation_service import compare_shipment_options
