@@ -106,7 +106,8 @@ def compare_future_pair_threshold_reference(*, quantity, price_basis, start_date
     missing_fields = [*(f"A안 {name}" for name in missing_a), *(f"B안 {name}" for name in missing_b)]
 
     def number(value):
-        return fixed(value.normalize())
+        # 사용자가 넣은 비용은 int/float로 들어올 수 있어 Decimal로 바꾼 뒤 표시한다(0원도 그대로 유지).
+        return fixed(Decimal(str(value)).normalize())
 
     def row(name, days, sale_date, loss, fee, option, remaining, price, ref_amount=None):
         return {
