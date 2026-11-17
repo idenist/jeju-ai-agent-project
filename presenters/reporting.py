@@ -264,6 +264,7 @@ def _render_future_pair(result: dict) -> str:
         labels = {**FIELD_NAMES, "trade_type": "거래방식"}
         conditions = " / ".join(f"{labels.get(k, k)} {_text(v)}" for k, v in sample["conditions"].items())
         lines += [f"- 과거가격 조회 조건: {conditions}", f"- 가격쌍 기준일 {start} ~ {end}",
+                  "- 비교 자료: 과거 동일 규격 경락가격쌍",
                   *(f"- {line}" for line in _price_source_period(sample.get("source")))]
     return "\n".join([*lines, *_warnings(result)])
 

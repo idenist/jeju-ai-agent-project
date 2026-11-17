@@ -30,7 +30,7 @@ from ui.context import (
 def _render_cases(ws, disabled):
     from services.casefiles import parse_case
     with st.expander("비교 건 저장·불러오기"):
-        st.caption("조건과 당시 결과를 로컬 JSON으로 보관합니다. 대화·API 키는 포함하지 않습니다. 가져온 값의 사실 여부는 별도로 확인하세요.")
+        st.caption("이곳에서 저장한 비교 파일은 다시 열 수 있습니다. 두 출하일 비교 화면의 결과 JSON은 기록용입니다. 가져온 조건이 맞는지 확인하세요.")
         name = st.text_input("저장할 비교 이름", value="내 출하 비교", max_chars=80, key="case_name")
         download_slot = st.empty()
         uploaded = st.file_uploader("저장한 비교 JSON", type=["json"], key="case_upload")

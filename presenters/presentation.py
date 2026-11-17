@@ -61,6 +61,14 @@ def render_dialogue(results: list[dict], *, question: str = "", pair_costs_defer
         elif result.get("analysis_type") == "shipment_timing":
             from services.shipment_timing import format_timing_report
             sections.append(format_timing_report(result, details=False))
+        elif entry["tool"] == "get_historical_shipment_context" and result.get("status") == "NO_DATA":
+            sections.append(render_result(result))
+            query = result.get("input", {})
+            variety = query.get("shipment_variety")
+            month = query.get("target_month")
+            if variety in result.get("available_varieties", ()) and month:
+                sections.append(f"같은 품종의 다른 해 {month}월 자료를 찾아볼 수 있어요. "
+                                f"‘{variety}의 다른 해 {month}월 출하량을 보여줘’라고 말해 주세요.")
         elif entry["tool"] == "get_market_evidence" and result.get("status") == "NEEDS_INPUT":
             sections.append("이 조회는 특정 상품 규격의 가격을 확인하는 기능입니다. "
                             "대략적인 가격은 등급·포장을 몰라도 기간별 시장가격 요약으로 볼 수 있습니다. "

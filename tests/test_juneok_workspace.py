@@ -143,6 +143,27 @@ class WorkspaceTests(unittest.TestCase):
         ws.store.update({"quantity_kg": 4200}, ws.store.version)
         self.assertIsNone(_current_comparison_report(ws))
 
+    def test_report_request_keeps_economics_and_shipment_only_reports_distinct(self):
+        from ui.chat import _REPORT_REQUEST, _chat_report, _current_comparison_report, _latest_chat_report
+        from services.shipment_timing import analyze_shipment_timing
+
+        ws = self.workspace()
+        ws.load_demo()
+        comparison = _current_comparison_report(ws)
+        timing = analyze_shipment_timing({"shipment_variety": "노지온주", "option_a_date": "2026-11-23",
+                                          "option_b_date": "2026-11-30"})
+        shipment = _chat_report(ws, {"visible_results": [{"tool": "analyze_shipment_timing", "result": timing}]})
+        messages = [{"reply": {"chat_report": item}} for item in (comparison, shipment)]
+        args = (messages, ws.store.version, None, ws.session.future_pair.version)
+        self.assertEqual(_latest_chat_report(*args, target="comparison"), (0, comparison))
+        self.assertEqual(_latest_chat_report(*args, target="timing"), (1, shipment))
+        self.assertEqual(_latest_chat_report(*args), (1, shipment))
+
+        for phrase in ("방금 비교 PDF로 줘", "아까 출하 비교 보고서로 주세요", "비교 결과를 프린트할 수 있게 줘"):
+            self.assertIn("비교", _REPORT_REQUEST.fullmatch(phrase)["target"])
+        self.assertIn("출하량", _REPORT_REQUEST.fullmatch("과거 출하량 PDF로 줘")["target"])
+        self.assertIsNone(_REPORT_REQUEST.fullmatch("11월 23일 과거 출하량 PDF로 줘"))
+
     def test_data_refresh_chat_clear_preserves_conditions_and_discards_exports(self):
         ws = self.workspace()
         ws.load_demo()
@@ -187,6 +208,17 @@ class WorkspaceTests(unittest.TestCase):
         report = render_report(ws.current_entries())
         self.assertIn("원출처 관측자료 조회", report)
         self.assertNotIn("가상 예시·사용자 가정", report)
+
+    def test_no_shipment_data_suggests_a_lookup_without_inventing_an_amount(self):
+        from presenters.presentation import render_dialogue
+
+        ws = self.workspace()
+        result = ws.history({"shipment_variety": "노지온주", "target_month": 11, "start_year": 2025, "end_year": 2025})
+        self.assertEqual(result["status"], "NO_DATA")
+        self.assertEqual(result["series"], [])
+        answer = render_dialogue(ws.current_entries())
+        self.assertIn("관측자료가 없습니다", answer)
+        self.assertIn("노지온주의 다른 해 11월 출하량", answer)
 
     def test_unchanged_numeric_card_values_keep_types_and_provenance(self):
         ws = self.workspace()
