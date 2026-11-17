@@ -18,7 +18,12 @@ _RELATIVE_DAY = re.compile(
     rf"(?<![\d.])(?:([1-9]\d{{0,2}})\s*일|({'|'.join(_DAY_NAMES)})|"
     rf"({'|'.join(_WEEK_NAMES)}|[1-9]\d?)\s*주(?:일)?)\s*(?:뒤|후)|"
     r"(?<![\d.])([1-9]\d{0,2})\s*일\s*보관(?:한|하고|했다가)?\s*(?:뒤|후|출하|판매|팔)")
+_SHARED_RELATIVE_DAY = re.compile(
+    rf"(?<![\d.])([1-9]\d{{0,2}}\s*일|{'|'.join(_DAY_NAMES)})\s*(?:·|ㆍ|/|,|와|과|하고|랑|및)\s*"
+    rf"(?:[1-9]\d{{0,2}}\s*일|{'|'.join(_DAY_NAMES)})\s*(?:뒤|후)"
+)
 _CALENDAR_DAY = re.compile(r"(?<!\d)(?:(\d{4})\s*년\s*)?(\d{1,2})\s*월\s*(\d{1,2})\s*일|(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
+_DATED_STORAGE = re.compile(r"(?<![\d/])(?:(\d{4})\s*년\s*)?(\d{1,2})\s*(?:월\s*|/)\s*(\d{1,2})\s*(?:일\s*)?부터\s*보관")
 _WEIGHT = re.compile(r"(?<![\d.,\-−])([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)\s*(kg|킬로그램|톤|t)(?![a-z])")
 _PACK_BEFORE = re.compile(
     r"(?:상자|박스|포장|봉지|포대|팩)(?:\s*(?:한\s*개|하나|1\s*개))?\s*"
@@ -195,14 +200,37 @@ def is_future_pair_request(question: str, today: date) -> bool:
         shipment_day = _calendar_day(match, today.year)
         if shipment_day is not None and shipment_day > today:
             dates.append(shipment_day)
+    periods = _relative_ship_days(text)
+    future_days = periods | {(shipment_day - today).days for shipment_day in dates}
+    return len(future_days) == 2
+
+
+def _relative_ship_days(text: str) -> set[int]:
     periods = set()
     for days, day_name, weeks, storage_days in _RELATIVE_DAY.findall(text):
         if weeks:
             periods.add(7 * (int(weeks) if weeks.isdigit() else _WEEK_NAMES[weeks]))
         else:
             periods.add(_DAY_NAMES[day_name] if day_name else int(days or storage_days))
-    future_days = periods | {(shipment_day - today).days for shipment_day in dates}
-    return len(future_days) == 2
+    for day in _SHARED_RELATIVE_DAY.findall(text):
+        periods.add(_DAY_NAMES[day] if day in _DAY_NAMES else int(day[:-1]))
+    return periods
+
+
+def dated_storage_periods(question: str, today: date) -> tuple[date, int, int] | None:
+    """Read two relative shipment dates with one explicitly stated storage start."""
+    matches = list(_DATED_STORAGE.finditer(question))
+    if len(matches) != 1:
+        return None
+    match = matches[0]
+    periods = sorted(_relative_ship_days(question[match.end():]))
+    if len(periods) != 2 or periods[1] > 365:
+        return None
+    try:
+        start = date(int(match[1] or today.year), int(match[2]), int(match[3]))
+    except ValueError:
+        return None
+    return start, *periods
 
 
 def explicit_shipment_quantity(question: str) -> float | None:

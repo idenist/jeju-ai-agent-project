@@ -362,7 +362,10 @@ class SharedWorkspace:
         self.session.price_history_query = None
         self.session.price_history_revision = None
         self.session.lookup_evidence = None
+        self.session.shipment_variety = None
         self.session.future_pair.cancel_shipment_window()
+        self.session.future_pair.shipment_lookup_version = None
+        self.session.future_pair.opening_field = None
         self._comparison = None
         self.session.future_pair.costs_deferred = False
         self.session.future_pair.specs_deferred = False

@@ -4,10 +4,71 @@ from decimal import Decimal, ROUND_CEILING
 from time import monotonic
 
 from services.calculation_service import compare_shipment_options
-from services.data_contract import verify_cached_price_sources
+from services.data_contract import PAIR_FILES, PRICE_FILE, REPORT_FILE, verify_cached_price_sources
+from services.data_refresh import digest, resolve_market_root
+from services.task_context import data_revision
 from services.economics import decimal, fixed
 from core.config import PROJECT_ROOT
 from core.latency import log_latency
+
+
+OPTION_FIELDS = ("delay_days", "loss_percent", "daily_storage_cost", "other_cost_krw", "fee_percent")
+MAX_RATE_PERCENT = 99.99
+INPUT_FIELDS = ("quantity", "price_basis", "start_date", "price_a", "price_b", "history_filters")
+LABELS = {"quantity": "비교 물량(kg)", "price_basis": "수수료 차감 전·후 기준",
+          "start_date": "보관 시작일", "price_a": "A안 가정 단가(원/kg)", "price_b": "B안 가정 단가(원/kg)"}
+OPTION_LABELS = {"delay_days": "보관일", "loss_percent": "기간 전체 감모율(%)",
+                 "daily_storage_cost": "전체 물량 하루 보관비(원)", "other_cost_krw": "별도 비용(원)",
+                 "fee_percent": "수수료율(%)"}
+HISTORY_FIELDS = {"variety": "품종", "grade": "등급", "size": "크기", "package": "포장 종류",
+                  "package_kg": "포장 중량(kg)", "market_code": "시장코드", "trade_type": "거래방식"}
+
+
+def price_revision():
+    try:
+        active_price = resolve_market_root(PROJECT_ROOT) / PRICE_FILE
+        paths = dict.fromkeys([active_price, *(PROJECT_ROOT / path for path in (PRICE_FILE, *PAIR_FILES, REPORT_FILE))])
+        return (*data_revision(), *(digest(path) for path in paths))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def validate_future_pair_inputs(inputs):
+    if inputs["price_basis"] not in (None, "gross", "commission_net"):
+        raise ValueError("수수료 차감 전·후 단가 기준을 확인해 주세요.")
+    start_date = inputs["start_date"]
+    if start_date is not None:
+        try:
+            start = date.fromisoformat(start_date)
+            inputs["start_date"] = start.isoformat()
+        except (ValueError, TypeError):
+            raise ValueError("보관 시작일을 연-월-일로 알려 주세요.") from None
+    for field in ("quantity", "price_a", "price_b"):
+        value = inputs[field]
+        if value is None:
+            continue
+        number = decimal(value, LABELS[field])
+        if number < 0 or (field != "price_b" and number == 0):
+            raise ValueError(f"{LABELS[field]}의 범위를 확인해 주세요.")
+    for key, side in (("option_a", "A"), ("option_b", "B")):
+        for field, value in inputs[key].items():
+            if value is None:
+                continue
+            label = f"{side}안 {OPTION_LABELS[field]}"
+            if field == "delay_days":
+                if type(value) is not int or not 1 <= value <= 365:
+                    raise ValueError(f"{label}은 1~365일 사이 정수여야 합니다.")
+                if start_date is not None and value > (date.max - start).days:
+                    raise ValueError("보관 시작일과 보관일로 출하일을 계산할 수 없습니다.")
+                continue
+            number = decimal(value, label)
+            if number < 0 or (field in {"loss_percent", "fee_percent"} and number > Decimal(str(MAX_RATE_PERCENT))):
+                raise ValueError(f"{label}의 범위를 확인해 주세요.")
+            if field == "fee_percent" and inputs["price_basis"] == "commission_net" and number != 0:
+                raise ValueError("수수료 차감 후 단가와 별도 수수료율이 함께 입력됐습니다. 단가 기준을 확인해 주세요.")
+    a, b = (inputs[side]["delay_days"] for side in ("option_a", "option_b"))
+    if a is not None and b is not None and a >= b:
+        raise ValueError("B안 보관일은 A안보다 길어야 합니다.")
 
 
 def _engine_option(option, template):

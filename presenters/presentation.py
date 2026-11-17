@@ -35,7 +35,7 @@ def select_results(results: list[dict], version: int) -> list[dict]:
 
 
 def render_dialogue(results: list[dict], *, question: str = "", pair_costs_deferred=False,
-                    pair_specs_deferred=False) -> str:
+                    pair_specs_deferred=False, pair_one_question=False) -> str:
     """Concise questions; canonical Python numbers and evidence remain unchanged."""
     sections = []
     for entry in results:
@@ -54,8 +54,10 @@ def render_dialogue(results: list[dict], *, question: str = "", pair_costs_defer
                                                 (f"**{conclusion}**", minimum, favorable, warning) if part))
         elif result.get("analysis_type") == "future_pair":
             from agents.future_pair_state import future_pair_feedback, history_clarification, unavailable_cost
-            sections.append(history_clarification(result, question, pause_specs=pair_specs_deferred) or
-                            future_pair_feedback(result, pause_costs=pair_costs_deferred or unavailable_cost(question)))
+            sections.append(history_clarification(result, question, pause_specs=pair_specs_deferred,
+                                                   one_question=pair_one_question) or
+                            future_pair_feedback(result, pause_costs=pair_costs_deferred or unavailable_cost(question),
+                                                 one_question=pair_one_question))
         elif result.get("analysis_type") in {"price_history", "price_overview"}:
             sections.append(render_result(result))
         elif result.get("analysis_type") == "shipment_timing":

@@ -5,13 +5,14 @@ import json
 import os
 import re
 from dataclasses import dataclass
+from datetime import date
 import time
 from copy import deepcopy
 from uuid import uuid4
 from core.config import Settings
-from agents.box_price import mentions_box_price, pending_box_arguments
+from agents.box_price import mentions_box_price, pending_box_arguments, standalone_box_price
 from agents.future_pair_intent import (
-    changes_later_date_only, continues_comparison, explicit_later_storage_period, explicit_shipment_quantity, forbids_historical_pair_price,
+    changes_later_date_only, continues_comparison, dated_storage_periods, explicit_later_storage_period, explicit_shipment_quantity, forbids_historical_pair_price,
     is_future_pair_request, requests_manual_price,
     starts_new_comparison, states_price_basis, requests_historical_pair_price,
 )
@@ -23,6 +24,10 @@ from agents.harness import ExecutionPolicy, RunStopped, RepeatGuard, bound_histo
 
 
 from agents.dialogue import has_unsupported_amount, remember_visible_reply, simple_term_topic
+from agents.condition_policy import (
+    MUTATING_TOOLS, UNCHANGED_NOTICE, claims_state_was_changed, condition_request,
+    requests_zero_for_unknown_cost,
+)
 from agents.evidence_guard import latest_lookup, lookup_revision, rejected_evidence_claim
 from agents.prompts import SYSTEM_PROMPT
 from agents.service_scope import scope_reply
@@ -54,6 +59,8 @@ class _TurnRouting:
     excludes_price_history: bool
     existing_reference_request: bool
     future_pair_route: bool
+    dated_storage: tuple[date, int, int] | None = None
+    allow_condition_writes: bool = True
     comparison_started: bool = False
     pending_value_reply: bool = False
 
@@ -72,6 +79,7 @@ class AgentSession:
         self.price_history_query = None
         self.price_history_revision = None
         self.lookup_evidence = None
+        self.shipment_variety = None
         from agents.future_pair_state import FuturePairState
         self.future_pair = FuturePairState()
 
@@ -82,6 +90,9 @@ class AgentSession:
         Preserve confirmed state, tool revisions and the existing execution
         order. Deliberately do not decide the next question or format results.
         """
+        if name in MUTATING_TOOLS and not routing.allow_condition_writes:
+            result = {"status": "INVALID_INPUT", "reason": "READ_ONLY_REQUEST", "message": UNCHANGED_NOTICE}
+            return result, arguments, arguments
         new_comparison = routing.new_comparison
         comparison_started = routing.comparison_started
         basis_stated = routing.basis_stated
@@ -153,6 +164,13 @@ class AgentSession:
                             ]}
                 if quantity is not None:
                     patch["quantity"] = quantity
+                if routing.dated_storage:
+                    start, earlier, later = routing.dated_storage
+                    patch["start_date"] = start.isoformat()
+                    for side, days in (("option_a", earlier), ("option_b", later)):
+                        supplied = patch.get(side)
+                        if supplied is None or isinstance(supplied, dict):
+                            patch[side] = {**(supplied or {}), "delay_days": days}
                 if future_pair_route and not keep_pair:
                     action = "edit" if comparison_started else "new"
                 if action == "edit" and changes_later_date_only(question):
@@ -179,8 +197,10 @@ class AgentSession:
                     patch["history_filters"] = None
                 elif future_pair_route and patch.get("price_b") is None:
                     # Historical pairs are the default source unless the user opts out.
-                    patch["price_mode"] = "history" if allow_price_history else "manual"
-                    if not allow_price_history:
+                    has_confirmed_b = (keep_pair and self.future_pair.inputs["price_b"] is not None
+                                       and not requests_historical_pair_price(question))
+                    patch["price_mode"] = "history" if allow_price_history and not has_confirmed_b else "manual"
+                    if patch["price_mode"] == "manual":
                         patch["history_filters"] = None
                 elif future_pair_route and not requests_historical_pair_price(question):
                     patch["price_mode"] = "manual"
@@ -220,21 +240,62 @@ class AgentSession:
         return result, arguments, recorded_arguments
 
     def run(self, question: str, *, on_progress=None) -> dict:
-        if not self.messages or (isinstance(question, str) and starts_new_comparison(question)):
+        request, allow_writes = condition_request(question) if isinstance(question, str) and len(question) <= 6000 else (question, True)
+        if not self.messages or (allow_writes and isinstance(request, str) and starts_new_comparison(request)):
             self.lookup_evidence = None
-        reply = self._run(question, on_progress=on_progress)
+        reply = self._run(request, allow_condition_writes=allow_writes, on_progress=on_progress)
         self.remember_lookup(reply.get("visible_results", []))
-        remember_visible_reply(self.messages, question, reply)
+        remember_visible_reply(self.messages, request, reply)
         return reply
 
     def remember_lookup(self, entries):
         if evidence := latest_lookup(entries):
             self.lookup_evidence = (lookup_revision(evidence), deepcopy(evidence))
 
-    def _run(self, question: str, *, on_progress=None) -> dict:
+    def _shipment_lookup_reply(self, question, arguments, route, *, prefix="", on_progress=None):
+        from presenters.presentation import render_dialogue, report_for
+
+        result = execute_tool("analyze_shipment_timing", arguments, self.store,
+                              future_pair=self.future_pair, on_progress=on_progress)
+        entry = {"tool": "analyze_shipment_timing", "result": result}
+        self.task_context.record(entry["tool"], arguments, result, scenario=self.store.scenario)
+        text = render_dialogue([entry], question=question)
+        return {"status": "OK", "text": prefix + text,
+                "report": report_for([entry]), "tool_results": [entry], "visible_results": [entry],
+                "events": [], "state": self.store.snapshot(),
+                "metrics": {"model_requests": 0, "dialogue_route": route}}
+
+    def _continue_with_shipment_volume(self, question, earlier, later, *, unknown_price=False, on_progress=None):
+        pair = self.future_pair
+        pair.opening_field = None
+        if pair.pending is not None:
+            pair.costs_deferred = True
+        prefix = ("나중 출하 단가는 비워둘게요." if unknown_price else
+                  "감모율과 비용 중 모르는 값은 미확인으로 둘게요.")
+        if earlier and later and self.shipment_variety:
+            return self._shipment_lookup_reply(question, {
+                "shipment_variety": self.shipment_variety, "option_a_date": earlier, "option_b_date": later,
+            }, "known_shipment_variety", prefix=prefix + "\n\n", on_progress=on_progress)
+        pair.shipment_lookup_version = pair.version if earlier and later else None
+        next_step = ("같은 날짜의 과거 출하량은 먼저 볼 수 있어요. 감귤 품종을 알려주시겠어요?" if earlier and later else
+                     "과거 출하량부터 살펴볼 수 있어요. 비교할 두 출하 날짜를 알려주세요.")
+        return self._local_reply(prefix + " " + next_step, "unknown_cost_recovery")
+
+    def _local_reply(self, text, route):
+        return {"status": "OK", "text": text, "report": text,
+                "tool_results": [], "visible_results": [], "events": [],
+                "state": self.store.snapshot(),
+                "metrics": {"model_requests": 0, "dialogue_route": route}}
+
+    def _run(self, question: str, *, allow_condition_writes=True, on_progress=None) -> dict:
         from services.data_refresh import kst_today
         from presenters.presentation import select_results, render_dialogue, report_for
-        from agents.future_pair_state import asks_where_to_check, resume_pair_inputs, unavailable_cost, unavailable_pair_inputs
+        from agents.future_pair_intent import dated_shipment_query
+        from agents.future_pair_state import (
+            LABELS, asks_where_to_check, is_bare_unknown_reply, mentions_unknown_cost,
+            next_pair_field, resume_pair_inputs, shipment_variety_reply, unavailable_cost, unavailable_pair_inputs,
+        )
+        from services.shipment_timing import CATEGORIES, resolve_pair_dates
         settings = self.settings or Settings.load()
         if not isinstance(question, str) or not question.strip() or len(question) > 6000:
             return {"status": "INVALID_INPUT", "text": "질문은 1~6,000자로 입력하세요.", "tool_results": [], "events": [], "state": self.store.snapshot()}
@@ -243,29 +304,56 @@ class AgentSession:
                     "tool_results": [], "visible_results": [], "events": [],
                     "state": self.store.snapshot(),
                     "metrics": {"model_requests": 0, "dialogue_route": "outside_service_scope"}}
+        today = kst_today()
+        pair = self.future_pair
+        new_comparison = allow_condition_writes and starts_new_comparison(question)
+        future_pair_route = allow_condition_writes and is_future_pair_request(question, today)
+        dated_storage = dated_storage_periods(question, today) if future_pair_route else None
+        pending = pair.pending
+        waiting_for_variety = pair.shipment_lookup_version == pair.version
+        pair.shipment_lookup_version = None
+        earlier, later = resolve_pair_dates(pair.inputs)
+        if new_comparison:
+            self.shipment_variety = None
+        variety = shipment_variety_reply(question, CATEGORIES)
+        if allow_condition_writes and variety and (waiting_for_variety or not self.messages):
+            self.shipment_variety = variety
+        elif future_pair_route:
+            named = [label for label in CATEGORIES if label in question]
+            first_clause = re.split(r"[,，.!。]", question, maxsplit=1)[0]
+            if len(named) == 1 and (
+                shipment_variety_reply(first_clause, CATEGORIES) == named[0]
+                or re.match(rf"\s*{named[0]}\s+(?:\d|감귤|출하)", first_clause)
+            ):
+                self.shipment_variety = named[0]
+        unknown_cost_reply = (
+            earlier and later and pending is not None and mentions_unknown_cost(question)
+            and not re.search(r"\d", question) and not changes_later_date_only(question)
+        )
+        unknown_opening_price = pair.opening_field == LABELS["price_b"] and is_bare_unknown_reply(question)
+        if (allow_condition_writes and not new_comparison and not future_pair_route
+                and (requests_zero_for_unknown_cost(question) or unknown_cost_reply or unknown_opening_price)):
+            return self._continue_with_shipment_volume(question, earlier, later,
+                unknown_price=unknown_opening_price, on_progress=on_progress)
         if self.client is None and not settings.api_key:
             return {"status": "KEY_REQUIRED", "text": "프로젝트 .env에 OPENAI_API_KEY를 입력하세요. 직접 조건 비교와 과거 출하통계는 키 없이 사용할 수 있습니다.",
                     "tool_results": [], "events": [], "state": self.store.snapshot()}
-        today = kst_today()
-        from agents.future_pair_intent import dated_shipment_query
-        from services.shipment_timing import CATEGORIES
+        if waiting_for_variety and earlier and later and variety:
+            return self._shipment_lookup_reply(question, {
+                "shipment_variety": variety, "option_a_date": earlier, "option_b_date": later,
+            }, "pending_shipment_lookup", on_progress=on_progress)
+        if allow_condition_writes and variety and not self.messages and not (earlier and later):
+            return self._local_reply(f"{variety}로 확인했어요. 어느 두 날의 출하를 비교해 볼까요?", "shipment_variety_first")
         if timing_args := dated_shipment_query(question, today, CATEGORIES):
-            result = execute_tool("analyze_shipment_timing", timing_args, self.store,
-                                  future_pair=self.future_pair, on_progress=on_progress)
-            entry = {"tool": "analyze_shipment_timing", "result": result}
-            self.task_context.record(entry["tool"], timing_args, result, scenario=self.store.scenario)
-            return {"status": "OK", "text": render_dialogue([entry], question=question),
-                    "report": report_for([entry]), "tool_results": [entry], "visible_results": [entry],
-                    "events": [], "state": self.store.snapshot(),
-                    "metrics": {"model_requests": 0, "dialogue_route": "dated_shipment_lookup"}}
-        new_comparison = starts_new_comparison(question)
-        if new_comparison:
+            return self._shipment_lookup_reply(question, timing_args, "dated_shipment_lookup", on_progress=on_progress)
+        if new_comparison or future_pair_route:
             self.future_pair.cancel_shipment_window()
-        else:
+        elif allow_condition_writes:
             last = self.messages[-1] if self.messages else None
             previous_reply = last["content"] if isinstance(last, dict) and last.get("role") == "assistant" else ""
             window = self.future_pair.follow_up_shipment_window(
-                question, today, previous_reply=previous_reply, on_progress=on_progress,
+                question, today, previous_reply=previous_reply, shipment_variety=self.shipment_variety,
+                on_progress=on_progress,
             )
             if window is not None:
                 text, result = window
@@ -274,22 +362,31 @@ class AgentSession:
                     tool = "analyze_shipment_timing" if result["analysis_type"] == "shipment_timing" else "compare_future_pair"
                     entries = [{"tool": tool, "result": result}]
                     if tool == "analyze_shipment_timing":
+                        self.shipment_variety = result.get("input", {}).get("shipment_variety", self.shipment_variety)
                         text = render_dialogue(entries, question=question)
                 return {"status": "OK", "text": text, "report": report_for(entries) if entries else text,
                         "tool_results": entries, "visible_results": entries, "events": [],
                         "state": self.store.snapshot(),
                         "metrics": {"model_requests": 0, "dialogue_route": "shipment_window"}}
-        if not new_comparison and (box_result := self.future_pair.follow_up_box_price(question, on_progress=on_progress)) is not None:
+        if allow_condition_writes and not new_comparison and (box_result := self.future_pair.follow_up_box_price(question, on_progress=on_progress)) is not None:
             entry = {"tool": "compare_future_pair", "result": box_result}
             return {"status": "OK", "text": render_dialogue([entry], question=question,
-                                                           pair_costs_deferred=self.future_pair.costs_deferred),
+                                                           pair_costs_deferred=pair.costs_deferred, pair_one_question=True),
                     "report": report_for([entry]), "tool_results": [entry], "visible_results": [entry],
                     "events": [], "state": self.store.snapshot(), "metrics": {"model_requests": 0}}
-        from agents.future_pair_state import (
-            is_bare_unknown_reply, is_input_burden_complaint, paused_pair_feedback,
-        )
+        if allow_condition_writes and not (new_comparison or future_pair_route or pair.box_price):
+            field = pair.waiting_field()
+            expected_side = {LABELS["price_a"]: "A", LABELS["price_b"]: "B"}.get(field)
+            before_schedule = not any(pair.inputs.get(key) is not None for key in ("start_date", "price_a", "price_b"))
+            quote = standalone_box_price(question, expected_side=expected_side) if expected_side or before_schedule else None
+            if quote is not None:
+                result = pair.apply("edit", pair.version, {}, box_price=quote)
+                entry = {"tool": "compare_future_pair", "result": result}
+                return {**self._local_reply(result["message"], "standalone_box_quote"),
+                        "tool_results": [entry], "visible_results": [entry]}
+        from agents.future_pair_state import is_input_burden_complaint, paused_pair_feedback
         pending = self.future_pair.pending
-        if (not new_comparison and pending is not None
+        if (allow_condition_writes and not new_comparison and pending is not None
                 and pending.get("status") == "NEEDS_INPUT"
                 and is_input_burden_complaint(question)):
             # A complaint about the number of fields is a stop signal, not another
@@ -301,7 +398,7 @@ class AgentSession:
                     "tool_results": [], "visible_results": [], "events": [],
                     "state": self.store.snapshot(),
                     "metrics": {"model_requests": 0, "dialogue_route": "input_burden_pause"}}
-        if (not new_comparison and pending is not None
+        if (allow_condition_writes and not new_comparison and pending is not None
                 and pending.get("source_status") == "NEEDS_CLARIFICATION"
                 and (is_bare_unknown_reply(question)
                      or (not re.search(r"\d", question) and asks_where_to_check(question)
@@ -314,7 +411,7 @@ class AgentSession:
                     "report": report_for([entry]), "tool_results": [entry],
                     "visible_results": [entry], "events": [],
                     "state": self.store.snapshot(), "metrics": {"model_requests": 0}}
-        if not new_comparison:
+        if allow_condition_writes and not new_comparison:
             pair = self.future_pair
             later_period = explicit_later_storage_period(question)
             direct = None
@@ -366,12 +463,20 @@ class AgentSession:
             self.price_history_query = None
             self.price_history_revision = None
         offered_tools, instructions = [*TOOLS, TIMING_TOOL], SYSTEM_PROMPT
-        future_pair_route = is_future_pair_request(question, today)
+        if not allow_condition_writes:
+            offered_tools = [tool for tool in offered_tools if tool["name"] not in MUTATING_TOOLS]
+            instructions += ("\n이번 질문에는 조회와 설명 도구만 사용할 수 있습니다. "
+                             "인용·가정·철회 표현에서 값을 저장하거나, 적용됐다고 말하지 마세요.")
+            metrics["dialogue_route"] = "read_only_conditions"
         basis_stated = states_price_basis(question)
         pair_inputs = self.future_pair.inputs
+        adds_dates_to_quote = (future_pair_route and not new_comparison and pair.pending is not None
+                               and pair_inputs["start_date"] is None
+                               and any(pair_inputs[key] is not None for key in ("price_a", "price_b")))
         keep_pair = not new_comparison and pair_inputs["price_a"] is not None and (
             continues_comparison(question) or changes_later_date_only(question)
         )
+        keep_pair |= adds_dates_to_quote
         excludes_price_history = forbids_historical_pair_price(question)
         compact = "".join(question.split())
         existing_reference_request = (
@@ -395,7 +500,7 @@ class AgentSession:
         if future_pair_route:
             instructions += (
                 "\n서로 다른 두 미래 날짜가 언급됐습니다. 제주 감귤 출하 비교가 맞다면 compare_future_pair를 사용하고 총 물량은 kg으로 반영하세요. "
-                "'며칠 뒤'의 기준일이 따로 없으면 위 오늘 날짜를 사용하고, 달력 날짜는 보관 시작일과 구분하세요. "
+                "보관 시작일을 명시했다면 '며칠 뒤'는 그날 기준입니다. 기준일이 없으면 위 오늘 날짜를 사용하세요. "
                 "명시된 날짜·기간·단가를 사용하고 불분명한 값만 확인하세요. "
                 "B안 단가를 사용자가 직접 정하지 않았고 과거 가격 제외 요청도 없으면 price_mode=history로 자료를 먼저 확인하세요. "
                 "과거 가격을 명시적으로 제외했거나 B안을 직접 입력하라고 한 경우에만 manual로 두세요. "
@@ -438,6 +543,8 @@ class AgentSession:
             excludes_price_history=excludes_price_history,
             existing_reference_request=existing_reference_request,
             future_pair_route=future_pair_route,
+            dated_storage=dated_storage,
+            allow_condition_writes=allow_condition_writes,
             pending_value_reply=pending_value_reply,
         )
         start_context_version = self.task_context.snapshot()["version"]
@@ -474,7 +581,8 @@ class AgentSession:
                 request_started = time.monotonic()
                 client = self.client.with_options(timeout=min(30, remaining), max_retries=0) if hasattr(self.client, "with_options") else self.client
                 tool_choice = "auto"
-                if future_pair_route and (has_box_price or explicit_history) and metrics["model_requests"] == 1:
+                if (future_pair_route and (has_box_price or explicit_history or dated_storage or adds_dates_to_quote)
+                        and metrics["model_requests"] == 1):
                     tool_choice = {"type": "function", "name": "compare_future_pair"}
                 try:
                     response = client.responses.create(
@@ -505,19 +613,29 @@ class AgentSession:
                 if not tool_calls:
                     metrics["no_tool_model_responses"] += 1
                     candidate = getattr(response, "output_text", None)
+                    if not allow_condition_writes and isinstance(candidate, str) and claims_state_was_changed(candidate):
+                        self.messages.extend(item for item in response.output if item.type != "message")
+                        pending_model_reply = UNCHANGED_NOTICE
+                        metrics["condition_write_claim_blocked"] = True
+                        break
                     recent_evidence = self.lookup_evidence
                     evidence = latest_lookup(results)
-                    if (evidence is None and recent_evidence is not None
-                            and recent_evidence[0] == lookup_revision(recent_evidence[1])):
-                        evidence = recent_evidence[1]
+                    if evidence is None and recent_evidence is not None:
+                        revision, previous = recent_evidence
+                        evidence = (previous if revision is not None and revision == lookup_revision(previous)
+                                    else {"tool": previous["tool"], "result": {"status": "STALE_SOURCE"}})
                     rejection = rejected_evidence_claim(candidate, question, evidence) if isinstance(candidate, str) else None
                     if rejection:
                         metrics["unsupported_evidence_blocked"] = rejection
                         if rejection == "historical_probability":
                             evidence_fallback = "과거 출하량이나 가격쌍의 비율로 미래 가격이 오를 확률을 계산할 수 없어요."
+                        elif rejection == "missing_observation":
+                            evidence_fallback = "현재 조회로 확인된 수치가 없어요. 품종과 확인할 날짜로 다시 조회할 수 있어요."
                         else:
                             evidence_fallback = "말씀하신 수치는 확인된 관측 결과와 일치하지 않아요."
-                        if not results and evidence and re.search(r"방금|직전|그럼|그\s*자료|그\s*수치", question):
+                        if (rejection != "missing_observation" and not results and evidence
+                                and evidence["result"].get("status") != "STALE_SOURCE"
+                                and re.search(r"방금|직전|그럼|그\s*자료|그\s*수치", question)):
                             evidence_fallback += "\n\n" + render_dialogue([evidence])
                     if (isinstance(candidate, str) and candidate.strip()
                             and not rejection and not has_unsupported_amount(candidate, model_messages)):
@@ -540,14 +658,17 @@ class AgentSession:
                         arguments = json.loads(call.arguments)
                     except (TypeError, json.JSONDecodeError):
                         arguments = None
-                    guard.check(call.name, arguments, self.store.scenario, data_revision())
+                    logical_state = (self.future_pair.inputs if call.name in {"compare_future_pair", "analyze_shipment_timing"}
+                                     else self.store.scenario)
+                    guard.check(call.name, arguments, logical_state, data_revision())
                     calls += 1
                     tool_started = time.monotonic()
                     self.store.origin_turn_id = run_id
                     recorded_arguments = arguments
                     result, arguments, recorded_arguments = self._execute_requested_tool(
                         call.name, arguments, question, routing, on_progress=on_progress)
-                    if call.name in {"update_scenario", "compare_shipment_options"} and result["status"] != "INVALID_INPUT":
+                    if (routing.allow_condition_writes and call.name in {"update_scenario", "compare_shipment_options"}
+                            and result["status"] != "INVALID_INPUT"):
                         self.future_pair.pending = None
                     self.task_context.record(call.name, recorded_arguments or {}, result, scenario=self.store.scenario)
                     item = {"tool": call.name, "result": result}
@@ -563,7 +684,7 @@ class AgentSession:
                         raise RunStopped("TIME_LIMIT")
                     if result.get("source_status") == "PACKAGE_WEIGHT_CONFLICT":
                         finished = True
-                    elif isinstance(arguments, dict) and arguments.get("finish_turn") is True and (
+                    elif result.get("reason") != "READ_ONLY_REQUEST" and isinstance(arguments, dict) and arguments.get("finish_turn") is True and (
                             result["status"] in {"OK", "NEEDS_INPUT", "NEEDS_CLARIFICATION", "NO_DATA", "PARTIAL", "CHECK_REQUIRED"}
                             or (call.name == "get_price_history" and result["status"] == "DATA_ERROR")
                             or call.name == "compare_future_pair"):
@@ -596,7 +717,18 @@ class AgentSession:
             results.append({"tool": "compare_shipment_options", "result": refreshed})
             events.append({"tool": "compare_shipment_options", "status": refreshed["status"],
                            "scenario_version": self.store.version, "origin": "application_refresh"})
-        visible = select_results(results, self.store.version)
+        source_changed = source_revision != data_revision()
+        visible_results = [entry for entry in results if entry["result"].get("reason") != "READ_ONLY_REQUEST"]
+        if source_changed:
+            visible_results = [entry for entry in visible_results if
+                               entry["tool"] not in {"get_price_history", "get_price_overview", "get_market_evidence",
+                                                     "get_historical_shipment_context", "analyze_shipment_timing",
+                                                     "explore_data", "build_review_brief", "review_case_changes"}
+                               and not (entry["tool"] == "compare_future_pair" and
+                                        (entry["result"].get("history_preview")
+                                         or entry["result"].get("historical_price_lookup") == "used"))]
+            pending_model_reply = evidence_fallback = None
+        visible = select_results(visible_results, self.store.version)
         if status == "OK" and not visible and not pending_model_reply and not evidence_fallback:
             if topic := simple_term_topic(question):
                 args = {"topic": topic}
@@ -616,7 +748,30 @@ class AgentSession:
             pending = self.future_pair.pending
             if pending.get("source_status") == "NEEDS_CLARIFICATION" and unavailable_pair_inputs(pending, question):
                 self.future_pair.specs_deferred = True
-        if pending_model_reply or evidence_fallback:
+        opening = next((entry["result"] for entry in visible if entry["tool"] == "compare_future_pair"
+                        and entry["result"].get("future_pair_version") == pair.version), None)
+        saved_line = (pair.saved_conditions_line() if status == "OK" and future_pair_route and
+                      routing.comparison_started and not keep_pair and opening else "")
+        if saved_line and opening.get("status") == "NEEDS_INPUT" and pair.costs_deferred:
+            recovery = self._continue_with_shipment_volume(
+                question, *resolve_pair_dates(pair.inputs), on_progress=on_progress,
+            )
+            results.extend(recovery["tool_results"])
+            visible.extend(recovery["visible_results"])
+            text = saved_line + "\n\n" + recovery["text"]
+        elif (saved_line and opening.get("source_status") == "NEEDS_CLARIFICATION"
+              and not (explicit_history or pair.specs_deferred)):
+            pair.opening_field = LABELS["price_b"]
+            text = (saved_line + "\n\n나중 출하 때 받을 단가는 kg당 얼마로 제안받으셨나요? "
+                    "아직 모르면 ‘몰라요’라고 해도 돼요.")
+        elif saved_line:
+            if opening.get("comparison_inputs_pending"):
+                pair.opening_field = next_pair_field(opening.get("missing_fields", []))
+            text = saved_line + "\n\n" + render_dialogue(
+                visible, question=question, pair_costs_deferred=pair.costs_deferred,
+                pair_specs_deferred=pair.specs_deferred, pair_one_question=True,
+            )
+        elif pending_model_reply or evidence_fallback:
             text = pending_model_reply or evidence_fallback
             if visible:
                 text += "\n\n" + render_dialogue(visible, question=question,
@@ -625,6 +780,10 @@ class AgentSession:
         elif visible:
             text = render_dialogue(visible, question=question, pair_costs_deferred=self.future_pair.costs_deferred,
                                    pair_specs_deferred=self.future_pair.specs_deferred)
+        elif source_changed:
+            text = "조회 중 자료가 바뀌었어요. 현재 자료 기준으로 다시 조회해 주세요."
+        elif not allow_condition_writes and any(entry["result"].get("reason") == "READ_ONLY_REQUEST" for entry in results):
+            text = UNCHANGED_NOTICE
         else:
             text = "아직 확인된 자료로 답변을 완성하지 못했습니다. 요청하신 내용으로 다시 시도해 주세요."
         report = report_for(visible) if visible else text
@@ -638,4 +797,4 @@ class AgentSession:
                 "state": self.store.snapshot(), "metrics": metrics, "task_context": self.task_context.snapshot(),
                 "termination": {"reason": status, "phase": phase, "tool_calls_executed": calls,
                                 "task_context_start_version": start_context_version,
-                                "source_revision": source_revision, "source_changed": source_revision != data_revision()}}
+                                "source_revision": source_revision, "source_changed": source_changed}}
