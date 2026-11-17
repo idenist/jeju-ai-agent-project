@@ -236,7 +236,23 @@ class AgentSession:
         if self.client is None and not settings.api_key:
             return {"status": "KEY_REQUIRED", "text": "프로젝트 .env에 OPENAI_API_KEY를 입력하세요. 직접 조건 비교와 과거 출하통계는 키 없이 사용할 수 있습니다.",
                     "tool_results": [], "events": [], "state": self.store.snapshot()}
+        today = kst_today()
         new_comparison = starts_new_comparison(question)
+        if new_comparison:
+            self.future_pair.cancel_shipment_window()
+        else:
+            last = self.messages[-1] if self.messages else None
+            previous_reply = last["content"] if isinstance(last, dict) and last.get("role") == "assistant" else ""
+            window = self.future_pair.follow_up_shipment_window(
+                question, today, previous_reply=previous_reply, on_progress=on_progress,
+            )
+            if window is not None:
+                text, result = window
+                entries = [{"tool": "compare_future_pair", "result": result}] if result is not None else []
+                return {"status": "OK", "text": text, "report": report_for(entries) if entries else text,
+                        "tool_results": entries, "visible_results": entries, "events": [],
+                        "state": self.store.snapshot(),
+                        "metrics": {"model_requests": 0, "dialogue_route": "shipment_window"}}
         if not new_comparison and (box_result := self.future_pair.follow_up_box_price(question, on_progress=on_progress)) is not None:
             entry = {"tool": "compare_future_pair", "result": box_result}
             return {"status": "OK", "text": render_dialogue([entry], question=question,
@@ -302,7 +318,6 @@ class AgentSession:
         pending_model_reply = None
         guard = RepeatGuard(self.policy.identical_calls)
         source_revision = data_revision()
-        today = kst_today()
         if self.price_history_query is not None and self.price_history_revision != source_revision:
             self.price_history_query = None
             self.price_history_revision = None

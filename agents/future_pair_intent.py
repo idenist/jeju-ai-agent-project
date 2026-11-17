@@ -35,6 +35,12 @@ _PRICE_BASIS = re.compile(
     r"(?:(?:차감|공제|제외|빼기|떼기)\s*(?:(?:하기|한)\s*)?(?:전|후|뒤)|뺀|빼고|떼고|뗀|빠진|포함|제외한)|실수취\s*(?:단가|가격|금액)"
 )
 _PRICE_BASIS_UNCERTAIN = re.compile(r"^\s*(?:(?:금액|단가|가격)\s*)?(?:인지|일지|이냐|또는|/|·)")
+_WINDOW_START = re.compile(r"^\s*(?:부터|이후|[~～–])")
+_WINDOW_LIMIT = re.compile(
+    r"(?:^|부터\s*|[~～–]\s*)(?:(\d{1,2})\s*월\s*)?(\d{1,2}\s*일|말일)\s*까지"
+    r"(?:\s*(?:는\s*)?(?:출하(?:할\s*수\s*있|\s*가능하)?|팔\s*수\s*있|할\s*수\s*있|가능해)?"
+    r"(?:어요|습니다|해요|합니다|요)?)?[.!\s]*$"
+)
 _CONTINUE_COMPARISON = re.compile(
     r"(?:기존|현재|직전|아까(?:의)?)\s*(?:출하\s*)?비교|(?:나중\s*출하일|B안\s*(?:날짜|단가))만"
     r"|(?:앞서|방금)\s*(?:확인한|본)\s*(?:과거\s*)?(?:가격|단가)\s*가정"
@@ -90,9 +96,49 @@ def changes_later_date_only(question: str) -> bool:
     return _LATER_DATE_ONLY.search(question) is not None
 
 
+def shipment_choice_question(question: str) -> bool:
+    """Distinguish a shipping decision from a historical query or report."""
+    return bool(_SHIPMENT.search(question) and _CHOICE.search(question)
+                and not (_OTHER_PURPOSE.search(question) or _TODAY_SALE.search(question)))
+
+
+def shipment_window_start(question: str, today: date) -> date | None:
+    if not shipment_choice_question(question):
+        return None
+    matches = list(_CALENDAR_DAY.finditer(question))
+    if not matches or not _WINDOW_START.match(question[matches[0].end():]):
+        return None
+    if len(matches) == 1 or (len(matches) == 2 and question[matches[1].end():].lstrip().startswith("까지")):
+        return _calendar_day(matches[0], today.year)
+    return None
+
+
+def shipment_window_limit(question: str, first: date) -> date | None:
+    match = _WINDOW_LIMIT.search(question.strip())
+    if match is None:
+        return None
+    from calendar import monthrange
+
+    month = int(match[1]) if match[1] else first.month
+    year = first.year + (month < first.month)
+    try:
+        day = monthrange(year, month)[1] if match[2] == "말일" else int(match[2][:-1])
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _calendar_day(match, default_year: int) -> date | None:
+    year, month, day = match.groups()[:3] if match[2] else match.groups()[3:]
+    try:
+        return date(int(year or default_year), int(month), int(day))
+    except ValueError:
+        return None
+
+
 def is_future_pair_request(question: str, today: date) -> bool:
     text = question.casefold()
-    if not (_SHIPMENT.search(text) and _CHOICE.search(text)) or _OTHER_PURPOSE.search(text) or _TODAY_SALE.search(text):
+    if not shipment_choice_question(text):
         return False
     # Remove the date of a stated storage start before counting shipment dates.
     dates = []
@@ -100,12 +146,8 @@ def is_future_pair_request(question: str, today: date) -> bool:
         if (_STORAGE_START.search(text[:match.start()])
                 or re.match(r"\s*(?:부터|에\s*보관\s*시작)", text[match.end():])):
             continue
-        year, month, day = match.groups()[:3] if match[2] else match.groups()[3:]
-        try:
-            shipment_day = date(int(year or today.year), int(month), int(day))
-        except ValueError:
-            continue
-        if shipment_day > today:
+        shipment_day = _calendar_day(match, today.year)
+        if shipment_day is not None and shipment_day > today:
             dates.append(shipment_day)
     periods = set()
     for days, day_name, weeks, storage_days in _RELATIVE_DAY.findall(text):

@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from io import BytesIO
 import json
@@ -20,6 +21,68 @@ COMMON = {"quantity": 3000, "price_basis": "gross", "start_date": "2026-11-12", 
 
 
 class FuturePairTests(unittest.TestCase):
+    @patch("services.data_refresh.kst_today", return_value=date(2026, 11, 18))
+    def test_shipping_window_remembers_the_short_quote_until_comparison_is_confirmed(self, _today):
+        from agents.agent import AgentSession
+        from test_juneok_harness import FakeClient
+
+        for answer in ("3000원", "3,000원이요", "11월 23일 출하 시 제시받은 kg당 단가 = 3000원"):
+            with self.subTest(answer=answer):
+                client = FakeClient([])
+                agent = AgentSession(client=client)
+                first = agent.run("감귤 3톤을 11월 23일 이후에 출하할 수 있는데 언제 출하하는게 좋을까요?")
+                self.assertIn("언제까지", first["text"])
+                quote = agent.run("11월 30일까지 할 수 있어요")
+                self.assertIn("11월 23일", quote["text"])
+                self.assertIsNone(agent.future_pair.inputs["option_b"]["delay_days"])
+                stored = agent.run(answer)
+                self.assertIn("3,000원/kg", stored["text"])
+                self.assertEqual(agent.future_pair.inputs["price_a"], "3000")
+                self.assertIsNone(agent.future_pair.inputs["price_basis"])
+
+                follow_up = agent.run("그래서 23~30일 중 언제 출하하는게 좋을까요?")
+                self.assertIn("3,000원/kg", follow_up["text"])
+                self.assertNotIn("kg당 얼마", follow_up["text"])
+                self.assertIsNone(agent.future_pair.inputs["option_b"]["delay_days"])
+                agent.run("네")
+                self.assertEqual(agent.future_pair.inputs["option_a"]["delay_days"], 5)
+                self.assertEqual(agent.future_pair.inputs["option_b"]["delay_days"], 12)
+                self.assertEqual(agent.future_pair.inputs["quantity"], 3000)
+                self.assertEqual(agent.future_pair.inputs["price_a"], "3000")
+                self.assertEqual(client.requests, [])
+
+    @patch("services.data_refresh.kst_today", return_value=date(2026, 11, 18))
+    def test_shipping_window_keeps_price_unknown_after_ambiguous_or_unrelated_input(self, _today):
+        from agents.agent import AgentSession
+        from test_juneok_harness import FakeClient, response
+
+        agent = AgentSession(client=FakeClient([response(), response(), response()]))
+        agent.run("감귤을 11월 23일 이후에 출하할 수 있는데 언제 출하하는게 좋을까요?")
+        agent.run("11월 30일까지 할 수 있어요")
+        for answer in ("3000원 정도?", "상자에 3,000원", "감귤과 관계없는 소설 써 줘"):
+            agent.run(answer)
+            self.assertIsNone(agent.future_pair.inputs["price_a"])
+        agent.run("새 비교를 시작할게요")
+        agent.run("3000원")
+        self.assertIsNone(agent.future_pair.inputs["price_a"])
+
+    @patch("services.data_refresh.kst_today", return_value=date(2026, 11, 18))
+    def test_shipping_window_uses_a_stated_end_without_asking_again(self, _today):
+        from agents.agent import AgentSession
+        from test_juneok_harness import FakeClient
+
+        for end in ("말일까지", "11월 30일까지"):
+            with self.subTest(end=end):
+                agent = AgentSession(client=FakeClient([]))
+                ask = agent.run(f"감귤 4톤을 11월 23일부터 {end} 출하할 수 있어요. 언제 파는 게 좋을까요?")
+                self.assertIn("11월 30일", ask["text"])
+                self.assertIn("kg당 얼마", ask["text"])
+                agent.run("3,000원이요")
+                agent.run("네, 비교해 주세요")
+                self.assertEqual(agent.future_pair.inputs["option_b"]["delay_days"], 12)
+                self.assertEqual(agent.future_pair.inputs["quantity"], 4000)
+                self.assertEqual(agent.future_pair.inputs["price_a"], "3000")
+
     def test_box_quote_waits_for_the_missing_weight_and_confirmation(self):
         from agents.agent import AgentSession
         from agents.box_price import mentions_box_price

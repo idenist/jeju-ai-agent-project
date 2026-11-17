@@ -10,6 +10,7 @@ import streamlit as st
 from core.latency import latency_logging_enabled, log_latency
 from presenters.reporting import manual_price_warning
 from presenters.presentation import render_dialogue
+from services.task_context import data_revision
 
 _REPORT_REQUEST = re.compile(
     r"(?:방금|아까|직전|마지막|최근)\s*(?:한\s*)?(?:출하\s*)?비교\s*(?:결과)?\s*(?:를|을)?\s*"
@@ -395,7 +396,7 @@ def _chat_report(ws, reply):
     except ValueError:
         report_json = ""
     return {"kind": "comparison", "version": reply.get("state", {}).get("version", ws.store.version),
-            "entries": entries, "json": report_json}
+            "source_revision": ws.result_data_revision, "entries": entries, "json": report_json}
 
 def _latest_chat_report(messages, version, current_pair, pair_version=None):
     for index in range(len(messages) - 1, -1, -1):
@@ -411,7 +412,7 @@ def _latest_chat_report(messages, version, current_pair, pair_version=None):
                            and tuple(report["source_fingerprint"]) == source_fingerprint()
                            and (economic is None or economic == current_pair))
             else:
-                current = version == report["version"]
+                current = version == report["version"] and report.get("source_revision") == data_revision()
             return (index, report) if current else (None, None)
         if any(item["tool"] in {"compare_shipment_options", "compare_future_pair"} and
                item["result"].get("status") in {"OK", "NEEDS_INPUT", "NEEDS_CLARIFICATION", "NO_DATA"}

@@ -321,7 +321,7 @@ class SharedWorkspace:
         reply = self.session.run(question, on_progress=on_progress) if on_progress else self.session.run(question)
         visible = reply.get("visible_results", [])
         entries = [entry for entry in visible if entry["tool"] != "compare_future_pair"]
-        if entries or not visible or reply["status"] != "OK":
+        if entries or reply["status"] != "OK" or (not visible and not self.current_entries()):
             self._freeze(entries, "대화와 공유 조건", execution_status=reply.get("status", "ERROR"), expected_data_revision=revision)
         return reply
 
@@ -344,6 +344,7 @@ class SharedWorkspace:
         self.session.messages = []
         self.session.price_history_query = None
         self.session.price_history_revision = None
+        self.session.future_pair.cancel_shipment_window()
         self.session.future_pair.costs_deferred = False
         self.session.future_pair.specs_deferred = False
         if not preserve_manual_pair or self.session.future_pair.inputs["history_filters"] is not None:

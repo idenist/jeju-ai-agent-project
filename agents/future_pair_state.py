@@ -1,5 +1,6 @@
 """Session conditions and the current result for two future shipments."""
 from copy import deepcopy
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 import re
@@ -14,6 +15,9 @@ from services.economics import decimal
 from core.config import PROJECT_ROOT
 from services.data_refresh import digest, resolve_market_root
 from services.task_context import data_revision
+from agents.future_pair_intent import (
+    explicit_shipment_quantity, shipment_choice_question, shipment_window_limit, shipment_window_start,
+)
 
 
 OPTION_FIELDS = ("delay_days", "loss_percent", "daily_storage_cost", "other_cost_krw", "fee_percent")
@@ -401,6 +405,14 @@ def _missing_questions(fields, storage_days):
     return text
 
 
+@dataclass(frozen=True)
+class _ShipmentWindow:
+    first: date
+    version: int
+    last: date | None = None
+    quantity: float | None = None
+
+
 class FuturePairState:
     def __init__(self):
         self.version = 0
@@ -409,6 +421,7 @@ class FuturePairState:
         self.source_revision = None
         self.pending = None
         self.box_price = None
+        self.shipment_window = None
         self.costs_deferred = False
         self.specs_deferred = False
 
@@ -440,6 +453,7 @@ class FuturePairState:
     def reset(self):
         self.replace(self._empty())
         self.clear_result()
+        self.shipment_window = None
         self.costs_deferred = False
         self.specs_deferred = False
 
@@ -628,6 +642,76 @@ class FuturePairState:
         if patch is None:
             return None
         return self.apply("edit", self.version, patch, on_progress=on_progress)
+
+    def cancel_shipment_window(self):
+        if self.shipment_window is not None and self.shipment_window.version == self.version:
+            self.pending = None
+        self.shipment_window = None
+
+    def follow_up_shipment_window(self, question, today, *, previous_reply="", on_progress=None):
+        """Use a stated shipping window to obtain a dated, per-kg A quote."""
+        stated_limit = None
+        if (first := shipment_window_start(question, today)) is not None and 1 <= (first - today).days < 365:
+            self.shipment_window = _ShipmentWindow(first, self.version, quantity=explicit_shipment_quantity(question))
+            stated_limit = shipment_window_limit(re.split(r"[.!?]", question, maxsplit=1)[0], first)
+            if stated_limit is None:
+                return f"{first.month}월 {first.day}일 이후에 출하할 수 있군요. 늦어도 언제까지 출하해야 하나요?", None
+        window = self.shipment_window
+        if window is None or window.version != self.version:
+            return None
+
+        first, last = window.first, window.last
+        first_label = f"{first.month}월 {first.day}일"
+        if last is None:
+            last = stated_limit or shipment_window_limit(question, first)
+            if last is None:
+                return None
+            if last <= first:
+                return f"{first_label}보다 늦게 출하할 수 있는 날이 있나요?", None
+            if (last - today).days > 365:
+                return "출하 비교는 보관 시작일로부터 365일 이내에서 할 수 있어요. 더 가까운 날을 알려주시겠어요?", None
+            result = self.apply("new", self.version, {
+                "start_date": today.isoformat(),
+                "quantity": window.quantity,
+                "option_a": {"delay_days": (first - today).days},
+            })
+            if result["status"] != "NEEDS_INPUT":
+                return None
+            self.shipment_window = replace(window, last=last, version=self.version)
+            self.pending = {**result, "missing_fields": [LABELS["price_a"]]}
+            return (f"{last.month}월 {last.day}일까지 출하할 수 있군요. "
+                    f"{first_label} 출하 단가는 kg당 얼마로 제안받으셨나요?", self.pending)
+
+        last_label = f"{last.month}월 {last.day}일"
+        confirmation = f"{first_label}과 {last_label}을 먼저 비교해 볼까요?"
+        if self.inputs["price_a"] is None and self.waiting_field() == LABELS["price_a"]:
+            text = question.strip()
+            text = re.sub(rf"^(?:{first.month}\s*월\s*)?{first.day}\s*일"
+                          r"\s*(?:에|출하\s*시)?\s*(?:제시받은\s*)?"
+                          r"(?:kg\s*당\s*)?(?:단가\s*(?:=|은|는)?\s*)?", "", text)
+            result = self.apply_short_answer(text, on_progress=on_progress)
+            if result is None:
+                return None
+            self.shipment_window = replace(window, version=self.version)
+            price = decimal(self.inputs["price_a"], LABELS["price_a"])
+            return (f"{first_label} 제시 단가를 **{price:,.12g}원/kg**으로 저장했어요. " + confirmation, result)
+
+        if self.inputs["price_a"] is None:
+            return None
+        accepts = re.fullmatch(r"\s*(?:네|예|좋아요|(?:(?:네|예)[,\s]+)?(?:비교)?해\s*(?:줘|주세요))[.!\s]*", question)
+        if accepts and previous_reply.endswith(confirmation):
+            self.shipment_window = None
+            start = date.fromisoformat(self.inputs["start_date"])
+            result = self.apply("edit", self.version, {"option_b": {"delay_days": (last - start).days}},
+                                on_progress=on_progress)
+            return (f"{first_label}과 {last_label}을 비교할게요. "
+                    + future_pair_feedback(result), result)
+        if shipment_choice_question(question) and "언제" in question:
+            price = decimal(self.inputs["price_a"], LABELS["price_a"])
+            return (f"{first_label} 제시 단가는 **{price:,.12g}원/kg**이에요. "
+                    "나중에 받는 단가와 보관비를 알아야 어느 쪽이 유리한지 판단할 수 있어요. "
+                    + confirmation, None)
+        return None
 
     def is_compound_value_answer(self, question):
         """Require an A/B update tool for unmistakable data-only multi-slot replies."""

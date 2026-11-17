@@ -92,6 +92,38 @@ class WorkspaceTests(unittest.TestCase):
         ws.store.update({"quantity_kg": 4000}, ws.store.version)
         self.assertEqual(ws.current_entries(), [])
 
+    def test_plain_conversation_keeps_current_comparison_available_for_export(self):
+        from services.casefiles import parse_case
+
+        ws = self.workspace()
+        ws.load_demo()
+        before = parse_case(ws.export_case("출하 비교"))
+        reply = ws.run("감귤과 관계없는 소설 써 줘")
+        self.assertEqual(reply["metrics"]["dialogue_route"], "outside_service_scope")
+        after = parse_case(ws.export_case("출하 비교"))
+        self.assertEqual(after["archived_results"], before["archived_results"])
+        self.assertEqual(after["snapshot"], before["snapshot"])
+        self.assertEqual(after["archived_results"][0]["tool"], "compare_shipment_options")
+
+        ws.store.update({"quantity_kg": 4200}, ws.store.version)
+        ws.run("감귤과 관계없는 소설 써 줘")
+        self.assertEqual(ws.current_entries(), [])
+        self.assertEqual(parse_case(ws.export_case("출하 비교"))["archived_results"], [])
+
+    def test_chat_comparison_report_expires_with_conditions_or_source(self):
+        from ui.chat import _chat_report, _latest_chat_report
+
+        with patch("ui.workspace.data_revision", return_value=("original",)):
+            ws = self.workspace()
+            ws.load_demo()
+            report = _chat_report(ws, {"visible_results": ws.current_entries(), "state": ws.store.snapshot()})
+        messages = [{"reply": {"chat_report": report}}]
+        with patch("ui.chat.data_revision", return_value=("original",)):
+            self.assertEqual(_latest_chat_report(messages, ws.store.version, None), (0, report))
+            self.assertEqual(_latest_chat_report(messages, ws.store.version + 1, None), (None, None))
+        with patch("ui.chat.data_revision", return_value=("updated",)):
+            self.assertEqual(_latest_chat_report(messages, ws.store.version, None), (None, None))
+
     def test_data_refresh_chat_clear_preserves_conditions_and_discards_exports(self):
         ws = self.workspace()
         ws.load_demo()
