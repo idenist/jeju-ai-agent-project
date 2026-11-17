@@ -284,6 +284,20 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(reply["visible_results"][0]["tool"], "compare_future_pair")
         self.assertNotIn("비교 물량(kg)", reply["visible_results"][0]["result"]["missing_fields"])
 
+    def test_explicit_historical_pair_starts_with_comparison_tool(self):
+        from agents.agent import AgentSession
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        client = 모의_대화_클라이언트("compare_future_pair", {
+            "action": "new", "expected_version": 0,
+            "patch": {**COMMON, "option_b": OPTION_B, "price_mode": "history", "history_filters": FILTERS},
+        })
+        agent = AgentSession(client=client)
+        reply = agent.run("감귤을 11월 15일부터 보관해서 사흘 뒤와 열흘 뒤 출하를 비교해 주세요. "
+                          "먼저 팔 때 단가는 수수료 차감 전 2,500원/kg이고, 나중 가격은 과거 자료부터 봐주세요.")
+        self.assertEqual(client.requests[0]["tool_choice"], {"type": "function", "name": "compare_future_pair"})
+        self.assertEqual([entry["tool"] for entry in reply["tool_results"]], ["compare_future_pair"])
+
     def test_future_pair_routing_distinguishes_sales_from_other_requests(self):
         from datetime import date
         from agents.future_pair_intent import explicit_shipment_quantity, is_future_pair_request

@@ -474,7 +474,7 @@ class AgentSession:
                 request_started = time.monotonic()
                 client = self.client.with_options(timeout=min(30, remaining), max_retries=0) if hasattr(self.client, "with_options") else self.client
                 tool_choice = "auto"
-                if future_pair_route and has_box_price and metrics["model_requests"] == 1:
+                if future_pair_route and (has_box_price or explicit_history) and metrics["model_requests"] == 1:
                     tool_choice = {"type": "function", "name": "compare_future_pair"}
                 try:
                     response = client.responses.create(
