@@ -79,6 +79,7 @@ def _reset_all():
     st.session_state.pop("future_pair_applied_shared_costs", None)
     st.session_state.pop("future_pair_separate_costs", None)
     st.session_state.pop("future_pair_price_drafts", None)
+    st.session_state.pop("future_pair_fee_drafts", None)
     for key in ("future_pair_missing", "future_pair_history_open", "future_pair_costs_open"):
         st.session_state.pop(key, None)
     for key in list(st.session_state):

@@ -30,8 +30,12 @@ def _cost_fields(side, days, gross, shared=None):
                             help="단가에 포함되지 않은 비용만 입력하세요. 수수료와 보관비는 별도 입력합니다.")
     fee = None
     if gross:
+        fee_key = f"{key}_fee"
+        fee_drafts = st.session_state.setdefault("future_pair_fee_drafts", {})
+        st.session_state.setdefault(fee_key, fee_drafts.get(side))
         fee = st.number_input(f"{side}안 수수료율(%)", min_value=0.0, max_value=MAX_RATE_PERCENT, value=None,
-                              key=f"{key}_fee")
+                              key=fee_key)
+        fee_drafts[side] = fee
         st.caption("출하처 정산서나 약정에서 판매 수수료율을 확인하세요. 5%면 5를 입력하세요.")
     return {"delay_days": days, "loss_percent": loss, "daily_storage_cost": storage,
             "other_cost_krw": other, "fee_percent": fee}
@@ -74,12 +78,15 @@ def _sync_inputs(state):
                               ("other_cost_krw", "other"), ("fee_percent", "fee")):
             value = option[field]
             st.session_state[f"{prefix}_{suffix}"] = float(value) if value is not None else None
+    st.session_state.future_pair_fee_drafts = {
+        side: st.session_state[f"future_pair_{side}_fee"] for side in ("A", "B")
+    }
     st.session_state.future_pair_card_version = state.version
     return True
 
 
 def _toggle_shared_costs(state, same_costs):
-    fields = {"daily_storage_cost": "storage", "other_cost_krw": "other", "fee_percent": "fee"}
+    fields = {"daily_storage_cost": "storage", "other_cost_krw": "other"}
     if same_costs:
         st.session_state.future_pair_separate_costs = {
             field: st.session_state.get(f"future_pair_B_{suffix}", state.inputs["option_b"][field])
@@ -275,5 +282,6 @@ def _render_future_pair_json(result, location, content=None, *, market_result=No
         content = export_json(result, market_result, content)
     elif content is None:
         content = json.dumps({"format": "jeju-future-pair", "version": 1, "result": result}, ensure_ascii=False, indent=2)
+    st.caption("계산 결과를 남기는 파일입니다. 비교 조건을 불러올 때는 사이드바에서 저장한 비교 파일을 사용하세요.")
     st.download_button("미래 A/B 결과 JSON 내려받기", content, "미래출하비교.json", "application/json",
                        key=f"future_pair_json_{location}", on_click="ignore")
