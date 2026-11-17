@@ -10,7 +10,8 @@ from uuid import uuid4
 from core.config import Settings
 from agents.box_price import mentions_box_price, pending_box_arguments
 from agents.future_pair_intent import (
-    continues_comparison, explicit_shipment_quantity, forbids_historical_pair_price, is_future_pair_request, requests_manual_price,
+    changes_later_date_only, continues_comparison, explicit_shipment_quantity, forbids_historical_pair_price,
+    is_future_pair_request, requests_manual_price,
     starts_new_comparison, states_price_basis, requests_historical_pair_price,
 )
 from core.latency import log_latency
@@ -47,6 +48,8 @@ class _TurnRouting:
     has_box_price: bool
     quantity: float | None
     allow_price_history: bool
+    excludes_price_history: bool
+    existing_reference_request: bool
     future_pair_route: bool
     comparison_started: bool = False
     pending_value_reply: bool = False
@@ -113,7 +116,7 @@ class AgentSession:
             result = execute_tool(name, arguments, self.store, reference_case=getattr(self, "comparison_reference", None),
                 task_context=self.task_context.snapshot(), input_context=getattr(self, "comparison_input_context", None))
         elif name == "compare_future_pair":
-            from agents.future_pair_state import AMBIGUOUS_NUMERIC_RECOVERY, is_questioned_numeric_reply
+            from agents.future_pair_state import AMBIGUOUS_NUMERIC_RECOVERY, is_questioned_numeric_reply, unavailable_loss_rate
             patch_values = arguments.get("patch") if isinstance(arguments, dict) else None
             pending_values = self.future_pair.pending or {}
             if (not new_comparison and pending_values.get("comparison_inputs_pending")
@@ -148,7 +151,29 @@ class AgentSession:
                     patch["quantity"] = quantity
                 if future_pair_route and not keep_pair:
                     action = "edit" if comparison_started else "new"
-                if future_pair_route and patch.get("price_b") is None:
+                if action == "edit" and changes_later_date_only(question):
+                    protected = {"quantity", "start_date", "price_basis", "price_a", "option_a"}
+                    patch = {field: value for field, value in patch.items() if field not in protected}
+                    if isinstance(arguments.get("clear_fields"), list):
+                        arguments = {**arguments, "clear_fields": [
+                            field for field in arguments["clear_fields"]
+                            if not isinstance(field, str) or field.partition(".")[0] not in protected
+                        ]}
+                if action == "edit":
+                    for side in ("option_a", "option_b"):
+                        update = patch.get(side)
+                        if (isinstance(update, dict) and update.get("delay_days") is not None
+                                and update["delay_days"] != self.future_pair.inputs[side]["delay_days"]
+                                and unavailable_loss_rate(question, side)):
+                            patch[side] = {**update, "loss_percent": None, "loss_confirmed_for_period": False}
+                if routing.excludes_price_history:
+                    if routing.existing_reference_request:
+                        # Asking for the threshold alone does not revise confirmed inputs.
+                        patch = {}
+                        arguments = {**arguments, "clear_fields": []}
+                    patch["price_mode"] = "manual"
+                    patch["history_filters"] = None
+                elif future_pair_route and patch.get("price_b") is None:
                     # Historical pairs are the default source unless the user opts out.
                     patch["price_mode"] = "history" if allow_price_history else "manual"
                     if not allow_price_history:
@@ -156,13 +181,12 @@ class AgentSession:
                 elif future_pair_route and not requests_historical_pair_price(question):
                     patch["price_mode"] = "manual"
                     patch["history_filters"] = None
-                elif (action == "edit" and
-                      (forbids_historical_pair_price(question) or requests_manual_price(question))):
+                elif action == "edit" and requests_manual_price(question):
                     # A clear opt-out during a pending comparison switches modes and drops filters.
                     patch["price_mode"] = "manual"
                     patch["history_filters"] = None
                 arguments = {**arguments, "action": action, "patch": patch}
-                if future_pair_route or routing.pending_value_reply:
+                if future_pair_route or routing.pending_value_reply or routing.excludes_price_history:
                     arguments["finish_turn"] = True
                 recorded_arguments = arguments
             if has_box_price and isinstance(arguments, dict) and isinstance(arguments.get("patch"), dict):
@@ -279,11 +303,22 @@ class AgentSession:
         offered_tools, instructions = [*TOOLS, TIMING_TOOL], SYSTEM_PROMPT
         future_pair_route = is_future_pair_request(question, today)
         basis_stated = states_price_basis(question)
-        keep_pair = not new_comparison and self.future_pair.inputs["price_a"] is not None and continues_comparison(question)
+        pair_inputs = self.future_pair.inputs
+        keep_pair = not new_comparison and pair_inputs["price_a"] is not None and (
+            continues_comparison(question) or changes_later_date_only(question)
+        )
+        excludes_price_history = forbids_historical_pair_price(question)
+        compact = "".join(question.split())
+        existing_reference_request = (
+            excludes_price_history and not new_comparison and not future_pair_route
+            and any(phrase in compact for phrase in ("손익분기만", "손익분기단가만", "필요한단가만"))
+            and all(pair_inputs[side]["delay_days"] is not None for side in ("option_a", "option_b"))
+        )
+        keep_pair |= existing_reference_request
         has_box_price = mentions_box_price(question)
         quantity = explicit_shipment_quantity(question) if future_pair_route else None
         explicit_history = requests_historical_pair_price(question)
-        allow_price_history = (future_pair_route and not forbids_historical_pair_price(question)
+        allow_price_history = (future_pair_route and not excludes_price_history
                                and (explicit_history or not requests_manual_price(question)))
         pending_value_reply = (not new_comparison and not future_pair_route
                                and self.future_pair.is_compound_value_answer(question))
@@ -304,6 +339,12 @@ class AgentSession:
                 "과거 가격을 명시적으로 제외했거나 B안을 직접 입력하라고 한 경우에만 manual로 두세요. "
                 "누락된 거래규격은 실제 자료 후보를 제시해 한 번에 확인하고, 임의 규격을 선택하지 마세요. "
                 "과거 가격쌍 간격은 B 출하일−A 출하일입니다. 과거 사례를 미래 예측 확률이나 검증된 10일 가격 전망처럼 말하지 마세요."
+            )
+        if excludes_price_history and (future_pair_route or existing_reference_request):
+            forced_tool = "compare_future_pair"
+            instructions += (
+                "\n과거 가격을 조회하거나 재사용하지 마세요. "
+                "B안 단가를 명시하지 않았다면 비워 두고 이미 확인한 조건으로 참고 손익분기를 계산하세요."
             )
         if new_comparison:
             instructions += (
@@ -334,6 +375,8 @@ class AgentSession:
             has_box_price=has_box_price,
             quantity=quantity,
             allow_price_history=allow_price_history,
+            excludes_price_history=excludes_price_history,
+            existing_reference_request=existing_reference_request,
             future_pair_route=future_pair_route,
             pending_value_reply=pending_value_reply,
         )

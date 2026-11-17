@@ -39,6 +39,7 @@ _CONTINUE_COMPARISON = re.compile(
     r"(?:기존|현재|직전|아까(?:의)?)\s*(?:출하\s*)?비교|(?:나중\s*출하일|B안\s*(?:날짜|단가))만"
     r"|(?:앞서|방금)\s*(?:확인한|본)\s*(?:과거\s*)?(?:가격|단가)\s*가정"
 )
+_LATER_DATE_ONLY = re.compile(r"(?:나중\s*출하일|B\s*안\s*(?:출하일|날짜))만", re.I)
 _HISTORICAL_PRICE = re.compile(r"(?:과거\s*(?:경락\s*)?(?:가격|시세|자료|변동)|경락\s*가격|시장\s*(?:시세|자료)|도매\s*시세|과거가격|자료)")
 _EXCLUDE_HISTORICAL_PRICE = re.compile(
     r"(?:을|를|은|는|도|와|과)?\s*(?:조회\s*(?:하지\s*말|안\s*(?:해|봐|하고)|하지\s*않)|"
@@ -83,6 +84,10 @@ def states_price_basis(question: str) -> bool:
 
 def continues_comparison(question: str) -> bool:
     return _CONTINUE_COMPARISON.search(question) is not None
+
+
+def changes_later_date_only(question: str) -> bool:
+    return _LATER_DATE_ONLY.search(question) is not None
 
 
 def is_future_pair_request(question: str, today: date) -> bool:

@@ -92,6 +92,8 @@ class FuturePairTests(unittest.TestCase):
             "A안은 한 박스 2만원이에요. 과거 시세 조회는 가락시장, 조생귤 특 소 5kg 상자 기준으로 부탁해요.",
             "A안은 한 박스 2만원이에요. 과거 시세는 가락시장, 조생귤 특 소, 5kg 상자로 봐 주세요.",
             "A안은 한 박스 2만원이에요. 과거 시세는 가락시장,\n조생귤 특 소 5kg 상자로 봐 주세요.",
+            "먼저 팔 가격은 상자당 20,000원이에요. 조회는 가락시장 조생귤 특 소 5kg 상자로 봐 주세요.",
+            "먼저 팔 가격은 한 상자에 이만 원이에요. 과거 시세 조회는 가락시장 조생귤 특 소 5kg 상자 기준으로 봐 주세요.",
         ):
             with self.subTest(message=message):
                 pair = FuturePairState()
@@ -118,6 +120,7 @@ class FuturePairTests(unittest.TestCase):
         examples = (
             ("A안은 한 박스 2만원이에요. 과거 시세는 가락시장, 조생귤 특 소 5kg 상자로 보고, 실제 판매 상자는 4kg이에요.", 5000),
             ("과거 시세는 조생귤 특 소 10kg 상자로 보고, A안 판매가는 5kg 상자 12,500원이에요.", 2500),
+            ("먼저 팔 가격은 4kg 상자 하나에 2만원이고, 조회할 과거 시세는 가락시장 조생귤 특 소 5kg 상자로만 보세요.", 5000),
         )
         for question, expected in examples:
             with self.subTest(question=question):
@@ -573,6 +576,69 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(result["options_b"][1]["sale_date"], "2026-11-25")
         self.assertEqual(Decimal(result["options_b"][1]["difference_vs_a_krw"]), Decimal("-670493.392"))
         self.assertEqual(pair.inputs["history_filters"], FILTERS)
+
+    def test_later_date_only_preserves_a_and_rejects_unconfirmed_loss(self):
+        from agents.agent import AgentSession
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        client = 모의_대화_클라이언트("compare_future_pair", {})
+        agent = AgentSession(client=client)
+        pair = agent.future_pair
+        first = pair.apply("new", 0, {**COMMON, "option_b": OPTION_B, "price_mode": "history",
+                                      "history_filters": FILTERS})
+        self.assertEqual(first["status"], "OK")
+        client.arguments = {
+            "action": "new", "expected_version": pair.version, "clear_fields": ["option_a.daily_storage_cost"],
+            "patch": {"quantity": 999, "price_a": 999, "start_date": "2026-11-14",
+                      "option_a": {"delay_days": 8}, "option_b": {
+                          "delay_days": 17, "loss_percent": 4, "loss_confirmed_for_period": True}},
+        }
+        reply = agent.run("나중 출하일만 보관 시작일에서 17일 뒤로 바꿔 주세요. 새 기간의 감모율은 아직 몰라요.")
+        result = reply["visible_results"][0]["result"]
+        self.assertEqual(result["status"], "NEEDS_INPUT")
+        self.assertEqual(result["history_preview"]["interval_days"], 14)
+        self.assertEqual(result["missing_fields"], ["B안 기간 전체 감모율(%)"])
+        self.assertEqual(pair.inputs["option_a"], OPTION_A)
+        self.assertEqual(pair.inputs["quantity"], 3000)
+        self.assertEqual(pair.inputs["start_date"], COMMON["start_date"])
+        self.assertEqual(pair.inputs["price_a"], 2500)
+        self.assertIsNone(pair.inputs["option_b"]["loss_percent"])
+        self.assertIsNone(pair.current_result())
+
+        client.arguments["expected_version"] = pair.version
+        client.arguments["clear_fields"] = []
+        client.arguments["patch"] = {"option_b": {
+            "delay_days": 8, "loss_percent": 4, "loss_confirmed_for_period": True}}
+        reply = agent.run("나중 출하일만 8일 뒤로 바꾸고, 이 기간 감모율은 4%예요. 보관비는 잘 몰라요.")
+        self.assertEqual(reply["visible_results"][0]["result"]["source_status"], "INTERVAL_NOT_AVAILABLE")
+        self.assertEqual(pair.inputs["option_b"]["loss_percent"], 4)
+
+    def test_excluding_historical_prices_keeps_open_pair_without_a_lookup(self):
+        from agents.agent import AgentSession
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        client = 모의_대화_클라이언트("compare_future_pair", {})
+        agent = AgentSession(client=client)
+        pair = agent.future_pair
+        pair.apply("new", 0, {**COMMON, "option_b": OPTION_B, "price_mode": "history", "history_filters": FILTERS})
+        client.arguments = {
+            "action": "new", "expected_version": pair.version,
+            "patch": {"price_mode": "history", "history_filters": FILTERS, "price_b": 9999, "quantity": 1},
+            "clear_fields": ["option_a.fee_percent"],
+        }
+        with patch("agents.future_pair_state.preview_future_pair_history", side_effect=AssertionError("lookup")):
+            reply = agent.run("과거 가격은 쓰지 말고 필요한 단가만 알려줘.")
+        self.assertEqual(client.requests[0]["tool_choice"], {"type": "function", "name": "compare_future_pair"})
+        self.assertEqual([entry["tool"] for entry in reply["tool_results"]], ["compare_future_pair"])
+        result = reply["visible_results"][0]["result"]
+        self.assertTrue(result["threshold_only"])
+        self.assertEqual(result["historical_price_lookup"], "not_used")
+        self.assertEqual(result["minimum_whole_krw_per_kg"], "2660")
+        self.assertEqual(pair.inputs["option_a"], OPTION_A)
+        self.assertEqual(pair.inputs["option_b"], OPTION_B)
+        self.assertEqual(pair.inputs["quantity"], 3000)
+        self.assertIsNone(pair.inputs["price_b"])
+        self.assertIsNone(pair.inputs["history_filters"])
 
     def test_b_date_change_preserves_a_and_uses_new_pairs_and_costs(self):
         first = compare_future_pair(**COMMON, option_b=OPTION_B, history_filters=FILTERS)
