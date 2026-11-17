@@ -251,8 +251,22 @@ class AgentSession:
                                                            pair_costs_deferred=self.future_pair.costs_deferred),
                     "report": report_for([entry]), "tool_results": [entry], "visible_results": [entry],
                     "events": [], "state": self.store.snapshot(), "metrics": {"model_requests": 0}}
-        from agents.future_pair_state import is_bare_unknown_reply
+        from agents.future_pair_state import (
+            is_bare_unknown_reply, is_input_burden_complaint, paused_pair_feedback,
+        )
         pending = self.future_pair.pending
+        if (not new_comparison and pending is not None
+                and pending.get("status") == "NEEDS_INPUT"
+                and is_input_burden_complaint(question)):
+            # A complaint about the number of fields is a stop signal, not another
+            # invitation to advance the clarification sequence.
+            self.future_pair.costs_deferred = True
+            self.future_pair.specs_deferred = True
+            text = paused_pair_feedback(pending)
+            return {"status": "OK", "text": text, "report": text,
+                    "tool_results": [], "visible_results": [], "events": [],
+                    "state": self.store.snapshot(),
+                    "metrics": {"model_requests": 0, "dialogue_route": "input_burden_pause"}}
         if (not new_comparison and pending is not None
                 and pending.get("source_status") == "NEEDS_CLARIFICATION"
                 and is_bare_unknown_reply(question)):

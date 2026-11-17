@@ -24,8 +24,8 @@ class MarketExportReportTests(unittest.TestCase):
         content = market_markdown(MARKET)
         self.assertIn("2,660원/kg", content)
         self.assertIn("241,850원", content)
-        self.assertIn("4 | 57.1% | 58.2%", content)
-        self.assertIn("미래 가격 달성 확률", content)
+        self.assertIn("4 / 7일", content)
+        self.assertIn("미래에 그 가격을 받을 확률", content)
 
     def test_report_and_json_use_same_result(self):
         entries = report_entries(PAIR, MARKET)

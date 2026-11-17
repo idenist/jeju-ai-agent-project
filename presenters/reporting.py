@@ -14,7 +14,7 @@ FIELD_NAMES = {
     "current_costs": "현재 별도 비용", "delay_days": "보관 일수", "loss_percent": "기간 전체 감모율(%)",
     "daily_storage_cost": "하루 추가 보관비(원)", "fee_percent": "대안 수수료율(%)", "costs": "대안 별도 비용",
     "options": "비교할 보관 대안", "storage_available": "저장 가능 여부", "shipping_flexible": "출하일 변경 가능 여부",
-    "market_code": "시장코드", "variety": "경매 품종", "grade": "등급", "size": "크기",
+    "market_code": "시장", "variety": "경매 품종", "grade": "등급", "size": "크기",
     "package": "포장 종류", "package_kg": "포장중량(kg)",
 }
 TOOL_LABELS = {"compare_shipment_options": "출하 대안 비교", "compare_sensitivity": "내 가정 범위 비교", "get_historical_shipment_context": "제주 과거 출하통계",
@@ -57,7 +57,7 @@ def _source_lines(source) -> list[str]:
     if not isinstance(source, dict):
         return ["", "출처: " + _text(source)]
     lines = ["", "출처·관측범위:"]
-    for label, key in (("자료", "dataset"), ("자료 버전", "snapshot_id"), ("관측 시작일", "source_first_date"), ("관측 마지막일", "source_last_date"), ("단위", "unit")):
+    for label, key in (("자료", "dataset"), ("관측 시작일", "source_first_date"), ("관측 마지막일", "source_last_date"), ("단위", "unit")):
         if source.get(key) is not None:
             unit = "톤" if key == "unit" and source[key] == "ton" else source[key]
             lines.append(f"- {label}: {_text(unit)}")
@@ -429,8 +429,11 @@ def _render_result_body(result: dict) -> str:
         if result.get("quality_flags"):
             lines.append("- 원천 품질 경고: " + _text(result["quality_flags"]))
         conditions = result.get("input", {})
-        labels = {"market_code": "시장코드", "variety": "경매 품종", "grade": "등급", "size": "크기", "package": "포장", "package_kg": "포장중량(kg)", "as_of": "조회 기준일"}
-        lines.append("- 조회 조건: " + " · ".join(f"{labels.get(k, k)} {_text(v)}" for k, v in conditions.items() if v is not None))
+        labels = {"market_code": "시장", "variety": "경매 품종", "grade": "등급", "size": "크기", "package": "포장", "package_kg": "포장중량(kg)", "as_of": "조회 기준일"}
+        values = dict(conditions)
+        if values.get("market_code") and result.get("market_name"):
+            values["market_code"] = result["market_name"]
+        lines.append("- 조회 조건: " + " · ".join(f"{labels.get(k, k)} {_text(v)}" for k, v in values.items() if v is not None))
     else:
         # Keep unrecognized evidence fields intact rather than guessing their units.
         lines += ["```json", json.dumps({k: v for k, v in result.items() if k not in {"warnings", "cautions", "assumptions"}}, ensure_ascii=False, indent=2), "```"]

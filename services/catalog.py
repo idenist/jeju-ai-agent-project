@@ -36,12 +36,14 @@ def explore_data(source, filters=None, offset=0, limit=20, root=PROJECT_ROOT, *,
         if on_progress:
             on_progress("catalog_csv")
         groups = defaultdict(list)
+        market_names = defaultdict(set)
         if source == "market":
             selected = resolve_market_root(root)
-            rows = _market_rows(selected)
+            rows = [row for row in _market_rows(selected) if row["trade_type"] == "경매"]
             for r in rows:
                 key = tuple(str(Decimal(r[k]).normalize()) if k == "package_kg" else r[k] for k in fields)
                 groups[key].append(r)
+                market_names[r["market_code"]].add(r.get("market") or r["market_code"])
             meta = {"dataset": "전국 공영도매시장 경매원천정보 · 확보 CSV", "url": "https://www.data.go.kr/data/15141810/openapi.do",
                     "source_first_date": min((r["date"] for r in rows), default=None), "source_last_date": max((r["date"] for r in rows), default=None), "unit": "거래규격"}
         else:
@@ -75,6 +77,9 @@ def explore_data(source, filters=None, offset=0, limit=20, root=PROJECT_ROOT, *,
                 "next_offset": offset + limit if offset + limit < len(candidates) else None,
                 "candidates": candidates[offset:offset + limit], "source": meta,
                 "available_filters": {field: sorted({c["conditions"][field] for c in candidates}) for field in fields},
+                "market_options": ([{"code": code, "name": " / ".join(sorted(names))}
+                                    for code, names in sorted(market_names.items(), key=lambda item: (sorted(item[1])[0], item[0]))]
+                                   if source == "market" else []),
                 "message": "확보 자료에 실제 존재하는 조건입니다." if candidates else "선택 조건에 맞는 확보 자료가 없습니다. 거래조건과 단위를 확인하세요.",
                 "warnings": ["자료가 있는 조건이며 실제 농가 조건과 일치한다는 뜻은 아닙니다. 선택을 확인하세요.", "출하 품종·경매 품종을 자동 매핑하지 않으며 경락가격을 제시가격에 대입하지 않습니다.", "후보 개수는 날짜별 원천 거래 건수가 아닙니다. 관측일 수와 코드 모호성을 확인하세요."],
                 "is_future_forecast": False}

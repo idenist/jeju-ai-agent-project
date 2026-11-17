@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -43,38 +44,45 @@ def _source_stamp(root: Path = PROJECT_ROOT):
 
 
 def _fmt_spec(spec):
-    return " · ".join(f"{label} {spec.get(key)}" for key, label in zip(FIELDS, LABELS))
+    market = spec.get("market_code")
+    if market:
+        from ui.market_inputs import market_name_map
+        market = market_name_map().get(str(market), market)
+    values = [market, *(spec.get(key) for key in FIELDS[1:])]
+    return " · ".join(f"{label} {value}" for value, label in zip(values, LABELS))
 
 
 def _spec_form(location, current):
     """Only displayed for missing specs or when the user explicitly asks to edit."""
     old = current or {}
-    with st.form(f"market_decision_spec_{location}"):
-        col1, col2, col3 = st.columns(3)
-        market = col1.text_input("시장코드", value=str(old.get("market_code", "110001")))
-        trade = col2.selectbox("거래방식", ["경매"])
-        variety = col3.text_input("품종", value=str(old.get("variety", "")))
-        col1, col2, col3, col4 = st.columns(4)
-        grade = col1.text_input("등급", value=str(old.get("grade", "")))
-        size = col2.text_input("크기", value=str(old.get("size", "")))
-        package = col3.text_input("포장", value=str(old.get("package", "")))
-        kg = col4.number_input("상자중량(kg)", min_value=0.001,
-                               value=float(old["package_kg"]) if old.get("package_kg") else 5.0)
-        window = st.selectbox("출하 예정일 전후 범위", [0, 3, 7, 14],
-                              index=[0, 3, 7, 14].index(old.get("window_days", 7))
-                              if old.get("window_days", 7) in [0, 3, 7, 14] else 2,
-                              format_func=lambda n: "해당 날짜" if n == 0 else f"±{n}일")
-        submitted = st.form_submit_button("이 거래규격으로 시장 근거 연결")
+    from ui.market_inputs import render_market_spec_controls
+
+    selection, complete = render_market_spec_controls(f"market_decision_spec_{location}", old)
+    window_key = f"market_decision_spec_{location}_window"
+    window_values = [0, 3, 7, 14]
+    old_window = old.get("window_days", 7)
+    if window_key not in st.session_state:
+        st.session_state[window_key] = old_window if old_window in window_values else 7
+    window = st.selectbox("출하 예정일 전후 범위", window_values,
+                          format_func=lambda n: "해당 날짜" if n == 0 else f"±{n}일",
+                          key=window_key)
+    submitted = st.button("이 거래규격으로 시장 근거 연결", disabled=not complete,
+                          key=f"market_decision_spec_submit_{location}")
     if not submitted:
-        return None
-    selection = {"market_code": market.strip(), "trade_type": trade,
-                 "variety": variety.strip(), "grade": grade.strip(),
-                 "size": size.strip(), "package": package.strip(),
-                 "package_kg": kg, "window_days": window}
+        def same_value(key):
+            a, b = selection.get(key), old.get(key)
+            if key == "package_kg" and a not in (None, "") and b not in (None, ""):
+                return Decimal(str(a)) == Decimal(str(b))
+            return a == b
+        fields_changed = (any(not same_value(key) for key in FIELDS)
+                          or window != old.get("window_days", 7)) if old else any(
+                              selection.get(key) not in (None, "") for key in FIELDS)
+        return None, fields_changed
+    selection["window_days"] = window
     if any(not selection.get(k) for k in FIELDS):
-        st.warning("거래규격의 모든 항목을 확인해 주세요. 실제 출하 상품과 동일한 조건이어야 합니다.")
-        return None
-    return selection
+        st.warning("실제 상품과 같은 거래규격을 선택해 주세요.")
+        return None, False
+    return selection, False
 
 
 def _display(result):
@@ -83,15 +91,22 @@ def _display(result):
         return
     comparison = result["comparison"]
     decision = comparison["decision_under_assumptions"]
+    def date_label(value):
+        if not value:
+            return "날짜 미확인"
+        parsed = date.fromisoformat(value)
+        return f"{parsed.month}월 {parsed.day}일 출하"
+    earlier = date_label(comparison.get("option_a_date"))
+    later = date_label(comparison.get("option_b_date"))
     if decision == "B_ASSUMED_HIGHER":
-        st.markdown(f"**입력한 단가·비용 가정에서는 B안이 {_fmt(comparison['difference_vs_a_krw'],0)}원 유리합니다.**")
+        st.markdown(f"**입력한 가정에서는 {later}가 {earlier}보다 {_fmt(comparison['difference_vs_a_krw'],0)}원 유리합니다.**")
     elif decision == "A_ASSUMED_HIGHER":
-        st.markdown(f"**입력한 단가·비용 가정에서는 A안이 {_fmt(-Decimal(comparison['difference_vs_a_krw']),0)}원 유리합니다.**")
+        st.markdown(f"**입력한 가정에서는 {earlier}가 {later}보다 {_fmt(-Decimal(comparison['difference_vs_a_krw']),0)}원 유리합니다.**")
     elif decision == "ASSUMED_TIE":
-        st.markdown("**입력한 단가·비용 가정에서 두 안의 비교금액은 같습니다.**")
+        st.markdown(f"**입력한 가정에서는 {earlier}와 {later}의 비교금액이 같습니다.**")
     else:
-        st.markdown("**여러 과거 가격 가정의 유불리는 위 손익 표에서 확인하세요.**")
-    st.markdown(f"B안이 A안 이상이 되려면 **{_fmt(comparison['minimum_whole_krw_per_kg'],0)}원/kg**이 필요합니다.")
+        st.markdown("**입력한 가정만으로는 두 출하 날짜의 유불리를 정할 수 없습니다.**")
+    st.markdown(f"{later}가 {earlier}보다 손해 보지 않으려면 최소 **{_fmt(comparison['minimum_whole_krw_per_kg'],0)}원/kg**이 필요합니다.")
     evidence = result["market_evidence"]
     labels = []
     for item in evidence.get("seasons", []):
@@ -99,13 +114,20 @@ def _display(result):
             status = "부분 관측기간" if not item.get("window_complete") else "조회됨"
         else:
             status = STATUSES.get(item["status"], item["status"])
-        labels.append({"시즌": item["season"], "정상 관측일": item["days_clean"],
-                       "기준 이상 일수": item["days_above"],
-                       "해당 일수 비율": f"{_fmt(item['daily_share_percent'])}%" if item["daily_share_percent"] is not None else "-",
-                       "해당 날짜 거래중량 비율": f"{_fmt(item['kg_share_percent'])}%" if item["kg_share_percent"] is not None else "-",
-                       "상태": status})
+        clean_days = item.get("days_clean")
+        above_days = item.get("days_above")
+        labels.append({"시즌": item["season"],
+                       "손익분기 가격 이상이었던 날": f"{above_days} / {clean_days}일"
+                       if above_days is not None and clean_days is not None else "-",
+                       "자료 상태": status})
     st.dataframe(labels, hide_index=True, use_container_width=True)
-    st.caption("과거 각 날짜의 동일 등록규격 평균 경락가격 기준입니다. 미래가격 달성 확률이나 개별 농가의 수취가격이 아닙니다.")
+    st.caption("같은 규격의 과거 일별 평균 경락가격을 센 결과입니다. 앞으로 그 가격을 받을 확률은 아닙니다.")
+    with st.expander("거래량 기준 상세 보기"):
+        detail_rows = [{"시즌": item["season"],
+                        "손익분기 가격 이상 날짜의 거래량 비중":
+                            f"{_fmt(item['kg_share_percent'])}%" if item.get("kg_share_percent") is not None else "-"}
+                       for item in evidence.get("seasons", [])]
+        st.dataframe(detail_rows, hide_index=True, use_container_width=True)
     st.markdown("**출하 전에 확인할 것:** B안 실제 제시가격, 감모율·보관비, 수수료·공제 항목, 저장 및 출하일 변경 가능 여부")
 
 
@@ -146,9 +168,14 @@ def render_threshold_evidence(pair_result: dict, location: str):
         else:
             st.info("비교할 상품의 거래규격이 없습니다. 다른 탭으로 이동하지 않고 여기서 입력하세요.")
         with st.expander("시장 규격 설정·수정", expanded=spec is None):
-            changed = _spec_form(location, spec)
+            changed, draft_changed = _spec_form(location, spec)
             if changed is not None:
                 st.session_state[own_key] = spec = changed
+        if draft_changed:
+            st.session_state.pop(storage_key, None)
+            st.session_state.pop(f"market_decision_result_{location}", None)
+            st.info("거래규격 선택이 바뀌었습니다. 새 규격으로 시장 근거를 다시 연결해 주세요.")
+            return
         if not spec:
             st.session_state.pop(storage_key, None)
             return
@@ -162,6 +189,14 @@ def render_threshold_evidence(pair_result: dict, location: str):
         if not isinstance(cached, dict) or cached.get("key") != key:
             with st.spinner("각 시즌의 동일 규격 경매가격을 비교합니다"):
                 result = evaluate_market_decision(pair_result, spec)
+            conditions = (result.get("market_evidence") or {}).get("conditions") or result.get("query")
+            if isinstance(conditions, dict):
+                from ui.market_inputs import market_name_map
+                display_conditions = dict(conditions)
+                code = display_conditions.get("market_code")
+                if code:
+                    display_conditions["market_code"] = market_name_map().get(str(code), code)
+                result["display_conditions"] = display_conditions
             st.session_state[cache_key] = {"key": key, "result": result}
         else:
             result = cached["result"]

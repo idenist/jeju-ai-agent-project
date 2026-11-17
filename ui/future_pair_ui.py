@@ -129,7 +129,7 @@ def render_future_pair(state):
         with right:
             b_days = _storage_period("B", 10)
         price_a = st.number_input("A안 가정 단가(원/kg)", min_value=0.0, value=None, key="future_pair_price_a")
-        st.session_state.setdefault("future_pair_price_mode", "과거 변동으로 가정")
+        st.session_state.setdefault("future_pair_price_mode", "직접 입력")
         mode = st.radio("B안 가정 단가 입력 방식", ["과거 변동으로 가정", "직접 입력"], index=None,
                         key="future_pair_price_mode")
         filters = None
@@ -139,17 +139,17 @@ def render_future_pair(state):
             with st.expander("과거 가격의 거래규격 입력", key="future_pair_history_open", on_change="rerun"):
                 if a_days is not None and b_days is not None and b_days > a_days:
                     st.caption(f"두 출하일의 차이인 {b_days - a_days}일 간격의 과거 가격을 찾습니다.")
-                filters = {}
-                for key, label in HISTORY_FIELDS.items():
-                    widget_key = f"future_pair_filter_{key}"
-                    st.session_state.setdefault(widget_key, drafts.get(widget_key, ""))
-                    value = st.text_input(f"과거가격 {label}", key=widget_key).strip()
-                    drafts[widget_key] = value
-                    if value:
-                        filters[key] = value
+                from ui.market_inputs import render_market_spec_controls
+                current = {field: drafts.get(f"future_pair_filter_{field}")
+                           for field in HISTORY_FIELDS if drafts.get(f"future_pair_filter_{field}")}
+                filters, _ = render_market_spec_controls("future_pair_filter", current)
+                for field in HISTORY_FIELDS:
+                    widget_key = f"future_pair_filter_{field}"
+                    drafts[widget_key] = filters.get(field, "")
         else:
             st.session_state.setdefault("future_pair_price_b", drafts.get("future_pair_price_b"))
             price_b = st.number_input("B안 가정 단가(원/kg)", min_value=0.0, value=None, key="future_pair_price_b")
+            st.caption("나중 출하가격을 모르면 비워 두세요. 다른 조건을 입력하면 나중 출하가 유리해지는 최소 가격을 계산해요.")
             drafts["future_pair_price_b"] = price_b
             if warning := manual_price_warning(price_a, price_b):
                 st.warning(warning)

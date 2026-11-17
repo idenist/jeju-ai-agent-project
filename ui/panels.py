@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+from datetime import date
 import streamlit as st
 
 from presenters.reporting import render_report, FIELD_NAMES
@@ -100,13 +101,22 @@ def _render_discovery(ws, disabled):
                 st.session_state.discovery_chat_sync = signature
         source = st.selectbox("탐색할 자료", ["market", "shipment"], format_func=lambda x: {"market": "경매 거래규격", "shipment": "과거 출하 품종·연월"}[x], key="discovery_source", on_change=_clear_review)
         fields = MARKET if source == "market" else SHIPMENT
+        market_names = {}
+        if source == "market":
+            from ui.market_inputs import market_name_map
+            market_names = market_name_map()
         filters = {}
         for i, field in enumerate(fields):
             choices = _discovery_choices(source, filters, ws.data_revision).get("available_filters", {}).get(field, [])
             key = f"discovery_{source}_{field}"
             if st.session_state.get(key) not in [None, *choices]: st.session_state.pop(key, None)
-            value = st.selectbox("탐색 " + {"shipment_variety": "출하 품종", "year": "연도", "target_month": "월"}.get(field, FIELD_NAMES.get(field, field)),
-                [None, *choices], format_func=lambda x: "선택 안 함" if x is None else str(x), key=key,
+            label = {"shipment_variety": "출하 품종", "year": "연도", "target_month": "월",
+                     "market_code": "시장"}.get(field, FIELD_NAMES.get(field, field))
+            value = st.selectbox("탐색 " + label,
+                [None, *choices], key=key,
+                help="시장 이름으로 선택합니다." if field == "market_code" else None,
+                format_func=(lambda x: "선택 안 함" if x is None else market_names.get(str(x), str(x)))
+                if field == "market_code" else (lambda x: "선택 안 함" if x is None else str(x)),
                 on_change=_discovery_changed, args=(source, i, fields))
             if value is not None: filters[field] = value
         page = st.number_input("탐색 페이지 · 페이지당20개", min_value=1, value=1, step=1, key="discovery_page", on_change=_clear_review)
@@ -119,7 +129,15 @@ def _render_discovery(ws, disabled):
             result = saved["result"]
             candidates = result.get("candidates", [])
             if candidates:
-                chosen = st.selectbox("조회할 실제 후보", [None, *range(len(candidates))], format_func=lambda x: "후보를 직접 선택하세요" if x is None else " / ".join(str(v) for v in candidates[x]["conditions"].values()), key="discovery_candidate")
+                def candidate_label(index):
+                    if index is None:
+                        return "후보를 직접 선택하세요"
+                    conditions = dict(candidates[index]["conditions"])
+                    if conditions.get("market_code"):
+                        conditions["market_code"] = market_names.get(str(conditions["market_code"]), "선택한 시장")
+                    return " / ".join(str(value) for value in conditions.values())
+                chosen = st.selectbox("조회할 실제 후보", [None, *range(len(candidates))],
+                                      format_func=candidate_label, key="discovery_candidate")
                 if st.button("선택 후보의 관측자료 조회", disabled=disabled or chosen is None):
                     item = candidates[chosen]
                     if item.get("ambiguous_codes"):
@@ -151,11 +169,14 @@ def _render_review(ws, disabled):
         first = st.number_input("브리핑 시작 연도", min_value=2018, max_value=2100, value=2018, key="review_first", on_change=_clear_review)
         last = st.number_input("브리핑 마지막 연도", min_value=2018, max_value=2100, value=2024, key="review_last", on_change=_clear_review)
         market = None
-        if st.checkbox("동일 규격 경매 참고자료도 확인", key="review_market_enabled", on_change=_clear_review):
-            fields = [("market_code", "시장코드"), ("variety", "경매 품종"), ("grade", "등급"), ("size", "크기"), ("package", "포장 종류")]
-            market = {key: st.text_input("브리핑 " + label, key="review_" + key, on_change=_clear_review).strip() or None for key, label in fields}
-            market["package_kg"] = st.number_input("브리핑 포장중량(kg)", min_value=0.01, value=None, key="review_package_kg", on_change=_clear_review)
-            market["as_of"] = st.text_input("브리핑 기준일(YYYY-MM-DD, 선택)", key="review_as_of", on_change=_clear_review).strip() or None
+        market_enabled = st.checkbox("동일 규격 경매 참고자료도 확인", key="review_market_enabled", on_change=_clear_review)
+        market_complete = True
+        if market_enabled:
+            from ui.market_inputs import render_market_spec_controls
+            market, market_complete = render_market_spec_controls("review_market", on_change=_clear_review)
+            market_date = st.date_input("참고자료 기준일 · 선택", value=None, key="review_as_of_date",
+                                        on_change=_clear_review)
+            market["as_of"] = market_date.isoformat() if market_date else None
         options = ws.store.scenario.get("options", [])
         option_id = st.selectbox("브리핑에서 설명할 대안", [o["id"] for o in options], key="review_option", on_change=_clear_review) if options else None
         include_grid = st.checkbox("직접 입력한 가정 범위도 함께 검토", key="review_include_grid", on_change=_clear_review)
@@ -163,7 +184,7 @@ def _render_review(ws, disabled):
         prices = st.session_state.get("sensitivity_prices", "")
         if include_grid:
             st.caption(f"가정 범위 입력란의 현재 값: 감모 {losses or '미입력'} / 미래 단가 {prices or '미입력'}. 값을 자동으로 만들지 않습니다.")
-        if st.button("출하 검토 브리핑 만들기", disabled=disabled):
+        if st.button("출하 검토 브리핑 만들기", disabled=disabled or (market_enabled and not market_complete)):
             query = {"shipment_variety": variety, "target_month": int(month), "start_year": int(first), "end_year": int(last)} if variety != "선택 안 함" else None
             ws.review(shipment_query=query, market_query=market, option_id=option_id,
                 loss_values=[x.strip() for x in losses.split(",") if x.strip()] if include_grid else None,
@@ -182,8 +203,12 @@ def _render_task_context(ws):
                       "시작 연도": query.get("start_year"), "마지막 연도": query.get("end_year")})
         query = context["market_query"]
         if query:
-            labels = {"market_code": "시장코드", "variety": "경매 품종", "grade": "등급", "size": "크기", "package": "포장", "package_kg": "포장중량(kg)", "as_of": "기준일"}
-            st.write({labels[k]: v for k, v in query.items()})
+            from ui.market_inputs import market_name_map
+            labels = {"market_code": "시장", "variety": "경매 품종", "grade": "등급", "size": "크기", "package": "포장", "package_kg": "포장중량(kg)", "as_of": "기준일"}
+            values = dict(query)
+            if values.get("market_code"):
+                values["market_code"] = market_name_map().get(str(values["market_code"]), values["market_code"])
+            st.write({labels[k]: v for k, v in values.items()})
         query = context["sensitivity_query"]
         if query and query.get("loss_values"):
             st.write({"기간 전체 감모 가정(%)": query["loss_values"], "미래 단가 가정(원/kg)": query.get("price_values")})
@@ -197,9 +222,10 @@ def _render_task_context(ws):
 def _clear_csv_preview():
     st.session_state.pop("csv_preview", None)
 
-def _render_csv_manager():
+def _render_csv_manager(*, embedded=False):
     from services.csv_import import preview_auction_csv, apply_auction_preview
-    with st.expander("자료 관리자 · 경매 CSV 추가"):
+    container = st.container() if embedded else st.expander("자료 관리자 · 경매 CSV 추가")
+    with container:
         st.caption("일반 사용자는 파일을 추가하지 않고 준비된 자료로 시작할 수 있습니다. #855 출하통계는 기존 자료를 유지합니다.")
         st.write("지원: 배포 경매 원본과 같은 36개 컬럼의 CSV, UTF-8/CP949, 최대 20MiB. 가공 가격표와 임의 CSV는 지원하지 않습니다.")
         st.caption("기존 경매 원본에 추가해 다시 집계합니다. 완전히 동일한 거래만 중복 제외합니다. 최신 관측이 없는 파일은 적용하지 않습니다. 이 설정은 이 설치본의 모든 사용자에게 적용됩니다.")
@@ -331,7 +357,8 @@ def _render_cards(ws):
         st.caption("저장·출하 조건이 미확인이어도 가상 경제성은 비교할 수 있습니다. 계산이 된다는 사실이 실행 가능함을 뜻하지는 않습니다.")
         st.selectbox("저장 가능한 조건인가요?", ["미확인", "예", "아니오"], key="storage_available")
         st.selectbox("출하일을 변경할 수 있나요?", ["미확인", "예", "아니오"], key="shipping_flexible")
-        submitted = st.button("입력 조건 비교", type="primary", disabled=st.session_state.card_base_version != ws.store.version)
+        submitted = st.button("수정한 조건 저장 후 비교", type="primary",
+                              disabled=st.session_state.card_base_version != ws.store.version)
     changed_period = st.session_state.get("_period_change_notice")
     if changed_period and not st.session_state.get(f"period_{changed_period - 1}"):
         st.info("보관기간이 변경되어 기간 전체 감모율 확인을 해제했습니다. 새 기간의 감모를 확인하세요.")
@@ -355,29 +382,19 @@ def _render_price_history(ws, disabled):
     with st.expander("과거 경락가격 비교 · 직접 조회(키 없이 사용)",
                      expanded=st.session_state.get("show_price_history", False)):
         st.caption("경매시장에서 관측한 같은 거래규격의 과거 가격쌍입니다. 농가 실수취가·미래가격·보관 수익의 예측이 아닙니다.")
+        from ui.market_inputs import render_market_spec_controls
+        current = st.session_state.get("price_history_submitted_query") or {}
+        spec, complete = render_market_spec_controls("price_history_spec", current)
         left, right = st.columns(2)
-        with left:
-            variety = st.text_input("경매 품종", key="price_history_variety", placeholder="예: 조생귤")
-            grade = st.text_input("경매 등급", key="price_history_grade", placeholder="예: 특")
-            package = st.text_input("경매 포장 종류", key="price_history_package", placeholder="예: 상자 (5kg는 별도 입력)")
-            market_code = st.text_input("시장코드 · 선택", key="price_history_market_code", placeholder="예: 110001")
-        with right:
-            size = st.text_input("경매 크기", key="price_history_size", placeholder="예: 소")
-            package_kg = st.text_input("포장 한 개의 중량(kg)", key="price_history_package_kg", placeholder="예: 5")
-            trade_type = st.text_input("거래방식 · 선택", key="price_history_trade_type", placeholder="예: 경매")
-            interval = st.number_input("과거 가격 비교 간격(일)", key="price_history_interval_days",
-                                       min_value=1, max_value=366, value=None, step=1,
-                                       help="현재 동결 비교 자료는 3·7·14일입니다. 다른 간격은 지원 여부를 안내합니다.")
-        base_date = st.text_input("과거 기준일 · 선택 (YYYY-MM-DD)", key="price_history_base_date",
-                                  placeholder="미지정이면 같은 조건의 모든 기준일")
+        interval = left.selectbox("두 과거 거래일 사이 간격", [3, 7, 14], index=1,
+                                  format_func=lambda days: f"{days}일", key="price_history_interval_days")
+        base_date = right.date_input("과거 기준일 · 선택", value=None, key="price_history_base_date_picker")
         limit = st.number_input("표시할 과거 사례 수", key="price_history_limit", min_value=1,
                                  max_value=10, value=3, step=1)
-        fields = {"variety": variety, "grade": grade, "size": size, "package": package,
-                  "package_kg": package_kg, "market_code": market_code,
-                  "trade_type": trade_type, "base_date": base_date}
-        query = {key: value.strip() for key, value in fields.items() if value.strip()}
-        if interval is not None:
-            query["interval_days"] = int(interval)
+        query = dict(spec)
+        if base_date:
+            query["base_date"] = base_date.isoformat()
+        query["interval_days"] = int(interval)
         query["limit"] = int(limit)
         # 입력을 바꾼 직후 이전 결과를 새 조회값의 증거처럼 내보내지 않습니다.
         previous = st.session_state.get("price_history_submitted_query")
@@ -388,18 +405,16 @@ def _render_price_history(ws, disabled):
             ws.result_version = None
             st.session_state.pop("pdf_cache", None)
             st.info("조회 조건이 바뀌어 이전 과거 가격 결과를 숨겼습니다. 다시 조회해 주세요.")
-        if st.button("과거 경락가격 직접 조회", disabled=disabled):
+        if st.button("과거 경락가격 조회", disabled=disabled or not complete):
             st.session_state.price_history_submitted_query = dict(query)
             result = ws.price_history(query)
             if result.get("status") == "DATA_ERROR":
                 st.warning("가격 비교 자료의 원천 검증이 실패했습니다. 검증 전 가격 결과는 표시하지 않습니다.")
-        st.caption("비교 간격은 과거 두 거래일 사이의 달력일이며, 출하 손익 계산의 보관일과 다릅니다. "
-                   "시장·거래방식이 자료 전체에서 하나뿐이라 자동 적용되더라도 사용자 지정 조건으로 저장하지 않습니다. "
-                   "수정한 입력은 '직접 조회'를 눌러야 후속 대화에 반영됩니다.")
+        st.caption("시장과 상품 규격은 확보된 경매자료에 실제 있는 조합만 고를 수 있습니다. 비교 간격은 출하 손익 계산의 보관일과 다릅니다.")
 
 def _render_history(ws, disabled):
     with st.expander("과거 출하통계 직접 조회 · 키 없이 사용", expanded=st.session_state.get("show_history", False)):
-        st.caption("#855 과거 신고 출하량입니다. 현재 공급량·미래가격이 아닙니다. 경매 품종과 자동 매핑하지 않습니다.")
+        st.caption("제주데이터허브에서 확보한 과거 출하량입니다. 현재 공급량이나 미래 가격을 뜻하지 않으며, 경매 품종과 자동으로 연결하지 않습니다.")
         variety = st.selectbox("출하 통계의 품종", ["노지온주", "월동온주", "하우스온주", "한라봉", "천혜향", "레드향"])
         month = st.number_input("조회 월", min_value=1, max_value=12, value=11)
         start = st.number_input("시작 연도", min_value=2018, max_value=2100, value=2018)

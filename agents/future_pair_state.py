@@ -47,6 +47,12 @@ AMBIGUOUS_NUMERIC_RECOVERY = (
 _UNKNOWN_INPUT = re.compile(r"모르|몰라|몰랐|확인\s*(?:못|할\s*수\s*없)|아직\s*(?:정해지지\s*않|안\s*나왔)")
 _UNKNOWN_COST = re.compile(r"비용|보관[비료]|저장[료비]|수수료|감모|감량|줄(?:어|지|는)")
 _UNKNOWN_SPEC = re.compile(r"품종|등급|크기|포장|상자\s*(?:무게|중량)|도매시장|시장코드|거래\s*방식")
+_INPUT_BURDEN = re.compile(
+    r"(?:질문|입력|조건|값).{0,20}(?:많|너무|계속)|"
+    r"(?:이렇게|너무).{0,20}(?:물어|묻|요구|입력|질문)|"
+    r"(?:안\s*쓸|그만\s*(?:할|하|해)|더\s*이상\s*(?:못|안)|답답|귀찮|불편)",
+    re.IGNORECASE,
+)
 HISTORY_FIELDS = {"variety": "품종", "grade": "등급", "size": "크기", "package": "포장 종류",
                   "package_kg": "포장 중량(kg)", "market_code": "시장코드", "trade_type": "거래방식"}
 HISTORY_STATUSES = {"NEEDS_CLARIFICATION": "NEEDS_INPUT", "INTERVAL_NOT_AVAILABLE": "NO_DATA",
@@ -95,6 +101,11 @@ def is_bare_unknown_reply(question: str) -> bool:
     ))
 
 
+def is_input_burden_complaint(question: str) -> bool:
+    """Recognize a request to stop a long clarification sequence."""
+    return isinstance(question, str) and bool(_INPUT_BURDEN.search(question))
+
+
 def is_questioned_numeric_reply(question: str) -> bool:
     """A numeric statement ending in a question mark is not a confirmed value."""
     return (isinstance(question, str) and bool(re.search(r"\d", question))
@@ -112,7 +123,10 @@ def unavailable_pair_inputs(result, question):
 
 
 def resume_pair_inputs(question):
-    return any(phrase in question for phrase in ("남은 조건", "빠진 조건", "더 필요한 값", "더 필요한 정보"))
+    return any(phrase in question for phrase in (
+        "남은 조건", "빠진 조건", "더 필요한 값", "더 필요한 정보",
+        "계속 계산", "정밀 비교", "조건 입력을 계속", "다시 조건 확인",
+    ))
 
 
 def asks_where_to_check(question):
@@ -150,6 +164,32 @@ def future_pair_feedback(result, *, pause_costs=False):
         if field in HISTORY_FIELDS and choices:
             lines.append(f"- {HISTORY_FIELDS[field]} 후보: " + ", ".join(str(choice) for choice in choices))
     return "\n".join(lines)
+
+
+def paused_pair_feedback(result):
+    """Acknowledge input fatigue and finish without another clarification."""
+    lines = ["맞아요. 확인할 조건을 너무 많이 물었어요. 여기서 입력 요청을 멈출게요."]
+    preview = result.get("history_preview") if isinstance(result, dict) else None
+    if preview:
+        start, end = preview["base_date_range"]
+        lines += [
+            "이미 확인한 과거 자료만 요약하면:",
+            f"- 같은 규격의 {preview['interval_days']}일 가격쌍 {preview['clean_pairs']}건 · 관측 기준일 {start}~{end}",
+            "- B안 가격 변화(과거 사례): " + " · ".join(
+                f"{label} {Decimal(row['change_pct']):+,.2f}%"
+                for label, row in zip(("낮은 사례", "중앙 사례", "높은 사례"), preview["scenarios"])
+            ),
+            "이 값은 과거 변동 범위이며 미래가격 예측은 아닙니다.",
+        ]
+    if result.get("source_status") == "NEEDS_CLARIFICATION":
+        reason = "거래규격이 확인되지 않아 다른 상품의 가격을 대신 끌어오지 않았습니다."
+    else:
+        reason = "일부 가격·감모·비용 조건이 확인되지 않았고, 과거 변동만으로 미래가격을 단정할 수도 없습니다."
+    lines += [
+        "현재 정보만으로는 두 출하일 중 어느 쪽이 더 이익인지 결론낼 수 없습니다. "
+        f"{reason} 이미 알려주신 조건은 유지하고, 더 입력을 요구하지 않을게요."
+    ]
+    return "\n\n".join(lines)
 
 
 def history_clarification(result, question="", *, pause_specs=False):

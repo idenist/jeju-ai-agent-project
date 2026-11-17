@@ -121,23 +121,23 @@ class 직접가격조회화면검수(unittest.TestCase):
         return app
 
     def _fill(self, app):
-        for key, value in (("price_history_variety", "조생귤"), ("price_history_grade", "특"),
-                           ("price_history_size", "소"), ("price_history_package", "상자"),
-                           ("price_history_package_kg", "5")):
-            next(widget for widget in app.text_input if widget.key == key).set_value(value)
-        next(widget for widget in app.number_input if widget.key == "price_history_interval_days").set_value(7)
+        fields = {"market_code": "110001", "variety": "조생귤", "grade": "특", "size": "소", "package": "상자", "package_kg": "5"}
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+            for field, value in fields.items():
+                app.selectbox(key="price_history_spec_" + field).select(value).run()
+            app.selectbox(key="price_history_interval_days").select(7).run()
 
     def test_키없는_화면에_과거_경락가격_조회가_있음(self):
         app = self._app()
         self.assertTrue(app.text_input(key="shipment_question").disabled)
         self.assertTrue(any(button.label == "과거 경락가격" for button in app.button))
-        self.assertTrue(any(button.label == "과거 경락가격 직접 조회" and not button.disabled for button in app.button))
+        self.assertTrue(any(button.label == "과거 경락가격 조회" and button.disabled for button in app.button))
 
     def test_화면에서_조회후_보고서_내려받기_가능(self):
         app = self._app()
         self._fill(app)
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
-            next(button for button in app.button if button.label == "과거 경락가격 직접 조회").click().run()
+            next(button for button in app.button if button.label == "과거 경락가격 조회").click().run()
         self.assertEqual(list(app.exception), [])
         result = app.session_state.workspace.current_entries()[0]["result"]
         self.assertEqual(result["clean_pairs"], 20)
@@ -149,9 +149,9 @@ class 직접가격조회화면검수(unittest.TestCase):
         app = self._app()
         self._fill(app)
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
-            next(button for button in app.button if button.label == "과거 경락가격 직접 조회").click().run()
+            next(button for button in app.button if button.label == "과거 경락가격 조회").click().run()
             self.assertTrue(app.session_state.workspace.current_entries())
-            next(widget for widget in app.text_input if widget.key == "price_history_grade").set_value("상").run()
+            app.selectbox(key="price_history_spec_grade").select(None).run()
         self.assertEqual(list(app.exception), [])
         self.assertEqual(app.session_state.workspace.current_entries(), [])
         self.assertFalse(any(button.label == "PDF 보고서 내려받기" for button in app.get("download_button")))

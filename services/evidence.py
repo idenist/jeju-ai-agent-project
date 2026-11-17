@@ -232,6 +232,9 @@ def get_market_evidence(args: dict, root: Path = PROJECT_ROOT, *, on_progress=No
         source["snapshot_id"] = selected_root.name if selected_root != Path(root) else "shared-baseline"
         common = {"source": source, "input": args, "is_future_forecast": False,
                   "is_producer_net_price": False, "is_live_price": False}
+        market_code = conditions.get("market_code")
+        common["market_name"] = next((r.get("market") for r in auction
+                                      if r["market_code"] == market_code and r.get("market")), None)
         if not dates or (as_of and not first <= as_of <= last):
             return _error("NO_DATA", "요청한 기준일은 확보한 경매가격 관측기간 밖입니다.", **common)
         candidates = [r for r in auction if all((_number(r[k]) if k == "package_kg" else r[k]) == v
