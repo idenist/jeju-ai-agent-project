@@ -6,12 +6,13 @@
 ## 실행
 
 ```cmd
-py -3 -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements-juneok.lock
-.venv\Scripts\python.exe -m streamlit run app.py
+setup-center.cmd
+run-juneok.cmd
 ```
 
-모델 API 키가 없으면 대화 기능이 제한되지만 CSV 조회와 Python 계산은 별도로 확인할 수 있습니다.
+Windows에 Python 3.13이 필요합니다. 설치 스크립트는 Python 런처에서 3.13을 찾고, 찾지 못하면 PATH의 3.13을 사용합니다. 기존 `.env`가 있으면 그대로 사용합니다.
+
+CSV 조회, 직접 입력 비교와 PDF 저장은 키 없이 사용할 수 있습니다. AI 대화를 쓰려면 `.env`에 평가용 모델 키를 설정합니다.
 
 ## 구조
 
