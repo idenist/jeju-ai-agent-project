@@ -147,7 +147,7 @@ class FuturePairTests(unittest.TestCase):
         })
         agent = AgentSession(client=client)
         reply = agent.run("감귤 3톤인데 사흘 뒤에 팔지 열흘 뒤에 팔지 고민이에요.")
-        self.assertEqual(client.requests[0]["tool_choice"], {"type": "function", "name": "compare_future_pair"})
+        self.assertEqual(client.requests[0]["tool_choice"], "auto")
         self.assertEqual(agent.future_pair.inputs["quantity"], 3000)
         self.assertIsNone(agent.future_pair.inputs["history_filters"])
         self.assertEqual(reply["visible_results"][0]["tool"], "compare_future_pair")
@@ -410,8 +410,7 @@ class FuturePairTests(unittest.TestCase):
         client.arguments = {"action": "new", "expected_version": version,
                             "patch": {"price_a": 3075, "price_b": 3300}}
         reply = agent.run("A안 3075원, B안 3300원")
-        self.assertEqual(client.requests[-1]["tool_choice"],
-                         {"type": "function", "name": "compare_future_pair"})
+        self.assertEqual(client.requests[-1]["tool_choice"], "auto")
         self.assertEqual(agent.future_pair.inputs["quantity"], 3000)
         self.assertEqual(agent.future_pair.inputs["price_a"], 3075)
         self.assertEqual(agent.future_pair.inputs["price_b"], 3300)
@@ -628,7 +627,7 @@ class FuturePairTests(unittest.TestCase):
         }
         with patch("agents.future_pair_state.preview_future_pair_history", side_effect=AssertionError("lookup")):
             reply = agent.run("과거 가격은 쓰지 말고 필요한 단가만 알려줘.")
-        self.assertEqual(client.requests[0]["tool_choice"], {"type": "function", "name": "compare_future_pair"})
+        self.assertEqual(client.requests[0]["tool_choice"], "auto")
         self.assertEqual([entry["tool"] for entry in reply["tool_results"]], ["compare_future_pair"])
         result = reply["visible_results"][0]["result"]
         self.assertTrue(result["threshold_only"])
@@ -639,6 +638,39 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(pair.inputs["quantity"], 3000)
         self.assertIsNone(pair.inputs["price_b"])
         self.assertIsNone(pair.inputs["history_filters"])
+
+    def test_unrelated_weight_keeps_the_pending_box_confirmation(self):
+        from agents.box_price import proposed_box_price
+
+        quote = proposed_box_price("A안은 한 상자에 2만원이에요.", None)
+        for question in ("택배 상자는 5kg이에요.", "상자 5kg도 편의점 택배로 보낼 수 있나요?"):
+            self.assertEqual(quote.follow_up(question), (None, quote))
+        action, updated = quote.follow_up("실제 판매 상자는 4kg이에요.")
+        self.assertEqual(action, "clarify")
+        self.assertEqual(updated.unit_price, Decimal("5000"))
+
+    def test_standalone_creative_and_other_crop_requests_keep_the_active_pair(self):
+        from agents.agent import AgentSession
+        from agents.service_scope import scope_reply
+
+        agent = AgentSession(client=object())
+        pair = agent.future_pair
+        pair.apply("new", 0, {**COMMON, "option_b": OPTION_B, "price_mode": "manual", "price_b": 2750})
+        before = pair.snapshot()
+        for question in (
+            "감귤이 등장하는 짧은 판타지 소설을 써 줘.",
+            "딸기 3톤을 3일 뒤랑 10일 뒤에 출하하면 언제 더 이득인지 비교해 줘. 조생귤 기준으로 대신 계산해도 돼.",
+            "2025년 딸기 도매 시세 자료 보여줘.",
+        ):
+            with self.subTest(question=question):
+                reply = agent.run(question)
+                self.assertEqual(reply["status"], "OK")
+                self.assertEqual(reply["metrics"]["model_requests"], 0)
+                self.assertEqual(reply["tool_results"], [])
+                self.assertEqual(pair.snapshot(), before)
+                self.assertIn("제주 감귤", reply["text"])
+        self.assertIsNone(scope_reply("작년 감귤 가격도 보여주고 감귤 소설도 써 줘."))
+        self.assertIsNone(scope_reply("작년 사과 가격이랑 제주 조생귤 가격 둘 다 궁금해요."))
 
     def test_b_date_change_preserves_a_and_uses_new_pairs_and_costs(self):
         first = compare_future_pair(**COMMON, option_b=OPTION_B, history_filters=FILTERS)

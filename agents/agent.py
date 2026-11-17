@@ -23,6 +23,7 @@ from agents.harness import ExecutionPolicy, RunStopped, RepeatGuard, bound_histo
 
 from agents.dialogue import has_unsupported_amount, remember_visible_reply
 from agents.prompts import SYSTEM_PROMPT
+from agents.service_scope import scope_reply
 
 
 def _has_explicit_value(value):
@@ -227,6 +228,11 @@ class AgentSession:
         settings = self.settings or Settings.load()
         if not isinstance(question, str) or not question.strip() or len(question) > 6000:
             return {"status": "INVALID_INPUT", "text": "질문은 1~6,000자로 입력하세요.", "tool_results": [], "events": [], "state": self.store.snapshot()}
+        if outside_scope := scope_reply(question):
+            return {"status": "OK", "text": outside_scope, "report": outside_scope,
+                    "tool_results": [], "visible_results": [], "events": [],
+                    "state": self.store.snapshot(),
+                    "metrics": {"model_requests": 0, "dialogue_route": "outside_service_scope"}}
         if self.client is None and not settings.api_key:
             return {"status": "KEY_REQUIRED", "text": "프로젝트 .env에 OPENAI_API_KEY를 입력하세요. 직접 조건 비교와 과거 출하통계는 키 없이 사용할 수 있습니다.",
                     "tool_results": [], "events": [], "state": self.store.snapshot()}
@@ -322,17 +328,14 @@ class AgentSession:
                                and (explicit_history or not requests_manual_price(question)))
         pending_value_reply = (not new_comparison and not future_pair_route
                                and self.future_pair.is_compound_value_answer(question))
-        forced_tool = None
         if pending_value_reply:
-            forced_tool = "compare_future_pair"
-            instructions += ("\n현재의 A/B 비교 조건 보완 답변입니다. "
+            instructions += ("\n이번 입력이 현재 A/B 비교의 조건 보완 답변이라면 compare_future_pair를 사용하세요. "
                              "기존 조건을 유지하고 action=edit로 명시한 값만 전달하세요. "
                              "expected_version은 현재 미래 출하 비교 상태의 version입니다. "
                              "값을 반영한 후 finish_turn=true로 종료하세요.")
         if future_pair_route:
-            forced_tool = "compare_future_pair"
             instructions += (
-                "\n이번 요청은 서로 다른 두 미래 출하일의 단일 비교입니다. 총 물량은 kg으로 반영하세요. "
+                "\n서로 다른 두 미래 날짜가 언급됐습니다. 제주 감귤 출하 비교가 맞다면 compare_future_pair를 사용하고 총 물량은 kg으로 반영하세요. "
                 "'며칠 뒤'의 기준일이 따로 없으면 위 오늘 날짜를 사용하고, 달력 날짜는 보관 시작일과 구분하세요. "
                 "명시된 날짜·기간·단가를 사용하고 불분명한 값만 확인하세요. "
                 "B안 단가를 사용자가 직접 정하지 않았고 과거 가격 제외 요청도 없으면 price_mode=history로 자료를 먼저 확인하세요. "
@@ -341,9 +344,8 @@ class AgentSession:
                 "과거 가격쌍 간격은 B 출하일−A 출하일입니다. 과거 사례를 미래 예측 확률이나 검증된 10일 가격 전망처럼 말하지 마세요."
             )
         if excludes_price_history and (future_pair_route or existing_reference_request):
-            forced_tool = "compare_future_pair"
             instructions += (
-                "\n과거 가격을 조회하거나 재사용하지 마세요. "
+                "\n현재 제주 감귤 비교의 손익분기 요청이라면 compare_future_pair를 사용하세요. 과거 가격을 조회하거나 재사용하지 마세요. "
                 "B안 단가를 명시하지 않았다면 비워 두고 이미 확인한 조건으로 참고 손익분기를 계산하세요."
             )
         if new_comparison:
@@ -367,7 +369,6 @@ class AgentSession:
             future_pair_request=future_pair_route,
         )
         metrics["focused_toolset"] = focused
-        tool_choice = {"type": "function", "name": forced_tool} if forced_tool else "auto"
         routing = _TurnRouting(
             new_comparison=new_comparison,
             basis_stated=basis_stated,
@@ -417,7 +418,7 @@ class AgentSession:
                     response = client.responses.create(
                         model=settings.model, instructions=instructions, input=deepcopy(model_messages),
                         tools=offered_tools,
-                        tool_choice=tool_choice,
+                        tool_choice="auto",
                         parallel_tool_calls=False,
                         store=False, max_output_tokens=4000,
                     )
@@ -452,8 +453,6 @@ class AgentSession:
                         metrics["unsupported_answer_blocked"] = bool(candidate)
                     break
                 self.messages.extend(response.output)
-                # A forced initial route must not force every subsequent call in the turn.
-                tool_choice = "auto"
                 finished = False
                 for call in tool_calls:
                     phase = "tool_execution"

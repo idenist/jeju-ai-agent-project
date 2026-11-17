@@ -55,7 +55,7 @@ def with_box_price(tool_definition):
 
 
 TOOLS = [
-    tool("get_price_overview", "연도·월·기간별 과거 가격이 어느 정도인지 넓게 조회. '작년 감귤 가격'은 이 도구가 우선입니다. 시즌 보관자료에서 시장·품종별 가중평균, 실제 기간, 품질 표시와 등급/포장 후보를 제공합니다. 등급·시장·규격은 몰라도 조회 가능. 시장코드는 받지 않습니다. 조회 후 설명하려면 finish_turn=false로 도구 결과를 읽고 자연어로 답하세요.",
+    tool("get_price_overview", "제주산 감귤의 연도·월·기간별 과거 가격 요약. 감귤 외 작물의 가격을 묻는 요청에는 사용하지 않습니다. '작년 감귤 가격'은 이 도구가 우선입니다. 시즌 보관자료에서 시장·품종별 가중평균, 실제 기간, 품질 표시와 등급/포장 후보를 제공합니다. 등급·시장·규격은 몰라도 조회 가능. 시장코드는 받지 않습니다. 조회 후 설명하려면 finish_turn=false로 도구 결과를 읽고 자연어로 답하세요.",
          {"start_date": nullable("string", description="조회 시작일 YYYY-MM-DD. 작년은 오늘(KST)의 전년도 01-01."),
           "end_date": nullable("string", description="조회 마지막일 YYYY-MM-DD. 작년은 전년도 12-31. 한 번에 최대 366일."),
           **{k: nullable("string", description="사용자가 선택한 필터만 전달. 모르면 null; 후보를 사용자 조건으로 확정하지 말 것.")

@@ -635,6 +635,8 @@ class FuturePairState:
         if (self.box_price is not None or pending.get("status") != "NEEDS_INPUT"
                 or not pending.get("comparison_inputs_pending")):
             return False
+        if not re.match(r"\s*(?:[0-9]|[AB]\s*안|총\s*물량|물량|수수료|감모|보관비|별도\s*비용|단가)", question, re.I):
+            return False
         if any(word in question for word in (
                 "뜻", "의미", "설명", "조회", "찾아", "출하량", "통계", "과거",
                 "보고서", "예측", "새 비교", "비교해", "어떻게", "왜", "?", "？",
