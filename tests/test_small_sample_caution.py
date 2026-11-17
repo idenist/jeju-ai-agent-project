@@ -33,5 +33,31 @@ class SmallSampleCautionTest(unittest.TestCase):
         self.assertEqual(CAUTIONS, before)
 
 
+class SmallSampleChatPreviewTest(unittest.TestCase):
+    """대화 미리보기(비용 입력 전)에도 사례 부족 안내가 보여야 한다."""
+
+    def preview(self, filters):
+        from agents.future_pair_state import FuturePairState, future_pair_feedback
+
+        pair = FuturePairState()
+        option = {"loss_percent": None, "daily_storage_cost": None, "other_cost_krw": None, "fee_percent": 5}
+        result = pair.apply("new", pair.version, {
+            "quantity": 3000, "price_basis": "gross", "start_date": "2026-11-17", "price_a": 2500,
+            "option_a": {**option, "delay_days": 3}, "option_b": {**option, "delay_days": 10},
+            "price_mode": "history", "history_filters": filters})
+        return result, future_pair_feedback(result)
+
+    def test_small_sample_note_is_shown_in_chat(self):
+        result, text = self.preview(SMALL)
+        self.assertEqual(result["history_preview"]["clean_pairs"], 3)
+        self.assertIn("3쌍뿐", text)
+        self.assertIn("중앙값 위주로 참고하세요", text)
+
+    def test_enough_pairs_show_no_note(self):
+        result, text = self.preview(LARGE)
+        self.assertEqual(result["history_preview"]["clean_pairs"], 20)
+        self.assertNotIn("쌍뿐", text)
+
+
 if __name__ == "__main__":
     unittest.main()
