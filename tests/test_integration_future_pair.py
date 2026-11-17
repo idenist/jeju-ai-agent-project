@@ -549,6 +549,31 @@ class FuturePairTests(unittest.TestCase):
         report = render_report([{"tool": "compare_future_pair", "result": result}])
         self.assertIn("최소 단가는 2,500원/kg", report)
 
+    def test_cost_reply_preserves_the_dates_of_an_open_history_comparison(self):
+        from agents.agent import AgentSession
+        from test_integration_ui_journey import 모의_대화_클라이언트
+
+        client = 모의_대화_클라이언트("compare_future_pair", {})
+        agent = AgentSession(client=client)
+        pair = agent.future_pair
+        first = pair.apply("new", 0, {
+            **COMMON, "start_date": "2026-11-15", "option_a": {"delay_days": 3}, "option_b": {"delay_days": 10},
+            "price_mode": "history", "history_filters": FILTERS,
+        })
+        self.assertEqual(first["source_status"], "HISTORY_READY")
+        client.arguments = {"action": "new", "expected_version": pair.version,
+                            "patch": {"option_a": {k: v for k, v in OPTION_A.items() if k != "delay_days"},
+                                      "option_b": {k: v for k, v in OPTION_B.items() if k != "delay_days"}}}
+        reply = agent.run("사흘 동안은 전체 물량의 1%, 열흘 동안은 전체의 4%가 줄어요. "
+                          "감귤 전체 하루 보관비는 두 경우 다 1만 원이고 그 밖의 비용은 각각 5천 원이에요. "
+                          "판매 수수료는 사흘 뒤 5%, 열흘 뒤 7%예요. 앞서 본 과거 단가 가정으로 비교해 주세요.")
+        result = reply["visible_results"][0]["result"]
+        self.assertEqual(result["status"], "OK")
+        self.assertEqual(result["option_a"]["sale_date"], "2026-11-18")
+        self.assertEqual(result["options_b"][1]["sale_date"], "2026-11-25")
+        self.assertEqual(Decimal(result["options_b"][1]["difference_vs_a_krw"]), Decimal("-670493.392"))
+        self.assertEqual(pair.inputs["history_filters"], FILTERS)
+
     def test_b_date_change_preserves_a_and_uses_new_pairs_and_costs(self):
         first = compare_future_pair(**COMMON, option_b=OPTION_B, history_filters=FILTERS)
         updated = compare_future_pair(**COMMON, option_b={**OPTION_B, "delay_days": 17}, history_filters=FILTERS)

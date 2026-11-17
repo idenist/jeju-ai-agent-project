@@ -501,7 +501,7 @@ class AgentSession:
                                    pair_specs_deferred=self.future_pair.specs_deferred)
         else:
             text = "아직 확인된 자료로 답변을 완성하지 못했습니다. 요청하신 내용으로 다시 시도해 주세요."
-        report = text if pending_model_reply or not visible else report_for(visible)
+        report = report_for(visible) if visible else text
         if status != "OK":
             warning = "\n\n" + FAILURE_GUIDANCE.get(status, FAILURE_GUIDANCE["API_ERROR"]) + " 확인된 도구 결과까지만 부분 결과이며 요청 전체가 완료된 것은 아닙니다."
             text += warning
