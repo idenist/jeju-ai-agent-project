@@ -390,13 +390,20 @@ def _chat_report(ws, reply):
     if not any(item["tool"] == "compare_shipment_options" and item["result"]["status"] == "OK"
                for item in reply.get("visible_results", [])):
         return None
-    entries = ws.current_entries() or reply["visible_results"]
+    return _current_comparison_report(ws)
+
+
+def _current_comparison_report(ws):
+    comparison = ws.current_comparison()
+    if comparison is None:
+        return None
     try:
-        report_json = ws.export_case("내 출하 비교")
+        report_json = ws.export_case("내 출하 비교", archived_results=comparison["entries"])
     except ValueError:
+        if ws.current_comparison() is None:
+            return None
         report_json = ""
-    return {"kind": "comparison", "version": reply.get("state", {}).get("version", ws.store.version),
-            "source_revision": ws.result_data_revision, "entries": entries, "json": report_json}
+    return {"kind": "comparison", **comparison, "json": report_json}
 
 def _latest_chat_report(messages, version, current_pair, pair_version=None):
     for index in range(len(messages) - 1, -1, -1):
@@ -533,6 +540,8 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                     if economic is not None:
                         report = _chat_report(ws, {"visible_results": [{"tool": "compare_future_pair",
                                                                           "result": economic}]})
+                    else:
+                        report = _current_comparison_report(ws)
                 message = "방금 비교한 결과의 보고서입니다." if report else "내려받을 최근 출하 비교 결과가 없습니다. 출하 조건을 비교한 뒤 다시 요청해 주세요."
                 reply = {"status": "OK", "text": message, "state": ws.store.snapshot(), "chat_report": report}
                 steps, elapsed = [], None

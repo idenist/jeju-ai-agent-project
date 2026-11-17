@@ -124,6 +124,25 @@ class WorkspaceTests(unittest.TestCase):
         with patch("ui.chat.data_revision", return_value=("updated",)):
             self.assertEqual(_latest_chat_report(messages, ws.store.version, None), (None, None))
 
+    def test_current_comparison_can_be_reopened_after_a_tool_returns_another_result(self):
+        from services.casefiles import parse_case
+        from ui.chat import _current_comparison_report
+
+        ws = self.workspace([response(call("explain_term", {"term": "loss_rate"}), text="")])
+        ws.load_demo()
+        before = _current_comparison_report(ws)
+        reply = ws.run("감모율이 무슨 뜻인가요?")
+        self.assertEqual(reply["visible_results"][0]["tool"], "explain_term")
+        self.assertEqual(ws.current_entries()[0]["tool"], "explain_term")
+        report = _current_comparison_report(ws)
+        self.assertEqual(report["entries"], before["entries"])
+        before_case = parse_case(before["json"])
+        reopened_case = parse_case(report["json"])
+        self.assertEqual(reopened_case["archived_results"], before_case["archived_results"])
+        self.assertEqual(reopened_case["snapshot"], before_case["snapshot"])
+        ws.store.update({"quantity_kg": 4200}, ws.store.version)
+        self.assertIsNone(_current_comparison_report(ws))
+
     def test_data_refresh_chat_clear_preserves_conditions_and_discards_exports(self):
         ws = self.workspace()
         ws.load_demo()

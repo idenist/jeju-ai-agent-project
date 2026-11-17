@@ -93,6 +93,7 @@ class SharedWorkspace:
         self.result_version: int | None = None
         self.data_revision = data_revision()
         self.result_data_revision = None
+        self._comparison = None
         from services.settlement import ShipmentStore
         self.shipment = ShipmentStore()
         self.session.shipment = self.shipment
@@ -121,10 +122,25 @@ class SharedWorkspace:
             entry["result"]["ui_context"]["kind"] = "evidence" if entry["tool"] in {"get_market_evidence", "get_historical_shipment_context", "get_price_history", "explore_data", "explain_term"} else "comparison"
         self.result_version = self.store.version
         self.result_data_revision = expected_data_revision if expected_data_revision is not None else data_revision()
+        comparisons = [entry for entry in self.entries if entry["tool"] == "compare_shipment_options"]
+        if comparisons:
+            self._comparison = None
+            if execution_status == "OK" and comparisons[-1]["result"]["status"] == "OK":
+                self._comparison = {
+                    "version": self.result_version, "source_revision": self.result_data_revision,
+                    "entries": deepcopy(self.entries),
+                }
         return deepcopy(self.entries)
 
     def current_entries(self):
         return deepcopy(self.entries) if self.result_version == self.store.version and self.result_data_revision == data_revision() else []
+
+    def current_comparison(self):
+        comparison = self._comparison
+        if (comparison is not None and comparison["version"] == self.store.version
+                and comparison["source_revision"] == data_revision()):
+            return deepcopy(comparison)
+        return None
 
     def check_data_change(self):
         current = data_revision()
@@ -226,9 +242,9 @@ class SharedWorkspace:
         self._freeze([*entries, {"tool": "explain_decision_conditions", "result": result}], "판단 조건 설명", expected_data_revision=revision)
         return result
 
-    def export_case(self, name):
+    def export_case(self, name, *, archived_results=None):
         from services.casefiles import export_case
-        return export_case(self, name)
+        return export_case(self, name, archived_results=archived_results)
 
     def compare_case(self, content, expected_version):
         from services.casefiles import parse_case
@@ -345,6 +361,7 @@ class SharedWorkspace:
         self.session.price_history_query = None
         self.session.price_history_revision = None
         self.session.future_pair.cancel_shipment_window()
+        self._comparison = None
         self.session.future_pair.costs_deferred = False
         self.session.future_pair.specs_deferred = False
         if not preserve_manual_pair or self.session.future_pair.inputs["history_filters"] is not None:
