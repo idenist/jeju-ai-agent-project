@@ -45,6 +45,12 @@ AMBIGUOUS_NUMERIC_RECOVERY = (
     "확정값이면 물음표 없이 알려주시고, 가정값이면 가정으로 정해 주세요."
 )
 _UNKNOWN_INPUT = re.compile(r"모르|몰라|몰랐|확인\s*(?:못|할\s*수\s*없)|아직\s*(?:정해지지\s*않|안\s*나왔)")
+_UNKNOWN_LOSS = re.compile(
+    r"(?:(?P<side>[AB])\s*안?\s*)?(?:새\s*기간(?:의)?\s*)?"
+    r"(?:감모율?|감량률?|얼마나\s*줄(?:지|어드는지))\s*(?:은|는|이|가|을|를)?\s*"
+    rf"(?:얼마인지\s*)?(?:(?:아직|잘|정확히|지금은)\s*)*(?:모릅|{_UNKNOWN_INPUT.pattern})",
+    re.I,
+)
 _UNKNOWN_COST = re.compile(r"비용|보관[비료]|저장[료비]|수수료|감모|감량|줄(?:어|지|는)")
 _UNKNOWN_SPEC = re.compile(r"품종|등급|크기|포장|상자\s*(?:무게|중량)|도매시장|시장코드|거래\s*방식")
 _INPUT_BURDEN = re.compile(
@@ -114,6 +120,11 @@ def is_questioned_numeric_reply(question: str) -> bool:
 
 def unavailable_cost(question):
     return unavailable_input(question, _UNKNOWN_COST)
+
+
+def unavailable_loss_rate(question, option):
+    return any(match["side"] is None or match["side"].casefold() == option[-1]
+               for match in _UNKNOWN_LOSS.finditer(question))
 
 
 def unavailable_pair_inputs(result, question):
@@ -623,6 +634,8 @@ class FuturePairState:
         pending = self.pending or {}
         if (self.box_price is not None or pending.get("status") != "NEEDS_INPUT"
                 or not pending.get("comparison_inputs_pending")):
+            return False
+        if not re.match(r"\s*(?:[0-9]|[AB]\s*안|총\s*물량|물량|수수료|감모|보관비|별도\s*비용|단가)", question, re.I):
             return False
         if any(word in question for word in (
                 "뜻", "의미", "설명", "조회", "찾아", "출하량", "통계", "과거",
