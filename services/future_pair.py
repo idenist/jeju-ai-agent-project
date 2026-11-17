@@ -208,6 +208,8 @@ def compare_future_pair_history_reference(*, quantity, price_basis, start_date,
             "과거 동일규격 가격변동 사례를 B안 가격 가정으로 적용했습니다. 미래가격 예측 확률이 아닙니다.",
             "표의 비교금액 차이는 미확인 비용 차이를 반영하기 전의 참고값이며 실제 유불리 판단이 아닙니다.",
             "미확인 비용 차이를 0원으로 둔 참고 손익분기 가격입니다.",
+            # 사례가 10쌍 미만이면 참고 결과에도 같은 안내를 남긴다.
+            *([history_preview["sample_note"]] if history_preview.get("sample_note") else []),
         ],
     })
     return reference

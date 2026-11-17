@@ -148,6 +148,8 @@ def future_pair_feedback(result, *, pause_costs=False):
                       for row in preview["scenarios"]]
             lines.append(f"나중 출하 가정 단가(원/kg) · 최저 {prices[0]} · 중앙 {prices[1]} · 최고 {prices[2]}")
         lines.append("과거 가격 변동을 참고한 가정입니다.")
+        if note := preview.get("sample_note"):
+            lines.append(note)
         if pause_costs:
             return "\n\n".join([*lines, UNKNOWN_COST_RECOVERY])
         next_step = _missing_questions(result["missing_fields"], result.get("storage_days", {}))
@@ -490,6 +492,9 @@ class FuturePairState:
                                       manual_price_required=True)
             preview = {key: result[key] for key in ("interval_days", "clean_pairs", "base_date_range",
                                                     "scenarios", "conditions", "source")}
+            if result.get("small_sample"):
+                # 사례가 10쌍 미만이면 가격 도구가 붙인 안내를 미리보기에도 그대로 전달한다.
+                preview["sample_note"] = result["cautions"][0]
             if self._threshold_reference_ready(self.inputs):
                 reference = compare_future_pair_history_reference(
                     **{key: self.inputs[key] for key in (

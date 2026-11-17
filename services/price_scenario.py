@@ -16,6 +16,8 @@ REPORT_FILE = ROOT / "data/reports/price_comparison_report.json"
 DATE_FIELDS = ("option_a_sale_date", "option_b_sale_date")
 ALLOWED = {*FILTERS, *DATE_FIELDS, "option_a_price_per_kg"}
 MANUAL_PRICE = "B안 단가를 직접 입력하면 손익 비교는 계속할 수 있습니다."
+# 팀 합의(2026-11-16): 경고 없는 과거 쌍이 10개 미만이면 사례가 적다는 안내를 붙인다.
+MIN_CLEAN_PAIRS = 10
 CAUTIONS = [
     "B안 단가는 과거 변동을 대입한 가정이며 가격 전망이 아닙니다.",
     "최솟값·최댓값은 각각 한 사례이고, 날짜 구간이 겹쳐 사례 수를 확률로 해석할 수 없습니다.",
@@ -135,6 +137,11 @@ def get_price_scenarios(args: dict, data_file: Path = DEFAULT_FILE, prices_file:
                                          "unavailable_reasons", "examples")},
               "base_date_range": [min(r["base_date"] for r in clean), max(r["base_date"] for r in clean)],
               "scenarios": scenarios}
+    if len(clean) < MIN_CLEAN_PAIRS:
+        # 사례가 적으면 최저·최고가 한두 사례에 크게 흔들리므로 가정 단가는 주되 안내를 붙인다.
+        result.update(small_sample=True, cautions=[
+            f"경고 없는 과거 사례가 {len(clean)}쌍뿐이라 최저·최고가 크게 흔들릴 수 있습니다. 중앙값 위주로 참고하세요.",
+            *CAUTIONS])
     if a_price is None:
         result.update(status="NEEDS_CLARIFICATION", missing_fields=["option_a_price_per_kg"], choices={},
                       message="B안 가정 단가를 계산하려면 A안 단가(원/kg)를 알려 주세요.")
