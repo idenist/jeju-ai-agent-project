@@ -411,6 +411,7 @@ class _ShipmentWindow:
     version: int
     last: date | None = None
     quantity: float | None = None
+    awaiting_shipment_variety: bool = False
 
 
 class FuturePairState:
@@ -684,15 +685,34 @@ class FuturePairState:
 
         last_label = f"{last.month}월 {last.day}일"
         confirmation = f"{first_label}과 {last_label}을 먼저 비교해 볼까요?"
+        if window.awaiting_shipment_variety:
+            from services.shipment_timing import CATEGORIES, analyze_shipment_timing
+
+            variety = _SIMPLE_REPLY_SUFFIX.sub("", question.strip().rstrip(".!。 ")).strip()
+            if variety in CATEGORIES:
+                if on_progress:
+                    on_progress("shipment_csv")
+                result = analyze_shipment_timing({
+                    "shipment_variety": variety, "option_a_date": first.isoformat(),
+                    "option_b_date": last.isoformat(),
+                })
+                self.shipment_window = replace(window, awaiting_shipment_variety=False)
+                return "", result
+
         if self.inputs["price_a"] is None and self.waiting_field() == LABELS["price_a"]:
             text = question.strip()
             text = re.sub(rf"^(?:{first.month}\s*월\s*)?{first.day}\s*일"
                           r"\s*(?:에|출하\s*시)?\s*(?:제시받은\s*)?"
                           r"(?:kg\s*당\s*)?(?:단가\s*(?:=|은|는)?\s*)?", "", text)
+            unknown_quote = re.sub(r"^(?:제시받은\s*)?(?:단가|가격)\s*(?:은|는|을|를)?\s*", "", text)
+            if is_bare_unknown_reply(unknown_quote):
+                self.shipment_window = replace(window, awaiting_shipment_variety=True)
+                return (f"{first_label}과 {last_label}의 과거 같은 시기 출하량부터 볼 수 있어요. "
+                        "출하통계에서 어떤 품종을 찾아볼까요?", None)
             result = self.apply_short_answer(text, on_progress=on_progress)
             if result is None:
                 return None
-            self.shipment_window = replace(window, version=self.version)
+            self.shipment_window = replace(window, version=self.version, awaiting_shipment_variety=False)
             price = decimal(self.inputs["price_a"], LABELS["price_a"])
             return (f"{first_label} 제시 단가를 **{price:,.12g}원/kg**으로 저장했어요. " + confirmation, result)
 

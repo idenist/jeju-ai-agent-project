@@ -248,7 +248,12 @@ class AgentSession:
             )
             if window is not None:
                 text, result = window
-                entries = [{"tool": "compare_future_pair", "result": result}] if result is not None else []
+                entries = []
+                if result is not None:
+                    tool = "analyze_shipment_timing" if result["analysis_type"] == "shipment_timing" else "compare_future_pair"
+                    entries = [{"tool": tool, "result": result}]
+                    if tool == "analyze_shipment_timing":
+                        text = render_dialogue(entries, question=question)
                 return {"status": "OK", "text": text, "report": report_for(entries) if entries else text,
                         "tool_results": entries, "visible_results": entries, "events": [],
                         "state": self.store.snapshot(),

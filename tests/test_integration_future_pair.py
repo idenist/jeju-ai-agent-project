@@ -83,6 +83,31 @@ class FuturePairTests(unittest.TestCase):
                 self.assertEqual(agent.future_pair.inputs["quantity"], 4000)
                 self.assertEqual(agent.future_pair.inputs["price_a"], "3000")
 
+    @patch("services.data_refresh.kst_today", return_value=date(2026, 11, 18))
+    def test_unknown_quote_can_continue_to_dated_shipment_evidence(self, _today):
+        from agents.agent import AgentSession
+        from test_juneok_harness import FakeClient
+
+        client = FakeClient([])
+        agent = AgentSession(client=client)
+        agent.run("감귤 3톤을 11월 23일부터 11월 30일까지 출하할 수 있어요. 언제 파는 게 좋을까요?")
+        reply = agent.run("단가는 잘 모르겠어요")
+        self.assertIn("어떤 품종", reply["text"])
+        self.assertNotIn("얼마", reply["text"])
+        before = agent.future_pair.snapshot()
+
+        reply = agent.run("노지온주예요")
+        entry = reply["visible_results"][0]
+        self.assertEqual(entry["tool"], "analyze_shipment_timing")
+        self.assertEqual(entry["result"]["status"], "OK")
+        self.assertEqual(entry["result"]["input"], {
+            "shipment_variety": "노지온주", "option_a_date": "2026-11-23", "option_b_date": "2026-11-30",
+        })
+        self.assertIsNone(entry["result"]["recommended_option"])
+        self.assertEqual(agent.future_pair.snapshot(), before)
+        self.assertIsNone(agent.future_pair.inputs["price_a"])
+        self.assertEqual(client.requests, [])
+
     def test_box_quote_waits_for_the_missing_weight_and_confirmation(self):
         from agents.agent import AgentSession
         from agents.box_price import mentions_box_price
