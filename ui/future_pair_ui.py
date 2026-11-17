@@ -99,6 +99,7 @@ def _open_input_section(section):
 
 def _switch_to_manual_price():
     st.session_state.future_pair_price_mode = "직접 입력"
+    st.session_state.future_pair_input_jump = "manual_price"
 
 
 def _show_missing_inputs(result):
@@ -176,15 +177,17 @@ def render_future_pair(state):
                 option_b = _cost_fields("B", b_days, gross, shared=shared)
 
         section = st.session_state.pop("future_pair_input_jump", None)
-        if section in ("history", "costs"):
+        if section in ("history", "costs", "manual_price"):
+            target_key = "price_b" if section == "manual_price" else f"{section}_open"
+            focus_selector = "input" if section == "manual_price" else "summary"
             st.html(
                 f"""<script>
                 requestAnimationFrame(() => {{
-                    const target = document.querySelector(".st-key-future_pair_{section}_open");
+                    const target = document.querySelector(".st-key-future_pair_{target_key}");
                     if (!target) return;
                     target.style.scrollMarginTop = "4rem";
                     target.scrollIntoView({{block: "start"}});
-                    target.querySelector("summary")?.focus({{preventScroll: true}});
+                    target.querySelector("{focus_selector}")?.focus({{preventScroll: true}});
                 }});
                 </script>""",
                 unsafe_allow_javascript=True,
