@@ -18,7 +18,10 @@ sys.path.insert(0, str(ROOT))
 
 from services.price_scenario import execute_scenario_tool  # noqa: E402
 
-SEASONS = ("2024-2025", "2025-2026")
+REQUIRED = ("price_comparison_availability.csv", "daily_prices.csv", "보고서/price_comparison_report.json")
+# 가공본 세 파일이 모두 있는 시즌 폴더만 검사한다. 새 시즌이 들어오면 자동으로 포함된다.
+SEASONS = tuple(sorted(d.name for d in (ROOT / "data/seasons").iterdir()
+                       if d.is_dir() and all((d / f).exists() for f in REQUIRED)))
 SPEC = {"variety": "조생귤", "grade": "특", "size": "소", "package": "상자", "package_kg": "5"}
 A_PRICE = 2500
 # 판매일 자체는 계산에 쓰이지 않고 간격만 쓰인다. 날짜는 임의의 고정값.
