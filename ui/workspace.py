@@ -125,7 +125,7 @@ class SharedWorkspace:
         comparisons = [entry for entry in self.entries if entry["tool"] == "compare_shipment_options"]
         if comparisons:
             self._comparison = None
-            if execution_status == "OK" and comparisons[-1]["result"]["status"] == "OK":
+            if comparisons[-1]["result"]["status"] == "OK":
                 self._comparison = {
                     "version": self.result_version, "source_revision": self.result_data_revision,
                     "entries": deepcopy(self.entries),

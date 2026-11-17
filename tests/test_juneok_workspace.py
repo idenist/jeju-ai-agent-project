@@ -163,6 +163,10 @@ class WorkspaceTests(unittest.TestCase):
         report = render_report(ws.current_entries())
         self.assertIn("3,109원/kg", report)
         self.assertIn("요청 전체가 완료된 것은 아닙니다", report)
+        from ui.chat import _current_comparison_report
+        saved = _current_comparison_report(ws)
+        self.assertEqual(saved["entries"], ws.current_entries())
+        self.assertEqual(saved["entries"][-1]["result"]["reason"], "API_ERROR")
 
     def test_external_data_change_hides_export_and_preserves_conditions(self):
         with patch("ui.workspace.data_revision", return_value=("old",)):
