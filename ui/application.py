@@ -333,8 +333,7 @@ def main():
                 dirty_before = _card_dirty()
             future_result = ws.session.future_pair.current_result()
             with direct:
-                st.caption("비교할 상황을 고른 다음 입력하세요. 모르는 비용은 비워둘 수 있고, 실제로 없다고 확인한 경우에만 0을 입력합니다.")
-                pair_tab, now_tab = st.tabs(["두 출하일 비교", "지금 판매 vs 보관 후 판매"])
+                pair_tab, now_tab, volume_tab = st.tabs(["두 출하일 비교", "지금 판매 vs 보관 후 판매", "과거 출하량만 보기"])
                 with pair_tab:
                     from ui.future_pair_ui import render_future_pair
                     future_result = render_future_pair(ws.session.future_pair)
@@ -346,6 +345,9 @@ def main():
                         ws.calculate()
                     dirty = _render_cards(ws)
                     comparison_report = st.empty()
+                with volume_tab:
+                    from ui.shipment_timing_ui import render_shipment_lookup
+                    render_shipment_lookup()
         with tools:
             data_tab, tools_tab = st.tabs(["자료 조회", "추가 도구"])
             with data_tab:

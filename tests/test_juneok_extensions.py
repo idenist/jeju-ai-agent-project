@@ -186,7 +186,7 @@ class ExtensionUiTests(unittest.TestCase):
             def click(label): next(b for b in app.button if b.label == label).click().run()
             click("가상 예시 조건 불러오기")
             next(x for x in app.text_input if x.key == "quantity").set_value("4000").run()
-            click("입력 조건 비교")
+            click("수정한 조건 저장 후 비교")
             click("비교 파일 확인")
             self.assertEqual(str(app.session_state.workspace.store.scenario["quantity_kg"]), "4000")
             click("확인한 조건 복원 · 현재 기준 재계산")

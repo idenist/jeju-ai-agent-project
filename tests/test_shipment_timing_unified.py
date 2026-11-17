@@ -204,6 +204,24 @@ class FakeStreamlit(types.ModuleType):
 
 
 class UIPipelineTest(unittest.TestCase):
+    def test_standalone_lookup_needs_only_variety_and_dates(self):
+        from streamlit.testing.v1 import AppTest
+
+        app = AppTest.from_string(
+            "from ui.shipment_timing_ui import render_shipment_lookup; render_shipment_lookup()"
+        ).run()
+        self.assertFalse(app.number_input)
+        app.date_input(key="timing_lookup_earlier").set_value(date(2026, 11, 23)).run()
+        app.date_input(key="timing_lookup_later").set_value(date(2026, 11, 30)).run()
+        app.selectbox(key="timing_lookup_variety").select("노지온주").run()
+        app.button(key="timing_lookup_run").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state.timing_lookup_result["paired_year_count"], 7)
+        self.assertEqual({button.label for button in app.get("download_button")},
+                         {"과거 출하량 PDF 저장", "과거 출하량 JSON 저장"})
+        app.date_input(key="timing_lookup_later").set_value(date(2026, 12, 1)).run()
+        self.assertFalse(app.get("download_button"))
+
     def test_auto_date_no_duplicate_and_invalidation(self):
         fake = FakeStreamlit()
         name = "ui.shipment_timing_ui"

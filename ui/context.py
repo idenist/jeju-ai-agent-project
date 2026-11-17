@@ -80,10 +80,13 @@ def _reset_all():
     st.session_state.pop("future_pair_separate_costs", None)
     st.session_state.pop("future_pair_price_drafts", None)
     st.session_state.pop("future_pair_fee_drafts", None)
-    for key in ("future_pair_missing", "future_pair_history_open", "future_pair_costs_open"):
+    st.session_state.pop("future_pair_loss_drafts", None)
+    st.session_state.pop("future_pair_loss_mode", None)
+    for key in ("future_pair_missing", "future_pair_history_open", "future_pair_costs_open",
+                "future_pair_quantity_unit", "future_pair_schedule_mode"):
         st.session_state.pop(key, None)
     for key in list(st.session_state):
-        if key == "future_pair_price_b" or key.startswith("future_pair_filter_"):
+        if key == "future_pair_price_b" or key.startswith(("future_pair_filter_", "timing_lookup_")):
             del st.session_state[key]
     # 새 비교는 직접 입력한 과거 경락가격의 화면 조건도 초기화합니다.
     for key in ("price_history_variety", "price_history_grade", "price_history_size",

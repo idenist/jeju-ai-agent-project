@@ -1,26 +1,116 @@
 """Direct-entry view for comparing two future shipment dates."""
 import json
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal
 
 import streamlit as st
 
 from agents.future_pair_state import HISTORY_FIELDS, MAX_RATE_PERCENT, OPTION_LABELS, future_pair_feedback
+from agents.box_price import BoxPrice
 from ui.pdf_report import render_pdf_report
 from presenters.reporting import manual_price_warning, render_report
 
 
-def _storage_period(side, default_days):
+def _storage_period(side, start, default_days, use_dates):
     key = f"future_pair_{side}"
+    if use_dates:
+        date_key = f"{key}_sale_date"
+        st.session_state.setdefault(date_key, start + timedelta(days=default_days) if start and default_days else None)
+        sale = st.date_input(f"{side}안 출하일", value=None, key=date_key)
+        if not (sale and start):
+            return None
+        days = (sale - start).days
+        if not 1 <= days <= 365:
+            st.warning("출하일은 보관 시작 다음 날부터 365일 안에서 선택해 주세요.")
+            return None
+        st.caption(f"보관 시작일로부터 {days}일")
+        return days
     st.session_state.setdefault(f"{key}_days", default_days)
     return st.number_input(f"{side}안 보관일", 1, 365, value=None, key=f"{key}_days")
 
 
-def _cost_fields(side, days, gross, shared=None):
+def _quantity(previous):
+    field, unit = st.columns([3, 2])
+    with unit:
+        tons = st.selectbox("물량 단위", ["kg", "톤"], key="future_pair_quantity_unit") == "톤"
+    key = "future_pair_quantity_tons" if tons else "future_pair_quantity"
+    st.session_state.setdefault(key, float(previous) / (1000 if tons else 1) if previous is not None else None)
+    with field:
+        amount = st.number_input("비교 물량(톤)" if tons else "비교 물량(kg)", min_value=0.0,
+                                 value=None, format="%.6f" if tons else None, key=key)
+    if amount is not None and tons:
+        amount = float(Decimal(str(amount)) * 1000)
+        st.caption(f"비교에 적용할 물량은 {amount:,.6g}kg이에요.")
+    return amount
+
+
+def _manual_price(side, drafts):
+    key = f"future_pair_price_{side.lower()}"
+    unit_key = f"{key}_unit"
+    amount_key, weight_key = f"{key}_box_amount", f"{key}_box_weight"
+    st.session_state.setdefault(unit_key, drafts.get(unit_key, "원/kg"))
+    unit = st.selectbox(f"{side}안 단가 단위", ["원/kg", "원/상자"], key=unit_key)
+    drafts[unit_key] = unit
+    if unit == "원/kg":
+        st.session_state.setdefault(key, drafts.get(key))
+        price = st.number_input(f"{side}안 가정 단가(원/kg)", min_value=0.0, value=None, key=key)
+        if price != drafts.get(key) and (weight := drafts.get(weight_key)):
+            drafts[amount_key] = float(Decimal(str(price)) * Decimal(str(weight))) if price is not None else None
+            st.session_state.pop(amount_key, None)
+        drafts[key] = price
+        return price
+
+    st.session_state.setdefault(amount_key, drafts.get(amount_key))
+    st.session_state.setdefault(weight_key, drafts.get(weight_key))
+    amount_col, weight_col = st.columns(2)
+    with amount_col:
+        amount = st.number_input(f"{side}안 상자당 가격(원)", min_value=0.0, value=None, key=amount_key)
+    with weight_col:
+        weight = st.number_input(f"{side}안 판매 상자 무게(kg)", min_value=0.001, max_value=1000.0,
+                                 value=None, format="%.3f", key=weight_key)
+    drafts[amount_key], drafts[weight_key] = amount, weight
+    if amount is None or weight is None:
+        st.caption("실제로 판매할 상자 한 개의 무게와 가격을 입력해 주세요.")
+        return None
+    price = float(BoxPrice(Decimal(str(amount)), side, Decimal(str(weight))).unit_price)
+    st.caption(f"{side}안 비교에는 {price:,.2f}원/kg을 적용해요.")
+    drafts[key] = price
+    return price
+
+
+def _period_loss(side, days, quantity, use_sale_weight):
     key = f"future_pair_{side}"
     period = f"{days}일" if days is not None else "기간"
-    loss = st.number_input(f"{side}안 {period} 전체 감모율(%)", min_value=0.0, max_value=MAX_RATE_PERCENT,
-                           value=None, key=f"{key}_loss_{days}", disabled=days is None)
-    st.caption("비슷한 기간 보관한 기록에서 줄어든 판매 가능 무게를 확인하세요. 100kg 중 4kg이 줄었으면 4를 입력하세요.")
+    drafts = st.session_state.setdefault("future_pair_loss_drafts", {})
+    previous = drafts.get((side, days))
+    if use_sale_weight:
+        weight_key = f"{key}_sale_weight_{days}"
+        ready = days is not None and quantity is not None and quantity > 0
+        retained_weight = float(Decimal(str(quantity)) * (1 - Decimal(str(previous)) / 100)) if ready and previous is not None else None
+        st.session_state.setdefault(weight_key, retained_weight)
+        sale_weight = st.number_input(f"{side}안 {period} 후 판매 가능량(kg)", min_value=0.0, value=None,
+                                      key=weight_key, disabled=not ready)
+        loss = None
+        if ready and sale_weight is not None:
+            rate = float((1 - Decimal(str(sale_weight)) / Decimal(str(quantity))) * 100)
+            if 0 <= rate <= MAX_RATE_PERCENT:
+                loss = previous if sale_weight == retained_weight else rate
+                st.caption(f"이 무게에 해당하는 기간 전체 감모율은 {loss:.4g}%예요.")
+            else:
+                st.warning("판매 가능량은 전체 물량을 넘을 수 없으며, 이 비교에는 판매할 수 있는 물량이 필요해요.")
+    else:
+        loss_key = f"{key}_loss_{days}"
+        st.session_state.setdefault(loss_key, previous)
+        loss = st.number_input(f"{side}안 {period} 전체 감모율(%)", min_value=0.0, max_value=MAX_RATE_PERCENT,
+                               value=None, key=loss_key, disabled=days is None)
+        st.caption("비슷한 기간 보관한 기록에서 줄어든 판매 가능 무게를 확인하세요. 100kg 중 4kg이 줄었으면 4를 입력하세요.")
+    drafts[side, days] = loss
+    return loss
+
+
+def _cost_fields(side, days, gross, quantity, use_sale_weight, shared=None):
+    key = f"future_pair_{side}"
+    loss = _period_loss(side, days, quantity, use_sale_weight)
     if shared is not None:
         return {**shared, "delay_days": days, "loss_percent": loss}
     storage = st.number_input(f"{side}안 전체 물량 하루 보관비(원)", min_value=0.0, value=None,
@@ -51,8 +141,10 @@ def _sync_inputs(state):
         st.session_state.future_pair_shared_costs = False
     st.session_state.future_pair_applied_shared_costs = st.session_state.get("future_pair_shared_costs", False)
     for key in list(st.session_state):
-        if key.startswith(("future_pair_A_loss_", "future_pair_B_loss_")):
+        if key.startswith(("future_pair_A_loss_", "future_pair_B_loss_",
+                           "future_pair_A_sale_weight_", "future_pair_B_sale_weight_")):
             del st.session_state[key]
+    st.session_state.future_pair_loss_drafts = {}
     st.session_state.future_pair_start = date.fromisoformat(values["start_date"]) if values["start_date"] else None
     st.session_state.future_pair_basis = {"gross": "수수료 차감 전", "commission_net": "수수료 차감 후"}.get(values["price_basis"])
     st.session_state.future_pair_price_mode = "과거 변동으로 가정" if values["history_filters"] is not None else "직접 입력"
@@ -60,6 +152,13 @@ def _sync_inputs(state):
         value = values[field]
         st.session_state[f"future_pair_{field}"] = float(value) if value is not None else None
     drafts = st.session_state.setdefault("future_pair_price_drafts", {})
+    st.session_state.pop("future_pair_quantity_tons", None)
+    for side in ("a", "b"):
+        prefix = f"future_pair_price_{side}_"
+        for suffix in ("unit", "box_amount", "box_weight"):
+            st.session_state.pop(prefix + suffix, None)
+            drafts.pop(prefix + suffix, None)
+    drafts["future_pair_price_a"] = st.session_state.future_pair_price_a
     if values["history_filters"] is None:
         value = values["price_b"]
         drafts["future_pair_price_b"] = float(value) if value is not None else None
@@ -74,10 +173,12 @@ def _sync_inputs(state):
         days = option["delay_days"]
         prefix = f"future_pair_{side}"
         st.session_state[f"{prefix}_days"] = days
+        st.session_state.pop(f"{prefix}_sale_date", None)
         for field, suffix in (("loss_percent", f"loss_{days}"), ("daily_storage_cost", "storage"),
                               ("other_cost_krw", "other"), ("fee_percent", "fee")):
             value = option[field]
             st.session_state[f"{prefix}_{suffix}"] = float(value) if value is not None else None
+        st.session_state.future_pair_loss_drafts[side, days] = st.session_state[f"{prefix}_loss_{days}"]
     st.session_state.future_pair_fee_drafts = {
         side: st.session_state[f"future_pair_{side}_fee"] for side in ("A", "B")
     }
@@ -106,6 +207,7 @@ def _open_input_section(section):
 
 def _switch_to_manual_price():
     st.session_state.future_pair_price_mode = "직접 입력"
+    st.session_state.future_pair_price_b_unit = "원/kg"
     st.session_state.future_pair_input_jump = "manual_price"
 
 
@@ -125,28 +227,32 @@ def _show_missing_inputs(result):
 
 def render_future_pair(state):
     synced = _sync_inputs(state)
+    previous = st.session_state.get("future_pair_card_inputs")
+    shown = state.inputs if synced else previous or state.inputs
     with st.container():
         st.caption("같은 물량을 두 출하일에 판매할 때의 금액을 비교합니다.")
         st.html('<span id="future-pair-basic" style="scroll-margin-top: 4rem"></span>')
-        quantity = st.number_input("비교 물량(kg)", min_value=0.0, value=None, key="future_pair_quantity")
+        quantity = _quantity(shown["quantity"])
         st.session_state.setdefault("future_pair_start", date.today())
         start = st.date_input("두 대안의 보관 시작일", value=None, key="future_pair_start")
         basis = st.selectbox("두 가정 단가의 수수료 기준", ["수수료 차감 전", "수수료 차감 후"],
                              index=None, key="future_pair_basis")
         st.caption("두 단가에 이미 판매 수수료를 뺀 금액을 쓰면 ‘수수료 차감 후’를 선택하세요.")
         gross = basis == "수수료 차감 전"
+        use_dates = st.radio("출하 일정 입력 방식", ["보관일로 입력", "출하일로 입력"], horizontal=True,
+                             key="future_pair_schedule_mode") == "출하일로 입력"
         left, right = st.columns(2)
         with left:
-            a_days = _storage_period("A", 3)
+            a_days = _storage_period("A", start, shown["option_a"]["delay_days"] if previous or synced else 3, use_dates)
         with right:
-            b_days = _storage_period("B", 10)
-        price_a = st.number_input("A안 가정 단가(원/kg)", min_value=0.0, value=None, key="future_pair_price_a")
+            b_days = _storage_period("B", start, shown["option_b"]["delay_days"] if previous or synced else 10, use_dates)
+        drafts = st.session_state.setdefault("future_pair_price_drafts", {})
+        price_a = _manual_price("A", drafts)
         st.session_state.setdefault("future_pair_price_mode", "직접 입력")
-        mode = st.radio("B안 가정 단가 입력 방식", ["과거 변동으로 가정", "직접 입력"], index=None,
+        mode = st.radio("B안 가정 단가 입력 방식", ["과거 변동으로 가정", "직접 입력", "손익분기만 보기"], index=None,
                         key="future_pair_price_mode")
         filters = None
         price_b = None
-        drafts = st.session_state.setdefault("future_pair_price_drafts", {})
         if mode == "과거 변동으로 가정":
             with st.expander("과거 가격의 거래규격 입력", key="future_pair_history_open", on_change="rerun"):
                 if a_days is not None and b_days is not None and b_days > a_days:
@@ -158,16 +264,19 @@ def render_future_pair(state):
                 for field in HISTORY_FIELDS:
                     widget_key = f"future_pair_filter_{field}"
                     drafts[widget_key] = filters.get(field, "")
-        else:
-            st.session_state.setdefault("future_pair_price_b", drafts.get("future_pair_price_b"))
-            price_b = st.number_input("B안 가정 단가(원/kg)", min_value=0.0, value=None, key="future_pair_price_b")
+        elif mode == "직접 입력":
+            price_b = _manual_price("B", drafts)
             st.caption("나중 출하가격을 모르면 비워 두세요. 다른 조건을 입력하면 나중 출하가 유리해지는 최소 가격을 계산해요.")
-            drafts["future_pair_price_b"] = price_b
             if warning := manual_price_warning(price_a, price_b):
                 st.warning(warning)
+        else:
+            st.caption("나중 출하 단가 없이, 먼저 출하할 때와 같아지는 최소 단가를 확인할 수 있어요.")
 
         with st.expander("감모율과 비용 입력", key="future_pair_costs_open", on_change="rerun"):
             st.caption("비용이 없다고 확인한 항목에는 0을 입력하세요. 모르는 값은 비워 두고 확인하세요.")
+            loss_mode = st.radio("보관 중 줄어드는 양의 입력 방식", ["감모율(%)", "판매 가능량(kg)"],
+                                 horizontal=True, key="future_pair_loss_mode")
+            use_sale_weight = loss_mode == "판매 가능량(kg)"
             same_costs = st.checkbox("A와 B의 하루 보관비·별도 비용·수수료율이 같아요",
                                      key="future_pair_shared_costs")
             if same_costs != st.session_state.get("future_pair_applied_shared_costs", False):
@@ -175,13 +284,13 @@ def render_future_pair(state):
                 st.session_state.future_pair_applied_shared_costs = same_costs
             left, right = st.columns(2)
             with left:
-                option_a = _cost_fields("A", a_days, gross)
+                option_a = _cost_fields("A", a_days, gross, quantity, use_sale_weight)
             with right:
                 shared = None
                 if same_costs:
                     shared = {field: option_a[field] for field in ("daily_storage_cost", "other_cost_krw", "fee_percent")}
                     st.caption("B안 비용에는 A안에 입력한 값을 적용합니다.")
-                option_b = _cost_fields("B", b_days, gross, shared=shared)
+                option_b = _cost_fields("B", b_days, gross, quantity, use_sale_weight, shared=shared)
 
         section = st.session_state.pop("future_pair_input_jump", None)
         if section in ("history", "costs", "manual_price"):
@@ -203,7 +312,6 @@ def render_future_pair(state):
         inputs = {"quantity": quantity, "price_basis": ("gross" if gross else "commission_net") if basis else None,
                   "start_date": start.isoformat() if start else None, "option_a": option_a, "option_b": option_b,
                   "price_a": price_a, "price_b": price_b, "history_filters": filters}
-        previous = st.session_state.get("future_pair_card_inputs")
         current = state.current_result()
         if not synced and previous is not None and inputs != previous:
             state.replace(inputs)
