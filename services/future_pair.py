@@ -108,12 +108,17 @@ def compare_future_pair_threshold_reference(*, quantity, price_basis, start_date
     def number(value):
         return fixed(value.normalize())
 
+    def optional_number(option, field, label):
+        """Serialize the same user value used by Decimal cost calculations."""
+        value = option.get(field)
+        return number(decimal(value, label)) if value is not None else None
+
     def row(name, days, sale_date, loss, fee, option, remaining, price, ref_amount=None):
         return {
             "id": name, "sale_date": sale_date, "delay_days": days,
             "loss_percent": number(loss * 100),
-            "daily_storage_cost": number(option["daily_storage_cost"]) if option.get("daily_storage_cost") is not None else None,
-            "other_cost_krw": number(option["other_cost_krw"]) if option.get("other_cost_krw") is not None else None,
+            "daily_storage_cost": optional_number(option, "daily_storage_cost", "하루 보관비"),
+            "other_cost_krw": optional_number(option, "other_cost_krw", "별도 비용"),
             "fee_percent": number(fee * 100) if price_basis == "gross" else None,
             "remaining_kg": number(remaining), "price_per_kg": number(price) if price is not None else None,
             "proceeds_krw": None, "difference_vs_a_krw": None,

@@ -137,6 +137,9 @@ def manual_price_warning(price_a, price_b):
     if a.is_finite() and b.is_finite() and a > 0 and b > a * 2:
         return (f"B안 직접 입력 단가({_number(b)}원/kg)가 A안({_number(a)}원/kg)의 2배를 넘습니다. "
                 "kg당 단가인지, 상자 가격이나 입력 자릿수가 섞이지 않았는지 확인해 주세요.")
+    if a.is_finite() and b.is_finite() and a > 0 and b >= 0 and b < a / 2:
+        return (f"B안 직접 입력 단가({_number(b)}원/kg)가 A안({_number(a)}원/kg)의 절반보다 낮습니다. "
+                "kg당 단가인지, 입력 자릿수가 빠지지 않았는지 확인해 주세요. 낮은 견적이 맞다면 그대로 비교할 수 있습니다.")
     return None
 
 

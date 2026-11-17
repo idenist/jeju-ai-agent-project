@@ -250,6 +250,13 @@ def _chat_basis_target(ws, reply):
                     and not pending.get("manual_price_required")):
                 return "future_pair", pair.version
             return None
+    pending = pair.pending or {}
+    if (pending.get("future_pair_version") == pair.version
+            and pending.get("status") == "NEEDS_INPUT"
+            and LABELS["price_basis"] in pending.get("missing_fields", ())
+            and pair.inputs["price_a"] is not None
+            and not pending.get("manual_price_required")):
+        return "future_pair", pair.version
     if reply.get("state", {}).get("version") == ws.store.version and ws.store.scenario["current_price_per_kg"] is not None:
         for entry in reply.get("visible_results", ()):
             result = entry["result"]
@@ -263,15 +270,25 @@ def _render_chat_basis(ws, messages):
     target = _chat_basis_target(ws, reply)
     if target is None:
         return
-    if any(message.get("reply", {}).get("deferred_basis") == target for message in messages):
+    deferred = any(message.get("reply", {}).get("deferred_basis") == target for message in messages)
+    reselection_key = f"basis_reselect_{target[0]}_{target[1]}"
+    if deferred and not st.session_state.get(reselection_key):
+        st.button("수수료 기준 다시 선택", key=f"{reselection_key}_button",
+                  on_click=_open_basis_reselection, args=(reselection_key,))
         return
     subject = "먼저 출하할 때 단가" if target[0] == "future_pair" else "지금 출하할 때 단가"
     answers = (f"{subject}는 수수료를 빼기 전 금액이에요.", f"{subject}는 수수료를 뺀 뒤 금액이에요.",
                "수수료를 뺀 뒤의 단가인지 잘 모르겠어요.")
+    choices = list(_BASIS_CHOICES.items())[:2] if deferred else list(_BASIS_CHOICES.items())
     with st.container(horizontal=True, gap="small", key="shipment_basis_choices"):
-        for (label, basis), answer in zip(_BASIS_CHOICES.items(), answers):
+        for (label, basis), answer in zip(choices, answers):
             st.button(label, key=f"chat_basis_{target[0]}_{target[1]}_{basis}",
                       on_click=_submit_shipment_question, args=(answer,), kwargs={"basis_choice": (*target, basis)})
+
+
+def _open_basis_reselection(key):
+    st.session_state[key] = True
+
 
 def _reply_to_chat_basis(ws, scope, version, basis, *, on_progress=None):
     pair = ws.session.future_pair
@@ -284,6 +301,7 @@ def _reply_to_chat_basis(ws, scope, version, basis, *, on_progress=None):
                 "기준을 확인하거나 계산을 위한 가정을 직접 정하면 이어서 비교할 수 있어요. "
                 "기준을 모르는 동안에는 이 단가로 총수취액을 계산할 수 없습니다.")
         return {"status": "OK", "state": ws.store.snapshot(), "text": text, "deferred_basis": (scope, version)}
+    st.session_state.pop(f"basis_reselect_{scope}_{version}", None)
     if scope == "future_pair":
         return _reply_to_future_pair_edit(ws, version, {"price_basis": basis}, on_progress=on_progress)
     ws.store.origin_turn_id = None
@@ -508,8 +526,14 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                     lambda report: _reply_to_chat_basis(ws, *choice, on_progress=report), started
                 )
             elif _REPORT_REQUEST.fullmatch(pending["content"]):
-                message = "방금 비교한 결과의 보고서입니다." if previous_report else "내려받을 최근 출하 비교 결과가 없습니다. 출하 조건을 비교한 뒤 다시 요청해 주세요."
-                reply = {"status": "OK", "text": message, "state": ws.store.snapshot(), "chat_report": previous_report}
+                report = previous_report
+                if report is None:
+                    economic = pair_state.current_result()
+                    if economic is not None:
+                        report = _chat_report(ws, {"visible_results": [{"tool": "compare_future_pair",
+                                                                          "result": economic}]})
+                message = "방금 비교한 결과의 보고서입니다." if report else "내려받을 최근 출하 비교 결과가 없습니다. 출하 조건을 비교한 뒤 다시 요청해 주세요."
+                reply = {"status": "OK", "text": message, "state": ws.store.snapshot(), "chat_report": report}
                 steps, elapsed = [], None
             else:
                 reply, steps, elapsed = _run_with_shipment_progress(

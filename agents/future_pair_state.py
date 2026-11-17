@@ -522,6 +522,8 @@ class FuturePairState:
         if status == "NO_CLEAN_COMPARISON":
             message = ("같은 규격의 과거 기록은 있지만 품질 기준을 통과한 가격쌍이 없어요. "
                        "나중 출하 단가를 직접 입력해 주세요.")
+        elif normalized == "NO_DATA":
+            message = "해당 기간의 과거 가격쌍이 없습니다. 나중 출하 단가를 직접 입력해 비교할 수 있어요."
         if status == "ERROR":
             normalized = "INVALID_INPUT" if result.get("error_kind") == "INVALID_INPUT" else "DATA_ERROR"
             if normalized == "INVALID_INPUT":
@@ -532,7 +534,7 @@ class FuturePairState:
                     "status": normalized, "source_status": status, "message": message}
         if result.get("choices"):
             response["choices"] = {field: choices[:8] for field, choices in result["choices"].items() if field in HISTORY_FIELDS}
-        if normalized == "DATA_ERROR":
+        if normalized in {"DATA_ERROR", "NO_DATA"}:
             response["manual_price_required"] = True
         return response
 

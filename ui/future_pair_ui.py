@@ -97,6 +97,10 @@ def _open_input_section(section):
     st.session_state.future_pair_input_jump = section
 
 
+def _switch_to_manual_price():
+    st.session_state.future_pair_price_mode = "직접 입력"
+
+
 def _show_missing_inputs(result):
     fields = set(result.get("missing_fields", ()))
     cost_fields = {f"{side}안 {label}" for side in ("A", "B")
@@ -215,6 +219,9 @@ def render_future_pair(state):
             result = pending
         if result["status"] != "OK":
             st.warning(future_pair_feedback(result))
+            if result.get("manual_price_required"):
+                st.button("나중 출하 단가 직접 입력", key="future_pair_use_manual_price",
+                          on_click=_switch_to_manual_price)
             if result["status"] == "NEEDS_INPUT":
                 _show_missing_inputs(result)
             return None
