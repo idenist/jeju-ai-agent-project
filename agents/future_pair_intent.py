@@ -136,6 +136,42 @@ def _calendar_day(match, default_year: int) -> date | None:
         return None
 
 
+def dated_shipment_query(question: str, today: date, varieties) -> dict | None:
+    """Resolve an explicit comparison of two calendar days of past shipment volume."""
+    if (not re.search(r"과거\s*(?:신고\s*)?출하량", question)
+            or not re.search(r"비교|조회|보여|봐\s*줘|알려", question)
+            or re.search(r"가격|단가|손익|감모|비용|보관비|수수료|정산|검산|시세|경락|예측|확률|보고서|pdf|"
+                         r"작년|재작년|올해|기존|방금|아까|바꿔|수정|말고|제외|하지\s*마|아니면|또는", question, re.I)):
+        return None
+    matched_varieties = [variety for variety in varieties if variety in question]
+    if len(matched_varieties) != 1:
+        return None
+    matches = list(_CALENDAR_DAY.finditer(question))
+    if len(matches) not in (1, 2):
+        return None
+    dates = [_calendar_day(match, today.year) for match in matches]
+    if dates[0] is not None and len(dates) == 1:
+        tail = question[matches[0].end():]
+        second = re.match(r"\s*(?:과|와|하고|랑|및|,)\s*(\d{1,2})\s*일", tail)
+        if second is None:
+            return None
+        try:
+            dates.append(dates[0].replace(day=int(second[1])))
+        except ValueError:
+            return None
+    if any(day is None or day.year < today.year for day in dates):
+        return None
+    # A separately stated source year must still constrain the model's lookup.
+    if any(not any(match.start() <= year.start() < match.end() for match in matches)
+           for year in re.finditer(r"\d{4}\s*년", question)):
+        return None
+    earlier, later = sorted(dates)
+    if not 1 <= (later - earlier).days <= 365:
+        return None
+    return {"shipment_variety": matched_varieties[0], "option_a_date": earlier.isoformat(),
+            "option_b_date": later.isoformat()}
+
+
 def is_future_pair_request(question: str, today: date) -> bool:
     text = question.casefold()
     if not shipment_choice_question(text):

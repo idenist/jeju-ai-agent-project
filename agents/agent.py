@@ -237,6 +237,17 @@ class AgentSession:
             return {"status": "KEY_REQUIRED", "text": "프로젝트 .env에 OPENAI_API_KEY를 입력하세요. 직접 조건 비교와 과거 출하통계는 키 없이 사용할 수 있습니다.",
                     "tool_results": [], "events": [], "state": self.store.snapshot()}
         today = kst_today()
+        from agents.future_pair_intent import dated_shipment_query
+        from services.shipment_timing import CATEGORIES
+        if timing_args := dated_shipment_query(question, today, CATEGORIES):
+            result = execute_tool("analyze_shipment_timing", timing_args, self.store,
+                                  future_pair=self.future_pair, on_progress=on_progress)
+            entry = {"tool": "analyze_shipment_timing", "result": result}
+            self.task_context.record(entry["tool"], timing_args, result, scenario=self.store.scenario)
+            return {"status": "OK", "text": render_dialogue([entry], question=question),
+                    "report": report_for([entry]), "tool_results": [entry], "visible_results": [entry],
+                    "events": [], "state": self.store.snapshot(),
+                    "metrics": {"model_requests": 0, "dialogue_route": "dated_shipment_lookup"}}
         new_comparison = starts_new_comparison(question)
         if new_comparison:
             self.future_pair.cancel_shipment_window()
@@ -292,7 +303,9 @@ class AgentSession:
                     "visible_results": [entry], "events": [],
                     "state": self.store.snapshot(), "metrics": {"model_requests": 0}}
         if not new_comparison:
-            direct = self.future_pair.apply_short_answer(question, on_progress=on_progress)
+            direct = self.future_pair.apply_explicit_pair_prices(question, on_progress=on_progress)
+            if direct is None:
+                direct = self.future_pair.apply_short_answer(question, on_progress=on_progress)
             if direct is not None:
                 entry = {"tool": "compare_future_pair", "result": direct}
                 return {"status": "OK", "text": render_dialogue([entry], question=question),
@@ -434,11 +447,14 @@ class AgentSession:
                 metrics["model_requests"] += 1
                 request_started = time.monotonic()
                 client = self.client.with_options(timeout=min(30, remaining), max_retries=0) if hasattr(self.client, "with_options") else self.client
+                tool_choice = "auto"
+                if future_pair_route and has_box_price and metrics["model_requests"] == 1:
+                    tool_choice = {"type": "function", "name": "compare_future_pair"}
                 try:
                     response = client.responses.create(
                         model=settings.model, instructions=instructions, input=deepcopy(model_messages),
                         tools=offered_tools,
-                        tool_choice="auto",
+                        tool_choice=tool_choice,
                         parallel_tool_calls=False,
                         store=False, max_output_tokens=4000,
                     )

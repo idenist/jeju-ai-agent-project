@@ -631,10 +631,14 @@ class FuturePairState:
         """Field asked in the latest manual A/B clarification, if still pending."""
         pending = self.pending or {}
         if (self.box_price is not None or pending.get("status") != "NEEDS_INPUT"
-                or not pending.get("comparison_inputs_pending")):
+                or not pending.get("comparison_inputs_pending") or self.costs_deferred or self.specs_deferred):
             return None
         fields = pending.get("missing_fields", ())
-        return next_pair_field(fields) if len(fields) == 1 else None
+        # Historical previews display a list of remaining conditions. Bare values
+        # are safe there only if one field is left. Manual comparison asks one.
+        if pending.get("history_preview") and len(fields) != 1:
+            return None
+        return next_pair_field(fields)
 
     def apply_short_answer(self, question, *, on_progress=None):
         """Atomic local continuation; None means leave interpretation to the model."""
@@ -643,6 +647,27 @@ class FuturePairState:
         if patch is None:
             return None
         return self.apply("edit", self.version, patch, on_progress=on_progress)
+
+    def apply_explicit_pair_prices(self, question, *, on_progress=None):
+        """Use two explicitly labelled kg quotes to continue an active comparison."""
+        if (self.pending is None or self.box_price is not None
+                or any(option["delay_days"] is None for option in (self.inputs["option_a"], self.inputs["option_b"]))):
+            return None
+        parts = re.split(r"[,\n]\s*(?=[AB]\s*안)", question.strip(), flags=re.I)
+        if len(parts) != 2:
+            return None
+        prices = {}
+        for part in parts:
+            side = re.match(r"([AB])\s*안", part, re.I)
+            if side is None or "원" not in part:
+                return None
+            field = f"price_{side[1].lower()}"
+            if (price := _simple_slot_patch(LABELS[field], part)) is None:
+                return None
+            prices.update(price)
+        if len(prices) != 2:
+            return None
+        return self.apply("edit", self.version, {**prices, "price_mode": "manual"}, on_progress=on_progress)
 
     def cancel_shipment_window(self):
         if self.shipment_window is not None and self.shipment_window.version == self.version:
