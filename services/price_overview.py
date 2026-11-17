@@ -6,9 +6,7 @@ Keep markets and variety codes separate; weight by traded kg, never by row count
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
-from pathlib import Path
-
-from services.seasonal_prices import PROJECT_ROOT, SEASONS, _snapshot
+from services.seasonal_prices import PROJECT_ROOT, SEASONS, _snapshot, season_price_file
 
 FILTERS = ("market", "variety", "grade", "size", "package", "package_kg")
 SOURCE = {"dataset": "전국 공영도매시장 경매원천정보 · 제주산 감귤 시즌별 집계",
@@ -51,7 +49,7 @@ def get_price_overview(query, *, root=PROJECT_ROOT):
     rows, sources, seen = [], [], set()
     try:
         for season in SEASONS:
-            path = Path(root) / "data" / "seasons" / season / "daily_prices.csv"
+            path = season_price_file(root, season)
             if not path.is_file():
                 continue
             snapshot = _snapshot(path)

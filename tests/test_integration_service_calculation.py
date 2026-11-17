@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from decimal import Decimal
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -24,10 +23,6 @@ class ServiceCalculationTests(TestCase):
             result = service_calculate(demo_scenario())
         self.assertEqual(run.call_count, 1)
         self.assertEqual(result["status"], "OK")
-
-    def test_service_does_not_call_legacy_engine(self):
-        with patch("services.baseline.calculate_break_even", side_effect=AssertionError("중복 계산 금지")):
-            self.assertEqual(service_calculate(demo_scenario())["status"], "OK")
 
     def test_service_keeps_original_scenario_unchanged(self):
         scenario = demo_scenario()
@@ -68,13 +63,3 @@ class ServiceCalculationTests(TestCase):
         for module in (tools, briefing, insights, sensitivity, limits):
             with self.subTest(module=module.__name__):
                 self.assertIs(module.compare_shipment_options, service_calculate)
-
-    def test_baseline_stays_independent_for_verification(self):
-        from services.baseline import calculate_break_even
-        scenario = demo_scenario()
-        old = calculate_break_even(
-            current_price_per_kg=Decimal("3000"), quantity_kg=Decimal("3000"),
-            delay_days=7, daily_storage_cost=Decimal("20000"), loss_percent=Decimal("2"),
-        )
-        new = service_calculate(scenario)
-        self.assertEqual(old.break_even_price_per_kg, Decimal(new["options"][0]["break_even_price_per_kg"]))

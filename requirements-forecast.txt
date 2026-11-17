@@ -1,7 +1,0 @@
-# Optional dependencies for the isolated price-forecast experiment.
-# The scikit-learn version is part of the serialized model contract.
-numpy==2.5.4
-scipy==1.18.1
-scikit-learn==1.9.1
-joblib==1.6.0
-threadpoolctl==3.8.0

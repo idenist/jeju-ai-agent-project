@@ -9,13 +9,11 @@ import hashlib
 import json
 from datetime import date
 from decimal import Decimal
-from pathlib import Path
-
 import streamlit as st
 from services.market_decision import (
     evaluate_market_decision, market_query_from_explicit_selection,
 )
-from services.seasonal_prices import PROJECT_ROOT, SEASONS
+from services.seasonal_prices import seasonal_price_revision
 
 FIELDS = ("market_code", "variety", "grade", "size", "package", "package_kg", "trade_type")
 LABELS = ("시장", "품종", "등급", "크기", "포장", "상자중량(kg)", "거래방식")
@@ -28,19 +26,6 @@ STATUSES = {
 
 def _fmt(value, digits=1):
     return f"{Decimal(str(value)):,.{digits}f}" if value is not None else "-"
-
-
-def _source_stamp(root: Path = PROJECT_ROOT):
-    """Invalidate prior market evidence when season CSV files change."""
-    signature = []
-    for season in SEASONS:
-        path = Path(root) / "data/seasons" / season / "daily_prices.csv"
-        try:
-            stat = path.stat()
-            signature.append((season, stat.st_size, stat.st_mtime_ns))
-        except FileNotFoundError:
-            signature.append((season, None, None))
-    return signature
 
 
 def _fmt_spec(spec):
@@ -182,7 +167,7 @@ def render_threshold_evidence(pair_result: dict, location: str):
         # Cached by economics + explicit spec + local season-file revision. The
         # default-price assumptions are never treated as actual auction evidence.
         key = hashlib.sha256(json.dumps({
-            "pair": pair_result, "spec": spec, "sources": _source_stamp(),
+            "pair": pair_result, "spec": spec, "sources": seasonal_price_revision(),
         }, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
         cache_key = f"market_decision_result_{location}"
         cached = st.session_state.get(cache_key)

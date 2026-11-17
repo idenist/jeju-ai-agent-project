@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from services.seasonal_threshold import compare_break_even_to_history
+from services.seasonal_prices import compare_break_even_to_history
 
 QUERY = {
     "market_code": "110001",

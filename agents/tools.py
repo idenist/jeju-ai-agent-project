@@ -242,8 +242,8 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
         return {"status": "DATA_ERROR", "message": "자료 파일과 계산 입력을 확인하세요."}
 
 
-def model_receipt_for_tool(name: str, result: dict, *, experimental_forecast: bool = False) -> dict:
-    """Expose tool evidence while keeping settlement and research amounts local."""
+def model_receipt_for_tool(name: str, result: dict) -> dict:
+    """Expose tool evidence while keeping settlement amounts local."""
     model_output = result
     if name == 'reconcile_settlement':
         from services.settlement import model_receipt
@@ -253,10 +253,6 @@ def model_receipt_for_tool(name: str, result: dict, *, experimental_forecast: bo
             "status", "source_status", "message", "missing_fields", "choices",
             "manual_price_required", "future_pair_version",
         ) if key in result}
-    elif name == "compare_experimental_forecast" and experimental_forecast:
-        # [근거 격리] 연구용 예측가격·손익은 LLM에게 재전송하지 않습니다.
-        from experiments.forecast_agent import model_receipt
-        model_output = model_receipt(result)
     elif name == "get_price_history":
         from services.price_history_service import price_history_model_receipt
         model_output = price_history_model_receipt(result)

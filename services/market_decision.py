@@ -11,7 +11,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from services.seasonal_prices import FILTERS, PROJECT_ROOT
-from services.seasonal_threshold import compare_break_even_to_history
+from services.seasonal_prices import compare_break_even_to_history
 
 
 def _error(status, message):

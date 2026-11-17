@@ -105,10 +105,11 @@ class NavigationAndAdminTests(unittest.TestCase):
 class SeasonalViewTests(unittest.TestCase):
     def test_changed_source_hides_old_result(self):
         with patch("ui.seasonal_prices_ui.render_market_spec_controls", return_value=(SPEC, True)), \
-             patch("ui.seasonal_prices_ui._source_stamp", return_value=["old"]) as stamp, \
-             patch("ui.seasonal_prices_ui.compare_seasonal_prices", return_value={"status": "OK", "seasons": []}):
+             patch("ui.seasonal_prices_ui.seasonal_price_revision", return_value=["old"]) as stamp, \
+             patch("ui.seasonal_prices_ui.compare_seasonal_prices", return_value={"status": "PARTIAL_DATA", "seasons": []}):
             app = AppTest.from_string("from ui.seasonal_prices_ui import render_seasonal_prices\nrender_seasonal_prices()").run()
             app.button(key="seasonal_prices_submit").click().run()
+            self.assertFalse(app.exception)
             self.assertTrue(app.session_state.seasonal_prices_result)
             stamp.return_value = ["changed"]
             app.run()

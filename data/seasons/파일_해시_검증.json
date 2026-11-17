@@ -1,5 +1,5 @@
 {
-  "title": "제주 감귤 데이터 인수본 V2",
+  "title": "제주 감귤 시즌별 가공 데이터 인수 해시",
   "created_date": "2026-11-13",
   "input_archive": "seunghyuk.zip",
   "checks": {
@@ -16,23 +16,10 @@
       "comparison_attempts": 18069,
       "source_sha256": "ff0a14316380f3887b91f8426b41d29b60308a732a45317bf2f236393cbe8551",
       "status": "PASS"
-    },
-    "train": {
-      "records": 2612,
-      "status": "PASS"
-    },
-    "validation": {
-      "records": 2218,
-      "status": "PASS"
-    },
-    "evaluation": {
-      "records": 564,
-      "status": "PASS"
     }
   },
   "no_shared_data_modified": true,
   "includes_raw_trades": false,
-  "package_layout": "프로젝트 루트에 압축 해제: data/seasons/",
   "files": {
     "2024-2025/daily_prices.csv": {
       "source_in_uploaded_zip": "seunghyuk/경매_시즌_2024-10_2025-02_통합/processed/daily_prices.csv",
@@ -123,51 +110,6 @@
       "source_in_uploaded_zip": "seunghyuk/경매_시즌_2025-10_2026-02_통합/시즌통합_검증.md",
       "sha256": "3f69d933a69531990595b70ffe80bb9657b9ef56e6c7ecc7cf12c63604d57433",
       "bytes": 1441
-    },
-    "prediction_v2/2024-2025_train.csv": {
-      "source_in_uploaded_zip": "seunghyuk/출하시즌_예측평가_데이터계약_v2/2024-2025_train.csv",
-      "sha256": "17c37c4d0b5dd90cc8fafa48efcae2b46101de74757f3bd4302c11b41164aa74",
-      "bytes": 438642
-    },
-    "prediction_v2/2025-2026_validation.csv": {
-      "source_in_uploaded_zip": "seunghyuk/출하시즌_예측평가_데이터계약_v2/2025-2026_validation.csv",
-      "sha256": "db9a33c206829e7c0035679e4fc01f1a3de73d854ce016d07b51554cdccf89d9",
-      "bytes": 383406
-    },
-    "prediction_v2/2026-2027_partial_evaluation.csv": {
-      "source_in_uploaded_zip": "seunghyuk/출하시즌_예측평가_데이터계약_v2/2026-2027_partial_evaluation.csv",
-      "sha256": "b29ab2a874157d59a1bc5394835a76daa1d8fd98adaec9ceaf9d2d4703106cde",
-      "bytes": 97039
-    },
-    "prediction_v2/데이터계약_v2.json": {
-      "source_in_uploaded_zip": "seunghyuk/출하시즌_예측평가_데이터계약_v2/데이터계약_v2.json",
-      "sha256": "127ef4486148b67230f6e436fc8f92cffd0b6408671f26b8a84beb20fb79fe09",
-      "bytes": 19289
-    },
-    "prediction_v2/데이터계약_점검_v2.md": {
-      "source_in_uploaded_zip": "seunghyuk/출하시즌_예측평가_데이터계약_v2/데이터계약_점검_v2.md",
-      "sha256": "755177b4db332f119398b4106faa6b2f2cf104cdad7b18ef122cae4355485412",
-      "bytes": 4422
-    },
-    "analysis/공통규격_관측현황.csv": {
-      "source_in_uploaded_zip": "seunghyuk/두시즌_공통규격_품질분석/공통규격_관측현황.csv",
-      "sha256": "941e41cca11203cb8cea7a7cd9b314651d4b00f48dad6088598eccc8d8acd93f",
-      "bytes": 102544
-    },
-    "analysis/공통규격_품질분석.json": {
-      "source_in_uploaded_zip": "seunghyuk/두시즌_공통규격_품질분석/공통규격_품질분석.json",
-      "sha256": "f357c1ac70ca4f60b8800f62b7fec124168d664c987716962bfebea06e22e6a6",
-      "bytes": 8703
-    },
-    "analysis/공통규격_품질분석.md": {
-      "source_in_uploaded_zip": "seunghyuk/두시즌_공통규격_품질분석/공통규격_품질분석.md",
-      "sha256": "bfd6342c0c950143a1cfcb03f879a82a335db2117b0e3518397de8b6cd39e5de",
-      "bytes": 5194
-    },
-    "README_먼저읽기.md": {
-      "source_in_uploaded_zip": "generated_for_handoff",
-      "sha256": "140f77163e69dba2352a8984442066dfc688107975deb84c2af14a55f24d968f",
-      "bytes": 4240
     }
   }
 }

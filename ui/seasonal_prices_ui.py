@@ -4,9 +4,8 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 import streamlit as st
-from services.seasonal_prices import compare_seasonal_prices
+from services.seasonal_prices import compare_seasonal_prices, seasonal_price_revision
 from ui.market_inputs import render_market_spec_controls
-from ui.seasonal_threshold_ui import _source_stamp
 
 
 def render_seasonal_prices():
@@ -20,7 +19,7 @@ def render_seasonal_prices():
                                     format_func=lambda x: "해당 날짜만" if x == 0 else f"±{x}일",
                                     key="seasonal_prices_window")
         query = {**selection, "month_day": day.strftime("%m-%d"), "window_days": window}
-        sources = _source_stamp()
+        sources = seasonal_price_revision()
         previous = st.session_state.get("seasonal_prices_submitted_query")
         if previous is not None and (previous != query or st.session_state.get("seasonal_prices_sources") != sources):
             st.session_state.pop("seasonal_prices_result", None)
@@ -35,7 +34,7 @@ def render_seasonal_prices():
         result = st.session_state.get("seasonal_prices_result")
         if not result:
             return
-        if result["status"] not in {"OK", "NO_DATA"}:
+        if result["status"] not in {"OK", "NO_DATA", "PARTIAL_DATA"}:
             st.warning(result["message"])
             return
         if result["status"] == "NO_DATA":
