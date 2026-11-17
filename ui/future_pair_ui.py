@@ -1,5 +1,4 @@
 """Direct-entry view for comparing two future shipment dates."""
-import json
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -347,7 +346,7 @@ def render_future_pair(state):
         return result
 
 
-def render_future_pair_result(result, location, *, report_json=None):
+def render_future_pair_result(result, location):
     # Build the market record before creating download payloads. The market panel
     # refreshes its local cache when A/B inputs, trade specs, or season files change.
     from presenters.market_export import export_market_record, report_entries
@@ -364,14 +363,14 @@ def render_future_pair_result(result, location, *, report_json=None):
             with st.expander("보고서 미리보기"):
                 st.markdown(render_report(entries))
             with st.expander("상세 · JSON"):
-                _render_future_pair_json(result, location, report_json, market_result=market)
+                _render_future_pair_json(result, location, market)
     else:
         st.markdown(render_report(base_entries))
         render_threshold_evidence(result, location)
         market = export_market_record(result, st.session_state.get(f"market_decision_latest_{location}"))
         entries = report_entries(result, market)
         _render_future_pair_pdf(entries, location)
-        _render_future_pair_json(result, location, market_result=market)
+        _render_future_pair_json(result, location, market)
 
 
 def _render_future_pair_pdf(entries, location):
@@ -384,12 +383,10 @@ def _render_future_pair_pdf(entries, location):
                            key=f"future_pair_pdf_{location}", on_click="ignore")
 
 
-def _render_future_pair_json(result, location, content=None, *, market_result=None):
-    if market_result is not None:
-        from presenters.market_export import export_json
-        content = export_json(result, market_result, content)
-    elif content is None:
-        content = json.dumps({"format": "jeju-future-pair", "version": 1, "result": result}, ensure_ascii=False, indent=2)
-    st.caption("계산 결과를 남기는 파일입니다. 비교 조건을 불러올 때는 사이드바에서 저장한 비교 파일을 사용하세요.")
+def _render_future_pair_json(result, location, market_result):
+    from presenters.market_export import export_json
+
+    content = export_json(result, market_result)
+    st.caption("결과 JSON은 당시 계산을 보관합니다. 비교 조건은 사이드바에서 따로 저장할 수 있어요.")
     st.download_button("미래 A/B 결과 JSON 내려받기", content, "미래출하비교.json", "application/json",
                        key=f"future_pair_json_{location}", on_click="ignore")

@@ -352,16 +352,19 @@ def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b
     cost_b = Decimal(result_b["options"][0]["total_cost_krw"])
     threshold = max(Decimal(0), (a_amount + cost_b) / (remaining_b * (1 - fee_b)))
 
-    def row(result, option, other_cost, sale_date):
-        def number(value):
-            return fixed(Decimal(str(value)).normalize()) if value is not None else None
+    def number(value):
+        if value is None:
+            return None
+        text = fixed(Decimal(str(value)))
+        return text.rstrip("0").rstrip(".") if "." in text else text
 
+    def row(result, option, other_cost, sale_date):
         return {"id": result["id"], "sale_date": sale_date, "delay_days": result["delay_days"],
                 "loss_percent": number(option["loss_percent"]), "daily_storage_cost": number(option["daily_storage_cost"]),
                 "other_cost_krw": number(other_cost), "fee_percent": number(option.get("fee_percent")),
-                "remaining_kg": result["remaining_kg"], "total_cost_krw": result["total_cost_krw"],
+                "remaining_kg": number(result["remaining_kg"]), "total_cost_krw": number(result["total_cost_krw"]),
                 "price_per_kg": number(option["future_price_per_kg"]),
-                "proceeds_krw": result["hypothetical_proceeds_krw"]}
+                "proceeds_krw": number(result["hypothetical_proceeds_krw"])}
 
     return {"status": "OK", "analysis_type": "future_pair", "quantity_kg": quantity, "price_basis": price_basis,
             "start_date": start_date, "interval_days": days_b - days_a, "evidence": evidence,

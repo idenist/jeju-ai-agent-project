@@ -161,8 +161,39 @@ class WorkspaceTests(unittest.TestCase):
 
         for phrase in ("방금 비교 PDF로 줘", "아까 출하 비교 보고서로 주세요", "비교 결과를 프린트할 수 있게 줘"):
             self.assertIn("비교", _REPORT_REQUEST.fullmatch(phrase)["target"])
+        self.assertIsNone(_REPORT_REQUEST.fullmatch("인쇄할 수 있게 줘")["target"])
+        self.assertIn("출하량", _REPORT_REQUEST.fullmatch("과거 출하량을 인쇄할 수 있게 주세요")["target"])
         self.assertIn("출하량", _REPORT_REQUEST.fullmatch("과거 출하량 PDF로 줘")["target"])
         self.assertIsNone(_REPORT_REQUEST.fullmatch("11월 23일 과거 출하량 PDF로 줘"))
+
+    def test_pending_future_pair_report_does_not_fall_back_to_an_earlier_ordinary_report(self):
+        from ui.chat import _chat_report, _current_comparison_report, _requested_chat_report
+
+        ws = self.workspace()
+        ws.load_demo()
+        pair = ws.session.future_pair
+        initial = pair.apply("new", pair.version, {
+            "start_date": "2026-11-20", "quantity": 3000, "price_basis": "gross",
+            "price_a": 2500, "price_b": 2750,
+            "option_a": {"delay_days": 3, "loss_percent": 1, "daily_storage_cost": 10000,
+                         "other_cost_krw": 5000, "fee_percent": 5},
+            "option_b": {"delay_days": 10, "loss_percent": 4, "daily_storage_cost": 10000,
+                         "other_cost_krw": 5000, "fee_percent": 7},
+        })
+        initial_reply = {"visible_results": [{"tool": "compare_future_pair", "result": initial}]}
+        messages = [{"reply": {**initial_reply, "chat_report": _chat_report(ws, initial_reply)}}]
+        edit = pair.apply("edit", pair.version, {"option_b": {"delay_days": 17}})
+        self.assertEqual(edit["status"], "NEEDS_INPUT")
+        messages.append({"reply": {"visible_results": [{"tool": "compare_future_pair", "result": edit}]}})
+        self.assertIsNotNone(_current_comparison_report(ws))
+        self.assertIsNone(_requested_chat_report(ws, messages))
+        self.assertIsNone(_requested_chat_report(ws, messages, "comparison"))
+
+        pair.apply("edit", pair.version, {"option_b": {"loss_percent": 6}})
+        report = _requested_chat_report(ws, messages)
+        result = report["entries"][0]["result"]
+        self.assertEqual(result["option_a"], initial["option_a"])
+        self.assertEqual(result["options_b"][0]["sale_date"], "2026-12-07")
 
     def test_data_refresh_chat_clear_preserves_conditions_and_discards_exports(self):
         ws = self.workspace()

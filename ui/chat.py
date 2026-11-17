@@ -1,7 +1,6 @@
 """Shared conversational/card workspace. CSV tools and PDF work without a model key."""
 from __future__ import annotations
 
-import json
 import re
 from time import monotonic, time
 from datetime import date, timedelta
@@ -15,12 +14,12 @@ from services.task_context import data_revision
 _REPORT_FORMAT = (
     r"\s*(?:결과)?\s*(?:를|을)?\s*"
     r"(?:보고서\s*(?:로|를)?\s*)?"
-    r"(?:(?:pdf|피디에프)\s*(?:파일)?\s*(?:로|를)?|프린트할\s*수\s*있게|보고서\s*(?:로|를)?)\s*"
+    r"(?:(?:pdf|피디에프)\s*(?:파일)?\s*(?:로|를)?|(?:프린트|인쇄)\s*할\s*수\s*있게|보고서\s*(?:로|를)?)\s*"
     r"(?:다시\s*)?(?:줘(?:요)?|주세요|보여\s*줘(?:요)?|보여\s*주세요|받을\s*수\s*있나요|다운로드)?[.!?\s]*"
 )
 _REPORT_REQUEST = re.compile(
     r"(?:(?:방금|아까|직전|마지막|최근)\s*(?:한\s*)?)?"
-    r"(?P<target>(?:출하\s*)?비교|(?:과거\s*)?출하량\s*(?:비교|분석)?)" + _REPORT_FORMAT,
+    r"(?P<target>(?:출하\s*)?비교|(?:과거\s*)?출하량\s*(?:비교|분석)?)?" + _REPORT_FORMAT,
     re.IGNORECASE,
 )
 _BASIS_CHOICES = {"빼기 전": "gross", "뺀 뒤": "commission_net", "잘 모르겠어요": None}
@@ -380,12 +379,16 @@ def _chat_report(ws, reply):
                    entry.get("result", {}).get("status") in {"OK", "INSUFFICIENT_DATA"}), None)
     if timing is not None:
         from services.shipment_timing_bundle import report_entries, json_from_entries, source_fingerprint
+        fingerprint = source_fingerprint()
+        source = timing["source"]
+        if fingerprint != (source["data_sha256"], source.get("quality_report_sha256")):
+            return None
         economic = ws.session.future_pair.current_result()
         entries = report_entries(timing, economic)
         return {"kind": "shipment_timing", "version": ws.store.version,
                 "pair_version": ws.session.future_pair.version,
                 "source_sha256": timing["source"]["data_sha256"],
-                "source_fingerprint": source_fingerprint(),
+                "source_fingerprint": fingerprint,
                 "entries": entries, "json": json_from_entries(entries)}
     pair = _chat_pair(reply)
     if pair is not None:
@@ -396,8 +399,6 @@ def _chat_report(ws, reply):
         return {
             "kind": "future_pair", "version": pair["future_pair_version"],
             "entries": [{"tool": "compare_future_pair", "result": result}],
-            "json": json.dumps({"format": "jeju-future-pair", "version": 1, "result": result},
-                               ensure_ascii=False, indent=2),
         }
     if not any(item["tool"] == "compare_shipment_options" and item["result"]["status"] == "OK"
                for item in reply.get("visible_results", [])):
@@ -427,7 +428,7 @@ def _latest_chat_report(messages, version, current_pair, pair_version=None, *, t
             if (target == "timing" and not timing) or (target == "comparison" and timing and economic is None):
                 continue
             if report["kind"] == "future_pair":
-                current = current_pair == report["entries"][0]["result"]
+                current = report["version"] == pair_version and current_pair == report["entries"][0]["result"]
             elif timing:
                 from services.shipment_timing_bundle import source_fingerprint
                 current = (version == report["version"] and pair_version == report["pair_version"]
@@ -442,13 +443,33 @@ def _latest_chat_report(messages, version, current_pair, pair_version=None, *, t
             break
     return None, None
 
+def _requested_chat_report(ws, messages, target=None):
+    pair = ws.session.future_pair
+    economic = pair.current_result()
+    _, report = _latest_chat_report(messages, ws.store.version, economic, pair.version, target=target)
+    if report is not None or target == "timing":
+        return report
+    if economic is not None:
+        return _chat_report(ws, {"visible_results": [{"tool": "compare_future_pair",
+            "result": {**economic, "future_pair_version": pair.version}}]})
+    latest_comparison = next((
+        entry["tool"] for message in reversed(messages)
+        for entry in reversed(message.get("reply", {}).get("visible_results", ()))
+        if entry["tool"] in {"compare_shipment_options", "compare_future_pair"}
+    ), None)
+    if latest_comparison == "compare_future_pair" or (latest_comparison is None and pair.pending is not None):
+        # A pending A/B comparison cannot be replaced by an earlier ordinary calculation.
+        return None
+    return _current_comparison_report(ws)
+
+
 def _render_chat_report(report):
     if report["kind"] == "shipment_timing":
         from ui.shipment_timing_ui import render_integrated_chat_report
         render_integrated_chat_report(report)
     elif report["kind"] == "future_pair":
         from ui.future_pair_ui import render_future_pair_result
-        render_future_pair_result(report["entries"][0]["result"], "chat", report_json=report["json"])
+        render_future_pair_result(report["entries"][0]["result"], "chat")
     else:
         _render_report(report["entries"], chat_json=report["json"])
 
@@ -549,18 +570,11 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                     lambda report: _reply_to_chat_basis(ws, *choice, on_progress=report), started
                 )
             elif request := _REPORT_REQUEST.fullmatch(pending["content"]):
-                target = "timing" if "출하량" in request["target"] else "comparison"
-                _, report = _latest_chat_report(
-                    messages, ws.store.version, pair_state.current_result(), pair_state.version, target=target
-                )
-                if report is None and target == "comparison":
-                    economic = pair_state.current_result()
-                    if economic is not None:
-                        report = _chat_report(ws, {"visible_results": [{"tool": "compare_future_pair",
-                                                                          "result": economic}]})
-                    else:
-                        report = _current_comparison_report(ws)
-                if target == "timing":
+                subject = request["target"]
+                target = ("timing" if "출하량" in subject else "comparison") if subject else None
+                report = _requested_chat_report(ws, messages, target)
+                if target == "timing" or (target is None and report and report["kind"] == "shipment_timing"
+                                          and len(report["entries"]) == 1):
                     message = ("최근 과거 출하량 조회 보고서입니다." if report
                                else "내려받을 과거 출하량 조회 결과가 없어요. 품종과 비교할 날짜를 알려주시면 조회할게요.")
                 else:

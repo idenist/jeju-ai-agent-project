@@ -507,10 +507,11 @@ class FuturePairState:
                            or (revision is not None and revision != price_revision())):
             return self._response("DATA_ERROR", "조회 중 가격 자료가 바뀌었습니다. B안 단가를 직접 입력할 수 있습니다.",
                                   manual_price_required=True)
+        result = {**result, "analysis_type": "future_pair", "future_pair_version": self.version}
         if result["status"] == "OK":
             self.result = deepcopy(result)
             self.source_revision = revision
-        return self._agent_result({**result, "analysis_type": "future_pair", "future_pair_version": self.version})
+        return self._agent_result(result)
 
     def _preview_history(self, missing, on_progress):
         start = self.inputs["start_date"]

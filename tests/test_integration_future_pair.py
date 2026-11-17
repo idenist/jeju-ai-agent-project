@@ -21,6 +21,17 @@ COMMON = {"quantity": 3000, "price_basis": "gross", "start_date": "2026-11-12", 
 
 
 class FuturePairTests(unittest.TestCase):
+    def test_b_date_change_keeps_a_json_numbers_across_equivalent_cost_types(self):
+        original = compare_future_pair(**COMMON, option_b=OPTION_B, price_b=2750)
+        updated = compare_future_pair(
+            **{**COMMON, "option_a": {**OPTION_A, "daily_storage_cost": 10000.0, "other_cost_krw": 5000.0}},
+            option_b={**OPTION_B, "delay_days": 17, "loss_percent": 6}, price_b=2750,
+        )
+        self.assertEqual(updated["option_a"], original["option_a"])
+        self.assertEqual(updated["option_a"]["total_cost_krw"], "35000")
+        self.assertEqual(updated["option_a"]["proceeds_krw"], "7018750")
+        self.assertEqual(updated["options_b"][0]["delay_days"], 17)
+
     def test_explicit_later_storage_edit_rechecks_history_without_touching_a(self):
         from agents.agent import AgentSession
         from agents.future_pair_intent import explicit_later_storage_period
