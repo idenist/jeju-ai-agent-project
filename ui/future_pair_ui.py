@@ -29,14 +29,11 @@ def _storage_period(side, start, default_days, use_dates):
 
 
 def _quantity(previous):
-    field, unit = st.columns([3, 2])
-    with unit:
-        tons = st.selectbox("물량 단위", ["kg", "톤"], key="future_pair_quantity_unit") == "톤"
+    tons = st.session_state.get("future_pair_quantity_unit") == "톤"
     key = "future_pair_quantity_tons" if tons else "future_pair_quantity"
     st.session_state.setdefault(key, float(previous) / (1000 if tons else 1) if previous is not None else None)
-    with field:
-        amount = st.number_input("비교 물량(톤)" if tons else "비교 물량(kg)", min_value=0.0,
-                                 value=None, format="%.6f" if tons else None, key=key)
+    amount = st.number_input("비교 물량(톤)" if tons else "비교 물량(kg)", min_value=0.0,
+                             value=None, format="%.6f" if tons else None, key=key)
     if amount is not None and tons:
         amount = float(Decimal(str(amount)) * 1000)
         st.caption(f"비교에 적용할 물량은 {amount:,.6g}kg이에요.")
@@ -47,9 +44,7 @@ def _manual_price(side, drafts):
     key = f"future_pair_price_{side.lower()}"
     unit_key = f"{key}_unit"
     amount_key, weight_key = f"{key}_box_amount", f"{key}_box_weight"
-    st.session_state.setdefault(unit_key, drafts.get(unit_key, "원/kg"))
-    unit = st.selectbox(f"{side}안 단가 단위", ["원/kg", "원/상자"], key=unit_key)
-    drafts[unit_key] = unit
+    unit = st.session_state.get(unit_key, drafts.get(unit_key, "원/kg"))
     if unit == "원/kg":
         st.session_state.setdefault(key, drafts.get(key))
         price = st.number_input(f"{side}안 가정 단가(원/kg)", min_value=0.0, value=None, key=key)
@@ -101,33 +96,29 @@ def _period_loss(side, days, quantity, use_sale_weight):
         loss_key = f"{key}_loss_{days}"
         st.session_state.setdefault(loss_key, previous)
         loss = st.number_input(f"{side}안 {period} 전체 감모율(%)", min_value=0.0, max_value=MAX_RATE_PERCENT,
-                               value=None, key=loss_key, disabled=days is None)
-        st.caption("비슷한 기간 보관한 기록에서 줄어든 판매 가능 무게를 확인하세요. 100kg 중 4kg이 줄었으면 4를 입력하세요.")
+                               value=None, key=loss_key, disabled=days is None,
+                               help="보관 기록에서 줄어든 판매 가능 무게를 확인하세요. 100kg 중 4kg이 줄었으면 4를 입력하세요.")
     drafts[side, days] = loss
     return loss
 
 
-def _cost_fields(side, days, gross, quantity, use_sale_weight, shared=None):
+def _fee_input(side):
+    fee_key = f"future_pair_{side}_fee"
+    fee_drafts = st.session_state.setdefault("future_pair_fee_drafts", {})
+    st.session_state.setdefault(fee_key, fee_drafts.get(side))
+    fee = st.number_input(f"{side}안 수수료율(%)", min_value=0.0, max_value=MAX_RATE_PERCENT,
+                          value=None, key=fee_key, help="출하처 정산서나 약정에서 확인할 수 있어요.")
+    fee_drafts[side] = fee
+    return fee
+
+
+def _storage_costs(side):
     key = f"future_pair_{side}"
-    loss = _period_loss(side, days, quantity, use_sale_weight)
-    if shared is not None:
-        return {**shared, "delay_days": days, "loss_percent": loss}
     storage = st.number_input(f"{side}안 전체 물량 하루 보관비(원)", min_value=0.0, value=None,
-                              key=f"{key}_storage")
-    st.caption("저장고 요금표나 견적에서 비교 물량 전체의 하루 요금을 확인하세요. 하루 1만 원이면 10000을 입력하세요.")
+                              key=f"{key}_storage", help="비교 물량 전체의 하루 보관비를 저장고 요금표나 견적에서 확인하세요.")
     other = st.number_input(f"{side}안 별도 비용 합계(원)", min_value=0.0, value=None, key=f"{key}_other",
                             help="단가에 포함되지 않은 비용만 입력하세요. 수수료와 보관비는 별도 입력합니다.")
-    fee = None
-    if gross:
-        fee_key = f"{key}_fee"
-        fee_drafts = st.session_state.setdefault("future_pair_fee_drafts", {})
-        st.session_state.setdefault(fee_key, fee_drafts.get(side))
-        fee = st.number_input(f"{side}안 수수료율(%)", min_value=0.0, max_value=MAX_RATE_PERCENT, value=None,
-                              key=fee_key)
-        fee_drafts[side] = fee
-        st.caption("출하처 정산서나 약정에서 판매 수수료율을 확인하세요. 5%면 5를 입력하세요.")
-    return {"delay_days": days, "loss_percent": loss, "daily_storage_cost": storage,
-            "other_cost_krw": other, "fee_percent": fee}
+    return {"daily_storage_cost": storage, "other_cost_krw": other}
 
 
 def _sync_inputs(state):
@@ -146,7 +137,14 @@ def _sync_inputs(state):
     st.session_state.future_pair_loss_drafts = {}
     st.session_state.future_pair_start = date.fromisoformat(values["start_date"]) if values["start_date"] else None
     st.session_state.future_pair_basis = {"gross": "수수료 차감 전", "commission_net": "수수료 차감 후"}.get(values["price_basis"])
+    result = state.current_result()
+    if result and result.get("threshold_only") and values["history_filters"] is None:
+        st.session_state.future_pair_goal = "참고 손익분기"
+    elif values["history_filters"] is not None or values["price_b"] is not None:
+        st.session_state.future_pair_goal = "금액 비교"
     st.session_state.future_pair_price_mode = "과거 변동으로 가정" if values["history_filters"] is not None else "직접 입력"
+    if not (result and result.get("threshold_only") and values["history_filters"] is None):
+        st.session_state.future_pair_amount_mode = st.session_state.future_pair_price_mode
     for field in ("quantity", "price_a"):
         value = values[field]
         st.session_state[f"future_pair_{field}"] = float(value) if value is not None else None
@@ -160,8 +158,9 @@ def _sync_inputs(state):
     drafts["future_pair_price_a"] = st.session_state.future_pair_price_a
     if values["history_filters"] is None:
         value = values["price_b"]
-        drafts["future_pair_price_b"] = float(value) if value is not None else None
-        st.session_state.future_pair_price_b = drafts["future_pair_price_b"]
+        if value is not None or not (result and result.get("threshold_only")):
+            drafts["future_pair_price_b"] = float(value) if value is not None else None
+        st.session_state.future_pair_price_b = drafts.get("future_pair_price_b")
     else:
         for field in HISTORY_FIELDS:
             key = f"future_pair_filter_{field}"
@@ -205,6 +204,7 @@ def _open_input_section(section):
 
 
 def _switch_to_manual_price():
+    st.session_state.future_pair_goal = "금액 비교"
     st.session_state.future_pair_price_mode = "직접 입력"
     st.session_state.future_pair_price_b_unit = "원/kg"
     st.session_state.future_pair_input_jump = "manual_price"
@@ -229,31 +229,54 @@ def render_future_pair(state):
     previous = st.session_state.get("future_pair_card_inputs")
     shown = state.inputs if synced else previous or state.inputs
     with st.container():
-        st.caption("같은 물량을 두 출하일에 판매할 때의 금액을 비교합니다.")
+        goal = st.radio("무엇을 확인할까요?", ["금액 비교", "참고 손익분기"], horizontal=True,
+                        key="future_pair_goal")
+        reference = goal == "참고 손익분기"
+        mode = None
+        if reference:
+            st.caption("나중 단가 없이 필요한 최소 가격을 확인해요. 보관비와 별도 비용은 알고 있을 때 반영할 수 있어요.")
+        else:
+            st.session_state.setdefault("future_pair_price_mode", st.session_state.get("future_pair_amount_mode", "직접 입력"))
+            mode = st.radio("B안 가정 단가 입력 방식", ["직접 입력", "과거 변동으로 가정"], horizontal=True,
+                            key="future_pair_price_mode")
+            st.session_state.future_pair_amount_mode = mode
+        drafts = st.session_state.setdefault("future_pair_price_drafts", {})
+        with st.expander("입력 단위와 공통 비용 설정"):
+            st.selectbox("물량 단위", ["kg", "톤"], key="future_pair_quantity_unit")
+            use_dates = st.radio("출하 일정 입력 방식", ["보관일로 입력", "출하일로 입력"], horizontal=True,
+                                 key="future_pair_schedule_mode") == "출하일로 입력"
+            for side in ("A", "B") if mode == "직접 입력" else ("A",):
+                unit_key = f"future_pair_price_{side.lower()}_unit"
+                st.session_state.setdefault(unit_key, drafts.get(unit_key, "원/kg"))
+                drafts[unit_key] = st.selectbox(f"{side}안 단가 단위", ["원/kg", "원/상자"], key=unit_key)
+            use_sale_weight = st.radio(
+                "보관 중 줄어드는 양의 입력 방식", ["감모율(%)", "판매 가능량(kg)"],
+                horizontal=True, key="future_pair_loss_mode",
+            ) == "판매 가능량(kg)"
+            same_costs = st.checkbox("A와 B의 하루 보관비·별도 비용·수수료율이 같아요",
+                                     key="future_pair_shared_costs")
+        if same_costs != st.session_state.get("future_pair_applied_shared_costs", False):
+            _toggle_shared_costs(state, same_costs)
+            st.session_state.future_pair_applied_shared_costs = same_costs
         st.html('<span id="future-pair-basic" style="scroll-margin-top: 4rem"></span>')
         quantity = _quantity(shown["quantity"])
         st.session_state.setdefault("future_pair_start", date.today())
         start = st.date_input("두 대안의 보관 시작일", value=None, key="future_pair_start")
-        basis = st.selectbox("두 가정 단가의 수수료 기준", ["수수료 차감 전", "수수료 차감 후"],
-                             index=None, key="future_pair_basis")
-        st.caption("두 단가에 이미 판매 수수료를 뺀 금액을 쓰면 ‘수수료 차감 후’를 선택하세요.")
+        basis = st.selectbox("단가의 수수료 기준", ["수수료 차감 전", "수수료 차감 후"],
+                             index=None, key="future_pair_basis",
+                             help="이미 수수료를 뺀 단가를 비교하면 ‘수수료 차감 후’를 선택하세요.")
         gross = basis == "수수료 차감 전"
-        use_dates = st.radio("출하 일정 입력 방식", ["보관일로 입력", "출하일로 입력"], horizontal=True,
-                             key="future_pair_schedule_mode") == "출하일로 입력"
         left, right = st.columns(2)
         with left:
             a_days = _storage_period("A", start, shown["option_a"]["delay_days"] if previous or synced else 3, use_dates)
         with right:
             b_days = _storage_period("B", start, shown["option_b"]["delay_days"] if previous or synced else 10, use_dates)
-        drafts = st.session_state.setdefault("future_pair_price_drafts", {})
         price_a = _manual_price("A", drafts)
-        st.session_state.setdefault("future_pair_price_mode", "직접 입력")
-        mode = st.radio("B안 가정 단가 입력 방식", ["과거 변동으로 가정", "직접 입력", "손익분기만 보기"], index=None,
-                        key="future_pair_price_mode")
         filters = None
         price_b = None
         if mode == "과거 변동으로 가정":
-            with st.expander("과거 가격의 거래규격 입력", key="future_pair_history_open", on_change="rerun"):
+            with st.expander("과거 가격의 거래규격 입력", expanded=True,
+                             key="future_pair_history_open", on_change="rerun"):
                 if a_days is not None and b_days is not None and b_days > a_days:
                     st.caption(f"두 출하일의 차이인 {b_days - a_days}일 간격의 과거 가격을 찾습니다.")
                 from ui.market_inputs import render_market_spec_controls
@@ -265,36 +288,41 @@ def render_future_pair(state):
                     drafts[widget_key] = filters.get(field, "")
         elif mode == "직접 입력":
             price_b = _manual_price("B", drafts)
-            st.caption("나중 출하가격을 모르면 비워 두세요. 다른 조건을 입력하면 나중 출하가 유리해지는 최소 가격을 계산해요.")
+            st.caption("나중 단가를 모르면 위에서 ‘참고 손익분기’를 선택할 수 있어요.")
             if warning := manual_price_warning(price_a, price_b):
                 st.warning(warning)
-        else:
-            st.caption("나중 출하 단가 없이, 먼저 출하할 때와 같아지는 최소 단가를 확인할 수 있어요.")
 
-        with st.expander("감모율과 비용 입력", key="future_pair_costs_open", on_change="rerun"):
-            st.caption("비용이 없다고 확인한 항목에는 0을 입력하세요. 모르는 값은 비워 두고 확인하세요.")
-            loss_mode = st.radio("보관 중 줄어드는 양의 입력 방식", ["감모율(%)", "판매 가능량(kg)"],
-                                 horizontal=True, key="future_pair_loss_mode")
-            use_sale_weight = loss_mode == "판매 가능량(kg)"
-            same_costs = st.checkbox("A와 B의 하루 보관비·별도 비용·수수료율이 같아요",
-                                     key="future_pair_shared_costs")
-            if same_costs != st.session_state.get("future_pair_applied_shared_costs", False):
-                _toggle_shared_costs(state, same_costs)
-                st.session_state.future_pair_applied_shared_costs = same_costs
+        st.markdown("**감모율과 수수료**" if gross else "**보관 중 줄어드는 양**")
+        left, right = st.columns(2)
+        with left:
+            loss_a = _period_loss("A", a_days, quantity, use_sale_weight)
+            fee_a = _fee_input("A") if gross else None
+        with right:
+            loss_b = _period_loss("B", b_days, quantity, use_sale_weight)
+            fee_b = fee_a if same_costs else _fee_input("B") if gross else None
+
+        costs_section = (st.expander("보관비와 별도 비용 · 선택", key="future_pair_costs_open", on_change="rerun")
+                         if reference else st.container(key="future_pair_costs_open"))
+        with costs_section:
+            if not reference:
+                st.markdown("**보관비와 별도 비용**")
+            st.caption("비용이 없다고 확인한 항목에는 0을 입력하세요.")
             left, right = st.columns(2)
             with left:
-                option_a = _cost_fields("A", a_days, gross, quantity, use_sale_weight)
+                costs_a = _storage_costs("A")
             with right:
-                shared = None
                 if same_costs:
-                    shared = {field: option_a[field] for field in ("daily_storage_cost", "other_cost_krw", "fee_percent")}
-                    st.caption("B안 비용에는 A안에 입력한 값을 적용합니다.")
-                option_b = _cost_fields("B", b_days, gross, quantity, use_sale_weight, shared=shared)
+                    st.caption("B안에는 A안과 같은 비용을 적용해요.")
+                costs_b = costs_a if same_costs else _storage_costs("B")
+        option_a = {**costs_a, "delay_days": a_days, "loss_percent": loss_a, "fee_percent": fee_a}
+        option_b = {**costs_b, "delay_days": b_days, "loss_percent": loss_b, "fee_percent": fee_b}
+        if reference and any(value is not None for value in (*costs_a.values(), *costs_b.values())):
+            st.caption("입력한 보관비와 별도 비용을 참고 손익분기에 반영해요.")
 
         section = st.session_state.pop("future_pair_input_jump", None)
         if section in ("history", "costs", "manual_price"):
             target_key = "price_b" if section == "manual_price" else f"{section}_open"
-            focus_selector = "input" if section == "manual_price" else "summary"
+            focus_selector = "input" if section == "manual_price" or (section == "costs" and not reference) else "summary"
             st.html(
                 f"""<script>
                 requestAnimationFrame(() => {{
@@ -318,10 +346,13 @@ def render_future_pair(state):
             if current is not None:
                 st.info("비교 조건이나 자료가 바뀌었습니다. 현재 입력으로 다시 계산해 주세요.")
         st.session_state.future_pair_card_inputs = inputs
-        if st.button("미래 A/B 비교 계산", key="future_pair_calculate", type="primary"):
+        calculate_label = "참고 손익분기 계산" if reference else "미래 A/B 비교 계산"
+        if st.button(calculate_label, key="future_pair_calculate", type="primary"):
             state.replace(inputs)
             st.session_state.future_pair_card_version = state.version
-            result = state.calculate()
+            result = state.calculate(allow_reference=reference)
+            if result.get("data_gap"):
+                state.pending = result
             if result["status"] == "NEEDS_INPUT" and result.get("missing_fields"):
                 st.session_state.future_pair_missing = result
             else:

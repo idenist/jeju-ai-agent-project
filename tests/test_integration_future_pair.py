@@ -1189,6 +1189,11 @@ class FuturePairTests(unittest.TestCase):
         self.assertEqual(app.selectbox(key="future_pair_filter_variety").value, "조생귤")
         self.assertEqual(app.selectbox(key="future_pair_filter_grade").value, "특")
         self.assertIsNone(pair.inputs["price_b"])
+        app.radio(key="future_pair_goal").set_value("참고 손익분기").run()
+        self.assertIsNone(pair.inputs["history_filters"])
+        app.radio(key="future_pair_goal").set_value("금액 비교").run()
+        self.assertEqual(app.radio(key="future_pair_price_mode").value, "과거 변동으로 가정")
+        self.assertEqual(app.selectbox(key="future_pair_filter_variety").value, "조생귤")
         app.radio(key="future_pair_price_mode").set_value("직접 입력").run()
         self.assertEqual(app.number_input(key="future_pair_price_b").value, 2750)
         self.assertIsNone(pair.inputs["history_filters"])
@@ -1237,10 +1242,11 @@ class FuturePairTests(unittest.TestCase):
         app.button(key="future_pair_calculate").click().run()
         state = app.session_state.workspace.session.future_pair
         before = state.snapshot()
+        history_was_open = app.session_state.future_pair_history_open
         self.assertFalse(any(button.key == "future_pair_open_history" for button in app.button))
         app.button(key="future_pair_open_costs").click().run()
         self.assertTrue(app.session_state.future_pair_costs_open)
-        self.assertFalse(app.session_state.future_pair_history_open)
+        self.assertEqual(app.session_state.future_pair_history_open, history_was_open)
         self.assertEqual(state.snapshot(), before)
         self.assertIsNone(state.current_result())
 

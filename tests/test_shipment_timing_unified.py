@@ -204,6 +204,30 @@ class FakeStreamlit(types.ModuleType):
 
 
 class UIPipelineTest(unittest.TestCase):
+    def test_standalone_form_prefills_a_timing_query_and_keeps_a_local_date_edit(self):
+        from streamlit.testing.v1 import AppTest
+
+        app = AppTest.from_string("""
+import streamlit as st
+from ui.shipment_timing_ui import render_shipment_lookup
+
+if st.button("대화에서 다시 조회", key="replace_query"):
+    st.session_state.use_new_dates = True
+render_shipment_lookup(timing_query={
+    "shipment_variety": "노지온주",
+    "option_a_date": "2026-11-23" if not st.session_state.get("use_new_dates") else "2026-11-24",
+    "option_b_date": "2026-11-30",
+})
+""").run()
+        self.assertEqual(app.date_input(key="timing_lookup_earlier").value, date(2026, 11, 23))
+        self.assertEqual(app.date_input(key="timing_lookup_later").value, date(2026, 11, 30))
+        self.assertEqual(app.selectbox(key="timing_lookup_variety").value, "노지온주")
+        app.date_input(key="timing_lookup_later").set_value(date(2026, 12, 2)).run()
+        app.button(key="replace_query").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.date_input(key="timing_lookup_earlier").value, date(2026, 11, 24))
+        self.assertEqual(app.date_input(key="timing_lookup_later").value, date(2026, 12, 2))
+
     def test_standalone_lookup_needs_only_variety_and_dates(self):
         from streamlit.testing.v1 import AppTest
 

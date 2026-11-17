@@ -478,10 +478,10 @@ class FuturePairState:
         return (f"**저장한 조건** · 출하 {dates[0].month}/{dates[0].day} · {dates[1].month}/{dates[1].day}"
                 f" · {quantity}kg · {prices}")
 
-    def calculate(self, *, preview_history=False, on_progress=None):
+    def calculate(self, *, preview_history=False, allow_reference=True, on_progress=None):
         self.clear_result()
         historical = self.inputs["history_filters"] is not None
-        if not historical and self._threshold_reference_ready(self.inputs):
+        if allow_reference and not historical and self._threshold_reference_ready(self.inputs):
             result = compare_future_pair_threshold_reference(**{
                 key: self.inputs[key] for key in (
                     "quantity", "price_basis", "start_date", "option_a", "option_b", "price_a",
@@ -493,10 +493,13 @@ class FuturePairState:
                 return result
             if result["status"] != "NEEDS_INPUT":
                 return {**result, "analysis_type": "future_pair", "future_pair_version": self.version}
-        if missing := self._missing(self.inputs):
+        missing = self._missing(self.inputs)
+        if not allow_reference and not historical and self.inputs["price_b"] is None:
+            missing.append(LABELS["price_b"])
+        if missing:
             if preview_history and historical:
                 return self._preview_history(missing, on_progress)
-            if not historical and self.inputs["price_b"] is None:
+            if allow_reference and not historical and self.inputs["price_b"] is None:
                 optional_cost_fields = {
                     f"{side}안 {OPTION_LABELS[field]}"
                     for side in ("A", "B") for field in ("daily_storage_cost", "other_cost_krw")
