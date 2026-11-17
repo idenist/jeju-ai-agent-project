@@ -458,7 +458,7 @@ def _render_result_body(result: dict) -> str:
 
 def render_result(result: dict) -> str:
     body = _render_result_body(result)
-    if result.get("analysis_type") == "settlement":
+    if result.get("analysis_type") == "settlement" or result.get("data_gap"):
         return body
     context = result.get("ui_context") if isinstance(result, dict) else None
     if not context:
@@ -527,7 +527,10 @@ def render_report(results: list[dict]) -> str:
     fingerprint = hashlib.sha256(json.dumps({"format_version": 2, "results": results},
         ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12].upper()
     settlement_only = bool(results) and all(x.get('result', x).get('analysis_type') == 'settlement' for x in results)
-    if results and all(x.get("tool") == "explain_term" for x in results):
+    price_gaps_only = bool(results) and all(x.get("result", x).get("data_gap") for x in results)
+    if price_gaps_only:
+        title = "제주 감귤 과거 가격 조회 기록"
+    elif results and all(x.get("tool") == "explain_term" for x in results):
         title = "제주 감귤 출하 용어 설명"
     elif results and all(x.get("tool") == "analyze_shipment_timing" for x in results):
         title = "제주 감귤 과거 출하량 보고서"
@@ -555,6 +558,8 @@ def render_report(results: list[dict]) -> str:
                 captioned += [f"**표 {table_number}. {caption}**", ""]
             captioned.append(line)
         sections += [f"## {index:02d}. {label}", "\n".join(captioned)]
+    if price_gaps_only:
+        return "\n\n".join(sections).strip() + "\n"
     result_objects = [x.get("result", x) if isinstance(x, dict) else {} for x in results]
     if any("current_proceeds_krw" in x or "missing_fields" in x for x in result_objects):
         notices.insert(0, "입력 확인: 가격·비용·감모와 입력 구분은 사용자 제공값 또는 가정이며 외부 사실 검증을 뜻하지 않습니다.")

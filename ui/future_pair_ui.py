@@ -329,7 +329,7 @@ def render_future_pair(state):
         else:
             result = state.current_result()
         if result is None:
-            pending = st.session_state.get("future_pair_missing")
+            pending = st.session_state.get("future_pair_missing") or state.pending
             if pending is None or pending["future_pair_version"] != state.version:
                 st.session_state.pop("future_pair_missing", None)
                 return None
@@ -341,6 +341,10 @@ def render_future_pair(state):
                           on_click=_switch_to_manual_price)
             if result["status"] == "NEEDS_INPUT":
                 _show_missing_inputs(result)
+            if result.get("data_gap"):
+                from ui.price_gap_ui import render_price_gap_downloads
+
+                render_price_gap_downloads(result, "compare_future_pair", "pair_card")
             return None
         render_future_pair_result(result, "card")
         return result

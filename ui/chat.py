@@ -390,6 +390,13 @@ def _chat_report(ws, reply):
                 "source_sha256": timing["source"]["data_sha256"],
                 "source_fingerprint": fingerprint,
                 "entries": entries, "json": json_from_entries(entries)}
+    gap = next((entry for entry in reply.get("visible_results", []) if entry["result"].get("data_gap")), None)
+    if gap is not None:
+        from services.future_pair import price_revision
+
+        return {"kind": "price_gap", "version": ws.store.version, "entry": gap,
+                "pair_version": gap["result"].get("future_pair_version"),
+                "source_revision": price_revision()}
     pair = _chat_pair(reply)
     if pair is not None:
         state = ws.session.future_pair
@@ -422,6 +429,16 @@ def _latest_chat_report(messages, version, current_pair, pair_version=None, *, t
     for index in range(len(messages) - 1, -1, -1):
         reply = messages[index].get("reply", {})
         if report := reply.get("chat_report"):
+            if report["kind"] == "price_gap":
+                if target == "comparison" and report["pair_version"] is not None:
+                    return None, None
+                if target is not None:
+                    continue
+                from services.future_pair import price_revision
+
+                current = (report["version"] == version and report["source_revision"] == price_revision()
+                           and report["pair_version"] in (None, pair_version))
+                return (index, report) if current else (None, None)
             timing = report["kind"] == "shipment_timing"
             economic = next((entry["result"] for entry in report["entries"]
                              if entry["tool"] == "compare_future_pair"), None) if timing else None
@@ -464,7 +481,12 @@ def _requested_chat_report(ws, messages, target=None):
 
 
 def _render_chat_report(report):
-    if report["kind"] == "shipment_timing":
+    if report["kind"] == "price_gap":
+        from ui.price_gap_ui import render_price_gap_downloads
+
+        entry = report["entry"]
+        render_price_gap_downloads(entry["result"], entry["tool"], "chat")
+    elif report["kind"] == "shipment_timing":
         from ui.shipment_timing_ui import render_integrated_chat_report
         render_integrated_chat_report(report)
     elif report["kind"] == "future_pair":
@@ -573,7 +595,9 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                 subject = request["target"]
                 target = ("timing" if "출하량" in subject else "comparison") if subject else None
                 report = _requested_chat_report(ws, messages, target)
-                if target == "timing" or (target is None and report and report["kind"] == "shipment_timing"
+                if report and report["kind"] == "price_gap":
+                    message = "이 조회의 가격 조회 기록입니다."
+                elif target == "timing" or (target is None and report and report["kind"] == "shipment_timing"
                                           and len(report["entries"]) == 1):
                     message = ("최근 과거 출하량 조회 보고서입니다." if report
                                else "내려받을 과거 출하량 조회 결과가 없어요. 품종과 비교할 날짜를 알려주시면 조회할게요.")

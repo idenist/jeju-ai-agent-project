@@ -327,7 +327,9 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         self.assertNotIn("examples", entries[0]["result"])
         self.assertNotIn(previous_price, render_report(entries))
         self.assertIsNone(app.session_state.workspace.session.price_history_query)
-        self.assertTrue(any("검증이 실패" in warning.value for warning in app.warning))
+        gap = entries[0]["result"]["data_gap"]
+        self.assertEqual(gap["code"], "FILE_UNVERIFIED")
+        self.assertTrue(any(gap["reason"] in item.value for item in app.markdown))
 
     def test_대화만_비우면_손익조건을_보존하고_가격조회기억은_삭제(self):
         app = self._app()

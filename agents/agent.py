@@ -682,7 +682,7 @@ class AgentSession:
                                           "output": json.dumps(model_output, ensure_ascii=False)})
                     if time.monotonic() - started >= self.policy.seconds:
                         raise RunStopped("TIME_LIMIT")
-                    if result.get("source_status") == "PACKAGE_WEIGHT_CONFLICT":
+                    if result.get("data_gap") or result.get("source_status") == "PACKAGE_WEIGHT_CONFLICT":
                         finished = True
                     elif result.get("reason") != "READ_ONLY_REQUEST" and isinstance(arguments, dict) and arguments.get("finish_turn") is True and (
                             result["status"] in {"OK", "NEEDS_INPUT", "NEEDS_CLARIFICATION", "NO_DATA", "PARTIAL", "CHECK_REQUIRED"}

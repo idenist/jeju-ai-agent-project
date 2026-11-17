@@ -8,6 +8,7 @@ from services.data_contract import PAIR_FILES, PRICE_FILE, REPORT_FILE, verify_c
 from services.data_refresh import digest, resolve_market_root
 from services.task_context import data_revision
 from services.economics import decimal, fixed
+from services.price_data_gap import classify_price_gap, price_gap
 from core.config import PROJECT_ROOT
 from core.latency import log_latency
 
@@ -78,11 +79,14 @@ def _engine_option(option, template):
 
 
 def _verified_history(lookup, args, **kwargs):
+    file_gap = {"status": "DATA_ERROR", "data_gap": price_gap("FILE_UNVERIFIED", comparison=True),
+                "requested_conditions": {field: args[field] for field in HISTORY_FIELDS if field in args},
+                "source_verification": {"status": "DATA_ERROR"}}
     started = monotonic()
     before = verify_cached_price_sources(PROJECT_ROOT)
     log_latency("csv_verify_before", started)
     if before["status"] != "OK" or before.get("full_content_verified") is not True:
-        return {"status": "DATA_ERROR", "message": "과거 가격 자료의 원천을 확인하지 못했습니다. B안 단가를 직접 입력할 수 있습니다."}
+        return file_gap
     started = monotonic()
     result = lookup(args, **kwargs)
     log_latency("csv_lookup", started)
@@ -91,7 +95,9 @@ def _verified_history(lookup, args, **kwargs):
     log_latency("csv_verify_after", started)
     if (after["status"] != "OK" or after.get("full_content_verified") is not True
             or before["source_fingerprint"] != after["source_fingerprint"]):
-        return {"status": "DATA_ERROR", "message": "조회 중 자료가 바뀌었습니다. B안 단가를 직접 입력할 수 있습니다."}
+        return file_gap
+    if code := classify_price_gap(result):
+        return {**result, "data_gap": price_gap(code, comparison=True)}
     return result
 
 
@@ -255,7 +261,8 @@ def compare_future_pair_history_reference(*, quantity, price_basis, start_date,
     reference.update({
         "history_scenarios": True,
         "history_preview": {key: history_preview[key] for key in
-                            ("interval_days", "clean_pairs", "base_date_range", "conditions", "source")
+                            ("interval_days", "clean_pairs", "warning_pairs", "unavailable_pairs",
+                             "base_date_range", "conditions", "source")
                             if key in history_preview},
         "options_b": rows,
         "evidence": {

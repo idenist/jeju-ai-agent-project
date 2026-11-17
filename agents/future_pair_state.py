@@ -12,6 +12,7 @@ from services.future_pair import (
     HISTORY_FIELDS, INPUT_FIELDS, LABELS, MAX_RATE_PERCENT, OPTION_FIELDS, OPTION_LABELS,
 )
 from services.economics import decimal
+from services.price_data_gap import PRICE_GAP_EVIDENCE, price_gap, render_price_gap
 from agents.future_pair_intent import (
     explicit_shipment_quantity, shipment_choice_question, shipment_window_limit, shipment_window_start,
 )
@@ -132,6 +133,8 @@ def asks_where_to_check(question):
 
 
 def future_pair_feedback(result, *, pause_costs=False, one_question=False):
+    if result.get("data_gap"):
+        return render_price_gap(result)
     if result.get("ambiguous_input"):
         return AMBIGUOUS_NUMERIC_RECOVERY
     message = result.get("message") or "비교 조건을 확인해 주세요."
@@ -505,8 +508,7 @@ class FuturePairState:
         result = compare_future_pair(**self.inputs, on_progress=on_progress)
         if historical and ((revision is None and result["status"] == "OK")
                            or (revision is not None and revision != price_revision())):
-            return self._response("DATA_ERROR", "조회 중 가격 자료가 바뀌었습니다. B안 단가를 직접 입력할 수 있습니다.",
-                                  manual_price_required=True)
+            return self._price_gap_changed()
         result = {**result, "analysis_type": "future_pair", "future_pair_version": self.version}
         if result["status"] == "OK":
             self.result = deepcopy(result)
@@ -525,10 +527,10 @@ class FuturePairState:
         result = preview_future_pair_history(start, a, b, self.inputs["price_a"], self.inputs["history_filters"])
         if result.get("scenarios"):
             if revision is None or revision != price_revision():
-                return self._response("DATA_ERROR", "조회 중 가격 자료가 바뀌었습니다. B안 단가를 직접 입력할 수 있습니다.",
-                                      manual_price_required=True)
+                return self._price_gap_changed()
             preview = {key: result[key] for key in ("interval_days", "clean_pairs", "base_date_range",
                                                     "scenarios", "conditions", "source")}
+            preview.update({key: result[key] for key in ("warning_pairs", "unavailable_pairs") if key in result})
             if result.get("small_sample"):
                 # 사례가 10쌍 미만이면 가격 도구가 붙인 안내를 미리보기에도 그대로 전달한다.
                 preview["sample_note"] = result["cautions"][0]
@@ -570,15 +572,24 @@ class FuturePairState:
             normalized = "INVALID_INPUT" if result.get("error_kind") == "INVALID_INPUT" else "DATA_ERROR"
             if normalized == "INVALID_INPUT":
                 message = result.get("error")
+        if result.get("data_gap"):
+            message = render_price_gap(result)
         if normalized == "DATA_ERROR" and not message:
             message = "과거 가격 자료를 검증하지 못했습니다. B안 단가를 직접 입력할 수 있습니다."
         response = {**{key: result[key] for key in ("analysis_type", "future_pair_version", "missing_fields", "manual_price_required") if key in result},
                     "status": normalized, "source_status": status, "message": message}
+        if result.get("data_gap"):
+            response.update({key: result[key] for key in ("data_gap", *PRICE_GAP_EVIDENCE) if key in result})
         if result.get("choices"):
             response["choices"] = {field: choices[:8] for field, choices in result["choices"].items() if field in HISTORY_FIELDS}
         if normalized in {"DATA_ERROR", "NO_DATA"}:
             response["manual_price_required"] = True
         return response
+
+    def _price_gap_changed(self):
+        gap = price_gap("FILE_UNVERIFIED", comparison=True)
+        return self._response("DATA_ERROR", render_price_gap({"data_gap": gap}),
+                              source_status="DATA_ERROR", data_gap=gap, manual_price_required=True)
 
     @staticmethod
     def _missing(inputs):

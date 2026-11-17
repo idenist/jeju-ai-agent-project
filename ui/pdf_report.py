@@ -1,7 +1,7 @@
 """Offline PDF export of the exact canonical report, with bundled Korean fonts."""
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import lru_cache, partial
 from html import escape
 from io import BytesIO
 from pathlib import Path
@@ -119,18 +119,18 @@ def _table(lines, styles, width):
     return table
 
 
-def _footer(canvas, document):
+def _footer(canvas, document, *, price_lookup=False):
     canvas.saveState()
     width, height = A4
     canvas.setStrokeColor(colors.HexColor("#dce2e5"))
     canvas.line(document.leftMargin, 17 * mm, width - document.rightMargin, 17 * mm)
     canvas.setFont(REGULAR, 8)
     canvas.setFillColor(colors.HexColor("#586a76"))
-    canvas.drawString(document.leftMargin, 12 * mm, REPORT_FOOTER)
+    canvas.drawString(document.leftMargin, 12 * mm, "가격 조회 상태 기록" if price_lookup else REPORT_FOOTER)
     canvas.drawRightString(width - document.rightMargin, 12 * mm, f"{document.page:02d}")
     canvas.setFont(REGULAR, 8)
     canvas.drawString(document.leftMargin, height - 10 * mm, "감귤 출하 검토")
-    canvas.drawRightString(width - document.rightMargin, height - 10 * mm, "분석 보고서")
+    canvas.drawRightString(width - document.rightMargin, height - 10 * mm, "조회 기록" if price_lookup else "분석 보고서")
     canvas.restoreState()
 
 
@@ -237,5 +237,6 @@ def render_pdf_report(results: list[dict]) -> bytes:
                     story.append(CondPageBreak(110))
         story.append(Paragraph(_inline(line), style))
         index += 1
-    document.build(story, onFirstPage=_footer, onLaterPages=_footer)
+    footer = partial(_footer, price_lookup=bool(results) and all(x.get("result", x).get("data_gap") for x in results))
+    document.build(story, onFirstPage=footer, onLaterPages=footer)
     return buffer.getvalue()
