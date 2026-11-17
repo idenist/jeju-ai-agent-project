@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 import time
 from copy import deepcopy
@@ -10,7 +11,7 @@ from uuid import uuid4
 from core.config import Settings
 from agents.box_price import mentions_box_price, pending_box_arguments
 from agents.future_pair_intent import (
-    changes_later_date_only, continues_comparison, explicit_shipment_quantity, forbids_historical_pair_price,
+    changes_later_date_only, continues_comparison, explicit_later_storage_period, explicit_shipment_quantity, forbids_historical_pair_price,
     is_future_pair_request, requests_manual_price,
     starts_new_comparison, states_price_basis, requests_historical_pair_price,
 )
@@ -21,7 +22,8 @@ from services.task_context import TaskContext, data_revision
 from agents.harness import ExecutionPolicy, RunStopped, RepeatGuard, bound_history, encoded_size, user_starts, classify_failure, FAILURE_GUIDANCE
 
 
-from agents.dialogue import has_unsupported_amount, remember_visible_reply
+from agents.dialogue import has_unsupported_amount, remember_visible_reply, simple_term_topic
+from agents.evidence_guard import latest_lookup, lookup_revision, rejected_evidence_claim
 from agents.prompts import SYSTEM_PROMPT
 from agents.service_scope import scope_reply
 
@@ -69,6 +71,7 @@ class AgentSession:
         self.shipment = None
         self.price_history_query = None
         self.price_history_revision = None
+        self.lookup_evidence = None
         from agents.future_pair_state import FuturePairState
         self.future_pair = FuturePairState()
 
@@ -217,14 +220,21 @@ class AgentSession:
         return result, arguments, recorded_arguments
 
     def run(self, question: str, *, on_progress=None) -> dict:
+        if not self.messages or (isinstance(question, str) and starts_new_comparison(question)):
+            self.lookup_evidence = None
         reply = self._run(question, on_progress=on_progress)
+        self.remember_lookup(reply.get("visible_results", []))
         remember_visible_reply(self.messages, question, reply)
         return reply
+
+    def remember_lookup(self, entries):
+        if evidence := latest_lookup(entries):
+            self.lookup_evidence = (lookup_revision(evidence), deepcopy(evidence))
 
     def _run(self, question: str, *, on_progress=None) -> dict:
         from services.data_refresh import kst_today
         from presenters.presentation import select_results, render_dialogue, report_for
-        from agents.future_pair_state import resume_pair_inputs, unavailable_cost, unavailable_pair_inputs
+        from agents.future_pair_state import asks_where_to_check, resume_pair_inputs, unavailable_cost, unavailable_pair_inputs
         settings = self.settings or Settings.load()
         if not isinstance(question, str) or not question.strip() or len(question) > 6000:
             return {"status": "INVALID_INPUT", "text": "질문은 1~6,000자로 입력하세요.", "tool_results": [], "events": [], "state": self.store.snapshot()}
@@ -293,7 +303,9 @@ class AgentSession:
                     "metrics": {"model_requests": 0, "dialogue_route": "input_burden_pause"}}
         if (not new_comparison and pending is not None
                 and pending.get("source_status") == "NEEDS_CLARIFICATION"
-                and is_bare_unknown_reply(question)):
+                and (is_bare_unknown_reply(question)
+                     or (not re.search(r"\d", question) and asks_where_to_check(question)
+                         and unavailable_pair_inputs(pending, question)))):
             # No tools or model needed to preserve state and offer a manual path.
             self.future_pair.specs_deferred = True
             entry = {"tool": "compare_future_pair", "result": deepcopy(pending)}
@@ -303,18 +315,31 @@ class AgentSession:
                     "visible_results": [entry], "events": [],
                     "state": self.store.snapshot(), "metrics": {"model_requests": 0}}
         if not new_comparison:
-            direct = self.future_pair.apply_explicit_pair_prices(question, on_progress=on_progress)
+            pair = self.future_pair
+            later_period = explicit_later_storage_period(question)
+            direct = None
+            route = "verified_pending_answer"
+            if (later_period is not None and pair.inputs["start_date"] and pair.box_price is None
+                    and all(pair.inputs[option]["delay_days"] is not None for option in ("option_a", "option_b"))):
+                direct = pair.apply("edit", pair.version, {"option_b": {"delay_days": later_period}},
+                                    on_progress=on_progress)
+                route = "later_storage_edit"
+            if direct is None:
+                direct = pair.apply_explicit_pair_prices(question, on_progress=on_progress)
             if direct is None:
                 direct = self.future_pair.apply_short_answer(question, on_progress=on_progress)
             if direct is not None:
                 entry = {"tool": "compare_future_pair", "result": direct}
-                return {"status": "OK", "text": render_dialogue([entry], question=question),
+                text = render_dialogue([entry], question=question)
+                if route == "later_storage_edit" and direct["status"] != "INVALID_INPUT":
+                    text = f"B안 보관일을 {later_period}일로 바꿨어요.\n\n" + text
+                return {"status": "OK", "text": text,
                         "report": report_for([entry]), "tool_results": [entry],
                         "visible_results": [entry], "events": [{"tool": "compare_future_pair",
-                            "status": direct["status"], "origin": "verified_pending_answer",
+                            "status": direct["status"], "origin": route,
                             "future_pair_version": self.future_pair.version}],
                         "state": self.store.snapshot(),
-                        "metrics": {"model_requests": 0, "dialogue_route": "verified_pending_answer"}}
+                        "metrics": {"model_requests": 0, "dialogue_route": route}}
         if self.client is None:
             import_started = time.monotonic()
             OpenAI = load_model_sdk()
@@ -334,6 +359,7 @@ class AgentSession:
                    "focused_toolset": False, "no_tool_model_responses": 0}
         phase = "context"
         pending_model_reply = None
+        evidence_fallback = None
         guard = RepeatGuard(self.policy.identical_calls)
         source_revision = data_revision()
         if self.price_history_query is not None and self.price_history_revision != source_revision:
@@ -479,8 +505,22 @@ class AgentSession:
                 if not tool_calls:
                     metrics["no_tool_model_responses"] += 1
                     candidate = getattr(response, "output_text", None)
+                    recent_evidence = self.lookup_evidence
+                    evidence = latest_lookup(results)
+                    if (evidence is None and recent_evidence is not None
+                            and recent_evidence[0] == lookup_revision(recent_evidence[1])):
+                        evidence = recent_evidence[1]
+                    rejection = rejected_evidence_claim(candidate, question, evidence) if isinstance(candidate, str) else None
+                    if rejection:
+                        metrics["unsupported_evidence_blocked"] = rejection
+                        if rejection == "historical_probability":
+                            evidence_fallback = "과거 출하량이나 가격쌍의 비율로 미래 가격이 오를 확률을 계산할 수 없어요."
+                        else:
+                            evidence_fallback = "말씀하신 수치는 확인된 관측 결과와 일치하지 않아요."
+                        if not results and evidence and re.search(r"방금|직전|그럼|그\s*자료|그\s*수치", question):
+                            evidence_fallback += "\n\n" + render_dialogue([evidence])
                     if (isinstance(candidate, str) and candidate.strip()
-                            and not has_unsupported_amount(candidate, model_messages)):
+                            and not rejection and not has_unsupported_amount(candidate, model_messages)):
                         pending_model_reply = candidate.strip()
                         self.messages.extend(response.output)
                     else:
@@ -557,6 +597,14 @@ class AgentSession:
             events.append({"tool": "compare_shipment_options", "status": refreshed["status"],
                            "scenario_version": self.store.version, "origin": "application_refresh"})
         visible = select_results(results, self.store.version)
+        if status == "OK" and not visible and not pending_model_reply and not evidence_fallback:
+            if topic := simple_term_topic(question):
+                args = {"topic": topic}
+                term = {"tool": "explain_term", "result": execute_tool("explain_term", args, self.store)}
+                results.append(term)
+                visible = [term]
+                self.task_context.record("explain_term", args, term["result"], scenario=self.store.scenario)
+                metrics["dialogue_route"] = "local_term_fallback"
         if self.future_pair.pending is not None and any(
             entry["tool"] == "compare_future_pair" for entry in visible
         ):
@@ -568,8 +616,8 @@ class AgentSession:
             pending = self.future_pair.pending
             if pending.get("source_status") == "NEEDS_CLARIFICATION" and unavailable_pair_inputs(pending, question):
                 self.future_pair.specs_deferred = True
-        if pending_model_reply:
-            text = pending_model_reply
+        if pending_model_reply or evidence_fallback:
+            text = pending_model_reply or evidence_fallback
             if visible:
                 text += "\n\n" + render_dialogue(visible, question=question,
                     pair_costs_deferred=self.future_pair.costs_deferred,

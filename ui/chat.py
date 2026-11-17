@@ -321,6 +321,16 @@ def _reply_to_chat_basis(ws, scope, version, basis, *, on_progress=None):
     return {"status": result["status"], "state": ws.store.snapshot(), "visible_results": entries,
             "text": render_dialogue(entries)}
 
+def _submit_pending_pair_price(version, key):
+    price = st.session_state.get(key)
+    if price is None:
+        st.session_state[f"{key}_missing"] = True
+        return
+    st.session_state.pop(f"{key}_missing", None)
+    _submit_shipment_question(f"나중 출하 단가를 kg당 {price:,.12g}원으로 비교",
+                              pair_edit=(version, {"price_mode": "manual", "price_b": price}))
+
+
 def _render_pending_pair_price(ws, messages):
     from services.shipment_timing import resolve_pair_dates
 
@@ -341,13 +351,10 @@ def _render_pending_pair_price(ws, messages):
         price = st.number_input("나중 출하의 가정 단가 (원/kg)", min_value=0.01, value=None, key=key)
         if warning := manual_price_warning(state.inputs["price_a"], price):
             st.warning(warning)
-        if st.button("이 단가로 비교", key=f"{key}_submit"):
-            if price is None:
-                st.warning("나중 출하의 가정 단가를 입력해 주세요.")
-            else:
-                _submit_shipment_question(f"나중 출하 단가를 kg당 {price:,.12g}원으로 비교",
-                                          pair_edit=(state.version, {"price_mode": "manual", "price_b": price}))
-                st.rerun()
+        st.button("이 단가로 비교", key=f"{key}_submit",
+                  on_click=_submit_pending_pair_price, args=(state.version, key))
+        if st.session_state.pop(f"{key}_missing", False) and price is None:
+            st.warning("나중 출하의 가정 단가를 입력해 주세요.")
 
 def _render_box_price_actions(pair):
     quote = pair.box_price

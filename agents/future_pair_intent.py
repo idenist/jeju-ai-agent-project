@@ -46,6 +46,11 @@ _CONTINUE_COMPARISON = re.compile(
     r"|(?:앞서|방금)\s*(?:확인한|본)\s*(?:과거\s*)?(?:가격|단가)\s*가정"
 )
 _LATER_DATE_ONLY = re.compile(r"(?:나중\s*출하일|B\s*안\s*(?:출하일|날짜))만", re.I)
+_LATER_STORAGE_EDIT = re.compile(
+    r"\s*(?:나중\s*출하일|B\s*안\s*(?:출하일|날짜))만\s*(\d{1,3})\s*일\s*보관"
+    r"\s*(?:하는\s*날(?:짜)?)?\s*(?:으?로)\s*(?:바꿔|변경해|수정해)\s*(?:줘(?:요)?|주세요)?[.!\s]*",
+    re.I,
+)
 _HISTORICAL_PRICE = re.compile(r"(?:과거\s*(?:경락\s*)?(?:가격|시세|자료|변동)|경락\s*가격|시장\s*(?:시세|자료)|도매\s*시세|과거가격|자료)")
 _EXCLUDE_HISTORICAL_PRICE = re.compile(
     r"(?:을|를|은|는|도|와|과)?\s*(?:조회\s*(?:하지\s*말|안\s*(?:해|봐|하고)|하지\s*않)|"
@@ -94,6 +99,11 @@ def continues_comparison(question: str) -> bool:
 
 def changes_later_date_only(question: str) -> bool:
     return _LATER_DATE_ONLY.search(question) is not None
+
+
+def explicit_later_storage_period(question: str) -> int | None:
+    match = _LATER_STORAGE_EDIT.fullmatch(question)
+    return int(match[1]) if match else None
 
 
 def shipment_choice_question(question: str) -> bool:

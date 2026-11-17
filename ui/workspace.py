@@ -353,6 +353,7 @@ class SharedWorkspace:
         args = {"shipment_variety": variety, "option_a_date": earlier, "option_b_date": later}
         result = execute_tool("analyze_shipment_timing", args, self.store, future_pair=pair, on_progress=on_progress)
         entry = {"tool": "analyze_shipment_timing", "result": result}
+        self.session.remember_lookup([entry])
         return {"status": result["status"], "state": self.store.snapshot(),
                 "text": render_dialogue([entry]), "visible_results": [entry]}
 
@@ -360,6 +361,7 @@ class SharedWorkspace:
         self.session.messages = []
         self.session.price_history_query = None
         self.session.price_history_revision = None
+        self.session.lookup_evidence = None
         self.session.future_pair.cancel_shipment_window()
         self._comparison = None
         self.session.future_pair.costs_deferred = False

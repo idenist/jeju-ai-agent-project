@@ -11,6 +11,18 @@ from decimal import Decimal
 _NUMBER = re.compile(r"(?<![\d.])\d[\d,]*(?:\.\d+)?")
 _AMOUNT = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(천|만|억)?\s*원")
 _SCALE = {None: 1, "천": 1000, "만": 10000, "억": 100000000}
+_TERM_TOPICS = {
+    "감모율": "loss_rate", "감모": "loss_rate", "수수료 차감 후": "price_basis",
+    "차감 후 단가": "price_basis", "거래규격": "data_scope",
+}
+_TERM_QUESTION = re.compile(r"뜻|무슨\s*말|무엇|뭐예요|의미|설명")
+
+
+def simple_term_topic(text):
+    if (len(text) > 80 or not _TERM_QUESTION.search(text)
+            or re.search(r"\d|계산|적용|변경|바꿔|조회", text)):
+        return None
+    return next((topic for term, topic in _TERM_TOPICS.items() if term in text), None)
 
 
 def has_unsupported_amount(text, context):
