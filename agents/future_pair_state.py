@@ -619,12 +619,19 @@ class FuturePairState:
                 or not pending.get("comparison_inputs_pending")):
             return None
         fields = pending.get("missing_fields", ())
-        return next_pair_field(fields) if len(fields) == 1 else None
+        # 빠진 값이 여러 개여도 화면은 우선순위가 가장 높은 항목을 먼저 묻는다.
+        return next_pair_field(fields) if fields else None
 
     def apply_short_answer(self, question, *, on_progress=None):
         """Atomic local continuation; None means leave interpretation to the model."""
         field = self.waiting_field()
         patch = _simple_slot_patch(field, question) if field else None
+        if patch is None and field:
+            # 먼저 물은 항목에 맞지 않으면, 빠진 항목 중 이 답이 들어갈 수 있는 곳이 딱 하나일 때만 넣는다.
+            # 예: 단가·감모율이 빠졌을 때 "3000원"은 단가뿐이지만, "2%"는 여러 칸이 가능해 모델에 맡긴다.
+            fits = [p for p in (_simple_slot_patch(f, question)
+                                for f in (self.pending or {}).get("missing_fields", ())) if p]
+            patch = fits[0] if len(fits) == 1 else None
         if patch is None:
             return None
         return self.apply("edit", self.version, patch, on_progress=on_progress)
