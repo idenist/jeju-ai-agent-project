@@ -19,22 +19,15 @@ def past_pairs_reaching(change_pcts, price_a, threshold, interval_days):
     reached = sum(1 for c in changes if c >= needed)
     total = len(changes)
     return {"reached": reached, "total": total, "interval_days": interval_days,
-            "share_pct": str((Decimal(reached) * 100 / total).quantize(Decimal("1"), ROUND_HALF_UP)),
             "needed_change_pct": str(needed.quantize(Decimal("0.01"), ROUND_HALF_UP)),
-            "basis": "과거 빈도이며 미래가격 예측 확률이 아닙니다."}
+            "basis": "날짜가 겹치는 과거 자료이므로 미래에 오를 확률로 해석할 수 없습니다."}
 
 
-def reach_sentence(reach, later="B안"):
+def reach_sentence(reach, *, partial_costs=False):
     if not reach:
         return None
-    change = Decimal(reach["needed_change_pct"])
-    # 필요한 변동이 음수면 가격이 조금 내려도 손익분기를 넘는다는 뜻이라 문장을 나눠 쓴다.
-    if change > 0:
-        need = f"A안보다 {change:,.2f}% 이상 올라야 합니다"
-    elif change < 0:
-        need = f"A안보다 {-change:,.2f}% 내려도 넘습니다"
-    else:
-        need = "A안과 같기만 해도 됩니다"
-    head = (f"과거 같은 규격 {reach['interval_days']}일 가격쌍 {reach['total']}쌍 중 "
-            f"**{reach['reached']}쌍({reach['share_pct']}%)**이 이 손익분기 가격 이상이었습니다")
-    return f"{head}. {later} 가격은 {need}. {reach['basis']}"
+    # 확률로 읽히지 않도록 퍼센트 대신 "몇 쌍 / 전체 쌍"으로만 쓰고, 날짜 겹침 안내를 바로 붙인다.
+    target = "이 참고 기준(확인한 비용만 반영)" if partial_costs else "이 기준"
+    return (f"과거 같은 규격의 {reach['interval_days']}일 가격 변동을 적용하면, "
+            f"{reach['total']}쌍 중 **{reach['reached']}쌍**이 {target}을 충족했습니다.\n"
+            f"※ {reach['basis']}")

@@ -25,7 +25,9 @@ class PastPairsReachingTest(unittest.TestCase):
     def test_counts_pairs_at_or_above_threshold(self):
         # A 1000원, 손익분기 1100원이면 +10% 이상인 쌍만 센다(경계값 포함).
         reach = past_pairs_reaching(["-5", "9.99", "10", "25"], 1000, "1100", 7)
-        self.assertEqual((reach["reached"], reach["total"], reach["share_pct"]), (2, 4, "50"))
+        self.assertEqual((reach["reached"], reach["total"]), (2, 4))
+        # 확률처럼 읽히는 비율 값은 결과에 넣지 않는다.
+        self.assertNotIn("share_pct", reach)
         self.assertEqual(reach["needed_change_pct"], "10.00")
 
     def test_missing_or_bad_inputs_return_none(self):
@@ -34,12 +36,14 @@ class PastPairsReachingTest(unittest.TestCase):
         self.assertIsNone(past_pairs_reaching(["1"], 0, "1100", 7))
         self.assertIsNone(reach_sentence(None))
 
-    def test_sentence_direction(self):
-        up = reach_sentence(past_pairs_reaching(["5"], 1000, "1020", 7))
-        down = reach_sentence(past_pairs_reaching(["5"], 1000, "980", 7))
-        self.assertIn("2.00% 이상 올라야", up)
-        self.assertIn("2.00% 내려도 넘습니다", down)
-        self.assertIn("예측 확률이 아닙니다", up)
+    def test_sentence_uses_counts_and_overlap_note(self):
+        reach = past_pairs_reaching(["5", "-3", "12"], 1000, "1020", 7)
+        full = reach_sentence(reach)
+        partial = reach_sentence(reach, partial_costs=True)
+        self.assertIn("3쌍 중 **2쌍**이 이 기준을 충족했습니다", full)
+        self.assertIn("날짜가 겹치는 과거 자료", full)
+        self.assertNotIn("%", full.replace("7일", ""))
+        self.assertIn("2쌍**이 이 참고 기준(확인한 비용만 반영)을 충족했습니다", partial)
 
 
 class PastReachInAnswerTest(unittest.TestCase):
@@ -57,14 +61,16 @@ class PastReachInAnswerTest(unittest.TestCase):
         result = run_pair(0)
         reach = result["past_reach"]
         self.assertEqual((reach["reached"], reach["total"]), self.expected(result["break_even_vs_a_krw_per_kg"]))
-        self.assertIn(f"20쌍 중 **{reach['reached']}쌍", _render_future_pair(result))
+        text = _render_future_pair(result)
+        self.assertIn(f"20쌍 중 **{reach['reached']}쌍**이 이 기준을 충족했습니다", text)
+        self.assertNotIn("확인한 비용만 반영", text)
 
     def test_reference_with_unknown_costs_shows_reach(self):
         result = run_pair(None)
         self.assertTrue(result["threshold_only"])
         reach = result["past_reach"]
         self.assertEqual((reach["reached"], reach["total"]), self.expected(result["break_even_vs_a_krw_per_kg"]))
-        self.assertIn("이 손익분기 가격 이상이었습니다", _render_future_pair(result))
+        self.assertIn("이 참고 기준(확인한 비용만 반영)을 충족했습니다", _render_future_pair(result))
 
     def test_manual_b_price_has_no_reach(self):
         pair = FuturePairState()

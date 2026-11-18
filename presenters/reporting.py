@@ -173,11 +173,11 @@ def future_pair_summary(result: dict) -> tuple[str, str, str]:
     return f"{heading}에서 {comparison}", threshold, favorable
 
 
-def _reach_lines(result, later="B안"):
+def _reach_lines(result):
     from services.past_reach import reach_sentence
 
-    sentence = reach_sentence(result.get("past_reach"), later)
-    return [sentence] if sentence else []
+    sentence = reach_sentence(result.get("past_reach"), partial_costs=bool(result.get("threshold_only")))
+    return sentence.split("\n") if sentence else []
 
 
 def _price_source_period(source):
@@ -241,7 +241,7 @@ def _render_future_pair(result: dict) -> str:
     lines = [
         f"**비교 결론 · {conclusion}**",
         f"**{minimum}**",
-        *_reach_lines(result, later),
+        *_reach_lines(result),
         *([favorable] if favorable else []),
         *([warning] if warning else []),
         "",
