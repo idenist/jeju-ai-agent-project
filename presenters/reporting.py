@@ -174,10 +174,11 @@ def future_pair_summary(result: dict) -> tuple[str, str, str]:
 
 
 def _reach_lines(result):
-    from services.past_reach import reach_sentence
+    from services.past_reach import outcome_lines, reach_sentence
 
-    sentence = reach_sentence(result.get("past_reach"), partial_costs=bool(result.get("threshold_only")))
-    return sentence.split("\n") if sentence else []
+    reach = result.get("past_reach")
+    sentence = reach_sentence(reach, partial_costs=bool(result.get("threshold_only")))
+    return [*sentence.split("\n"), *outcome_lines(reach)] if sentence else []
 
 
 def _price_source_period(source):

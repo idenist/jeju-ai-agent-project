@@ -86,3 +86,43 @@ class PastReachInAnswerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PastOutcomesTest(unittest.TestCase):
+    """기준을 넘었을 때와 못 넘었을 때의 금액 크기도 표와 같은 계산으로 보여야 한다."""
+
+    def test_outcomes_match_table_extremes_and_counts(self):
+        result = run_pair(0)
+        out, reach = result["past_reach"]["outcomes"], result["past_reach"]
+        self.assertEqual(out["gain_pairs"] + out["loss_pairs"], reach["total"])
+        self.assertEqual(out["gain_pairs"], reach["reached"])
+        table = [Decimal(row["difference_vs_a_krw"]) for row in result["options_b"]]
+        # 가장 크게 오른/내린 사례 금액은 표의 최고·최저 행과 원 단위까지 같아야 한다.
+        self.assertEqual(Decimal(out["best_krw"]), max(table).quantize(Decimal("1")))
+        self.assertEqual(Decimal(out["worst_krw"]), min(table).quantize(Decimal("1")))
+        text = _render_future_pair(result)
+        self.assertIn(f"넘은 {out['gain_pairs']}쌍", text)
+        self.assertIn("절반보다 적었습니다", text)
+
+    def test_summary_buckets_are_factual(self):
+        from services.past_reach import judgment_summary
+        cases = {(0, 20): "없었습니다", (4, 20): "드물었습니다", (7, 20): "절반보다 적었습니다",
+                 (10, 20): "같았습니다", (12, 20): "절반보다 많았습니다", (15, 20): "대부분", (20, 20): "모든 사례"}
+        for (reached, total), words in cases.items():
+            self.assertIn(words, judgment_summary({"reached": reached, "total": total}))
+        for (reached, total), _ in cases.items():
+            # 권유하는 말(기다리세요/파세요)은 쓰지 않는다.
+            self.assertNotRegex(judgment_summary({"reached": reached, "total": total}), "하세요|추천")
+
+    def test_partial_cost_and_small_sample_notes(self):
+        partial = _render_future_pair(run_pair(None))
+        self.assertIn("확인한 비용만 반영한 참고값", partial)
+        pair = FuturePairState()
+        option = {"loss_percent": 2, "daily_storage_cost": 0, "other_cost_krw": 0, "fee_percent": 5}
+        small = pair.apply("new", pair.version, {
+            "quantity": 3000, "price_basis": "gross", "start_date": "2026-11-17", "price_a": 2500,
+            "option_a": {**option, "delay_days": 3}, "option_b": {**option, "delay_days": 10},
+            "price_mode": "history",
+            "history_filters": {"variety": "하우스감귤", "grade": "특", "size": "60내", "package": "상자", "package_kg": "3"}})
+        self.assertEqual(small["past_reach"]["total"], 3)
+        self.assertIn("사례가 3쌍뿐이라", _render_future_pair(small))

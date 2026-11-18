@@ -259,7 +259,7 @@ def compare_future_pair_history_reference(*, quantity, price_basis, start_date,
             "known_cost_krw": b["known_cost_krw"],
             "remaining_kg": b["remaining_kg"],
         })
-    from services.past_reach import past_pairs_reaching
+    from services.past_reach import add_past_outcomes, past_pairs_reaching
 
     reference.update({
         "history_scenarios": True,
@@ -285,7 +285,7 @@ def compare_future_pair_history_reference(*, quantity, price_basis, start_date,
             *([history_preview["sample_note"]] if history_preview.get("sample_note") else []),
         ],
     })
-    return reference
+    return add_past_outcomes(reference, history_preview.get("change_pcts") or ())
 
 
 def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b,
@@ -348,7 +348,7 @@ def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b
         cautions = converted["cautions"]
         change_pcts = converted.get("change_pcts")
 
-    from services.past_reach import past_pairs_reaching
+    from services.past_reach import add_past_outcomes, past_pairs_reaching
 
     a_input = _engine_option(option_a, a_template)
     if on_progress:
@@ -381,7 +381,7 @@ def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b
                 "price_per_kg": number(option["future_price_per_kg"]),
                 "proceeds_krw": number(result["hypothetical_proceeds_krw"])}
 
-    return {"status": "OK", "analysis_type": "future_pair", "quantity_kg": quantity, "price_basis": price_basis,
+    result = {"status": "OK", "analysis_type": "future_pair", "quantity_kg": quantity, "price_basis": price_basis,
             "start_date": start_date, "interval_days": days_b - days_a, "evidence": evidence,
             "option_a": row(a_result, a_input, option_a["other_cost_krw"], sale_a),
             "options_b": [{**row(result, option, option_b["other_cost_krw"], sale_b),
@@ -393,3 +393,4 @@ def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b
             "historical_price_lookup": "used" if history_filters is not None else "not_used",
             "suppress_market_evidence": history_filters is None,
             "warnings": [*result_b["warnings"], *cautions]}
+    return add_past_outcomes(result, change_pcts or ())

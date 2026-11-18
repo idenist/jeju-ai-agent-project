@@ -140,7 +140,7 @@ def get_price_scenarios(args: dict, data_file: Path = DEFAULT_FILE, prices_file:
               "base_date_range": [min(r["base_date"] for r in clean), max(r["base_date"] for r in clean)],
               "scenarios": scenarios,
               # 손익분기 도달 빈도를 세려고 경고 없는 전체 사례의 변동률(오름차순)을 함께 넘긴다.
-              "change_pcts": [won(c) for c in changes]}
+              "change_pcts": [str(c) for c in changes]}
     if len(clean) < MIN_CLEAN_PAIRS:
         # 사례가 적으면 최저·최고가 한두 사례에 크게 흔들리므로 가정 단가는 주되 안내를 붙인다.
         result.update(small_sample=True, cautions=[
