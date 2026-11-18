@@ -140,7 +140,9 @@ def future_pair_feedback(result, *, pause_costs=False, one_question=False):
     message = result.get("message") or "비교 조건을 확인해 주세요."
     if preview := result.get("history_preview"):
         start, end = preview["base_date_range"]
+        from presenters.data_basis import data_basis_line
         lines = [f"**같은 규격의 과거 {preview['interval_days']}일 가격쌍 {preview['clean_pairs']}개를 찾았습니다.**",
+                 data_basis_line(preview),
                  f"관측 기준일 {start} ~ {end}",
                  " · ".join(f"{label} {Decimal(row['change_pct']):+,.2f}%"
                             for label, row in zip(("최저", "중앙", "최고"), preview["scenarios"]))]
@@ -671,6 +673,12 @@ class FuturePairState:
         """Atomic local continuation; None means leave interpretation to the model."""
         field = self.waiting_field()
         patch = _simple_slot_patch(field, question) if field else None
+        if patch is None and field:
+            # 먼저 물은 항목에 맞지 않으면, 빠진 항목 중 이 답이 들어갈 수 있는 곳이 딱 하나일 때만 넣는다.
+            # 예: 단가·감모율이 빠졌을 때 "3000원"은 단가뿐이지만, "2%"는 여러 칸이 가능해 모델에 맡긴다.
+            fits = [p for p in (_simple_slot_patch(f, question)
+                                for f in (self.pending or {}).get("missing_fields", ())) if p]
+            patch = fits[0] if len(fits) == 1 else None
         if patch is None:
             return None
         return self.apply("edit", self.version, patch, on_progress=on_progress)
