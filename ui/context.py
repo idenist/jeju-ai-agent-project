@@ -88,8 +88,13 @@ def _reset_all():
     for key in ("price_history_variety", "price_history_grade", "price_history_size",
                 "price_history_package", "price_history_package_kg", "price_history_market_code",
                 "price_history_trade_type", "price_history_interval_days", "price_history_base_date",
-                "price_history_limit", "price_history_submitted_query", "show_price_history"):
+                "price_history_base_date_picker", "price_history_limit", "price_history_submitted_query",
+                "show_price_history", "seasonal_prices_submitted_query", "seasonal_prices_result",
+                "review_as_of_date", "seasonal_prices_sources"):
         st.session_state.pop(key, None)
+    for key in list(st.session_state):
+        if key.startswith(("price_history_spec_", "seasonal_prices_spec_", "review_market_", "market_decision_")):
+            st.session_state.pop(key, None)
     _sync_card(force=True)
 
 def _clear_sensitivity():

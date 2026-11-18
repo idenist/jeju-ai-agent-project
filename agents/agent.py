@@ -10,7 +10,8 @@ from uuid import uuid4
 from core.config import Settings
 from agents.box_price import mentions_box_price, pending_box_arguments
 from agents.future_pair_intent import (
-    continues_comparison, explicit_shipment_quantity, forbids_historical_pair_price, is_future_pair_request, requests_manual_price,
+    changes_later_date_only, continues_comparison, explicit_shipment_quantity, forbids_historical_pair_price,
+    is_future_pair_request, requests_manual_price,
     starts_new_comparison, states_price_basis, requests_historical_pair_price,
 )
 from core.latency import log_latency
@@ -22,6 +23,7 @@ from agents.harness import ExecutionPolicy, RunStopped, RepeatGuard, bound_histo
 
 from agents.dialogue import has_unsupported_amount, remember_visible_reply
 from agents.prompts import SYSTEM_PROMPT
+from agents.service_scope import scope_reply
 
 
 def _has_explicit_value(value):
@@ -38,9 +40,6 @@ def load_model_sdk():
     return OpenAI
 
 
-
-
-
 @dataclass
 class _TurnRouting:
     """Ephemeral routing facts for one user turn; never persisted as user data."""
@@ -50,15 +49,15 @@ class _TurnRouting:
     has_box_price: bool
     quantity: float | None
     allow_price_history: bool
+    excludes_price_history: bool
+    existing_reference_request: bool
     future_pair_route: bool
-    forced_forecast: bool
     comparison_started: bool = False
     pending_value_reply: bool = False
 
 
 class AgentSession:
-    def __init__(self, settings: Settings | None = None, client=None, policy=None,
-                 experimental_forecast: bool = False):
+    def __init__(self, settings: Settings | None = None, client=None, policy=None):
         self.settings = settings
         self.client = client
         self.store = ScenarioStore()
@@ -72,15 +71,6 @@ class AgentSession:
         self.price_history_revision = None
         from agents.future_pair_state import FuturePairState
         self.future_pair = FuturePairState()
-        # [격리] 준억님의 정식 미래 출하 비교 상태를 그대로 두고,
-        # 연구용 ML 비교의 대화 조건은 독립 Draft에만 저장합니다.
-        self.experimental_forecast = experimental_forecast
-        self.experimental_forecast_draft = None
-        self.experimental_forecast_revision = None
-        if experimental_forecast:
-            from experiments.forecast_agent import ExperimentalForecastDraft
-            self.experimental_forecast_draft = ExperimentalForecastDraft()
-
 
     def _execute_requested_tool(self, name: str, arguments, question: str, routing: _TurnRouting,
                                 *, on_progress=None):
@@ -97,7 +87,6 @@ class AgentSession:
         quantity = routing.quantity
         allow_price_history = routing.allow_price_history
         future_pair_route = routing.future_pair_route
-        forced_forecast = routing.forced_forecast
         recorded_arguments = arguments
         if name == "get_price_history":
             from services.price_history_followup import (
@@ -128,7 +117,7 @@ class AgentSession:
             result = execute_tool(name, arguments, self.store, reference_case=getattr(self, "comparison_reference", None),
                 task_context=self.task_context.snapshot(), input_context=getattr(self, "comparison_input_context", None))
         elif name == "compare_future_pair":
-            from agents.future_pair_state import AMBIGUOUS_NUMERIC_RECOVERY, is_questioned_numeric_reply
+            from agents.future_pair_state import AMBIGUOUS_NUMERIC_RECOVERY, is_questioned_numeric_reply, unavailable_loss_rate
             patch_values = arguments.get("patch") if isinstance(arguments, dict) else None
             pending_values = self.future_pair.pending or {}
             if (not new_comparison and pending_values.get("comparison_inputs_pending")
@@ -163,7 +152,29 @@ class AgentSession:
                     patch["quantity"] = quantity
                 if future_pair_route and not keep_pair:
                     action = "edit" if comparison_started else "new"
-                if future_pair_route and patch.get("price_b") is None:
+                if action == "edit" and changes_later_date_only(question):
+                    protected = {"quantity", "start_date", "price_basis", "price_a", "option_a"}
+                    patch = {field: value for field, value in patch.items() if field not in protected}
+                    if isinstance(arguments.get("clear_fields"), list):
+                        arguments = {**arguments, "clear_fields": [
+                            field for field in arguments["clear_fields"]
+                            if not isinstance(field, str) or field.partition(".")[0] not in protected
+                        ]}
+                if action == "edit":
+                    for side in ("option_a", "option_b"):
+                        update = patch.get(side)
+                        if (isinstance(update, dict) and update.get("delay_days") is not None
+                                and update["delay_days"] != self.future_pair.inputs[side]["delay_days"]
+                                and unavailable_loss_rate(question, side)):
+                            patch[side] = {**update, "loss_percent": None, "loss_confirmed_for_period": False}
+                if routing.excludes_price_history:
+                    if routing.existing_reference_request:
+                        # Asking for the threshold alone does not revise confirmed inputs.
+                        patch = {}
+                        arguments = {**arguments, "clear_fields": []}
+                    patch["price_mode"] = "manual"
+                    patch["history_filters"] = None
+                elif future_pair_route and patch.get("price_b") is None:
                     # Historical pairs are the default source unless the user opts out.
                     patch["price_mode"] = "history" if allow_price_history else "manual"
                     if not allow_price_history:
@@ -171,13 +182,12 @@ class AgentSession:
                 elif future_pair_route and not requests_historical_pair_price(question):
                     patch["price_mode"] = "manual"
                     patch["history_filters"] = None
-                elif (action == "edit" and
-                      (forbids_historical_pair_price(question) or requests_manual_price(question))):
+                elif action == "edit" and requests_manual_price(question):
                     # A clear opt-out during a pending comparison switches modes and drops filters.
                     patch["price_mode"] = "manual"
                     patch["history_filters"] = None
                 arguments = {**arguments, "action": action, "patch": patch}
-                if future_pair_route or routing.pending_value_reply:
+                if future_pair_route or routing.pending_value_reply or routing.excludes_price_history:
                     arguments["finish_turn"] = True
                 recorded_arguments = arguments
             if has_box_price and isinstance(arguments, dict) and isinstance(arguments.get("patch"), dict):
@@ -196,29 +206,6 @@ class AgentSession:
         elif name == "analyze_shipment_timing":
             result = execute_tool(name, arguments, self.store, future_pair=self.future_pair,
                                   on_progress=on_progress)
-        elif name == "compare_experimental_forecast" and self.experimental_forecast:
-            # [트러블슈팅] LLM이 입력 보완 턴을 new로 잘못 분류하면
-            # 기존 3톤·규격·일자가 삭제됩니다. 동일 비교라면 edit로 교정합니다.
-            if (forced_forecast and self.experimental_forecast_draft.awaiting_input
-                    and isinstance(arguments, dict) and arguments.get("action") == "new"
-                    and not any(word in question for word in
-                                ("새 비교", "처음부터", "초기화", "이전 조건 무시", "새로 시작"))):
-                patch = arguments.get("patch") or {}
-                saved = self.experimental_forecast_draft.inputs
-                changes_identity = any(
-                    patch.get(key) is not None and saved.get(key) is not None
-                    and patch[key] != saved[key] for key in ("as_of", "quantity")
-                )
-                changes_identity |= any(
-                    patch.get("spec", {}).get(key) is not None
-                    and saved["spec"].get(key) is not None
-                    and patch["spec"][key] != saved["spec"][key]
-                    for key in ("variety", "grade", "size", "package", "package_kg")
-                ) if isinstance(patch.get("spec"), dict) else False
-                if not changes_identity:
-                    arguments = {**arguments, "action": "edit"}
-                    recorded_arguments = arguments
-            result = self.experimental_forecast_draft.apply(arguments)
         elif name == "compare_shipment_options" and new_comparison and not comparison_started:
             result = {"status": "INVALID_INPUT", "message": "새 비교에 사용할 출하 조건을 먼저 확인해 주세요."}
         elif on_progress and name in {"compare_shipment_options", "explore_data", "build_review_brief",
@@ -241,6 +228,11 @@ class AgentSession:
         settings = self.settings or Settings.load()
         if not isinstance(question, str) or not question.strip() or len(question) > 6000:
             return {"status": "INVALID_INPUT", "text": "질문은 1~6,000자로 입력하세요.", "tool_results": [], "events": [], "state": self.store.snapshot()}
+        if outside_scope := scope_reply(question):
+            return {"status": "OK", "text": outside_scope, "report": outside_scope,
+                    "tool_results": [], "visible_results": [], "events": [],
+                    "state": self.store.snapshot(),
+                    "metrics": {"model_requests": 0, "dialogue_route": "outside_service_scope"}}
         if self.client is None and not settings.api_key:
             return {"status": "KEY_REQUIRED", "text": "프로젝트 .env에 OPENAI_API_KEY를 입력하세요. 직접 조건 비교와 과거 출하통계는 키 없이 사용할 수 있습니다.",
                     "tool_results": [], "events": [], "state": self.store.snapshot()}
@@ -251,8 +243,22 @@ class AgentSession:
                                                            pair_costs_deferred=self.future_pair.costs_deferred),
                     "report": report_for([entry]), "tool_results": [entry], "visible_results": [entry],
                     "events": [], "state": self.store.snapshot(), "metrics": {"model_requests": 0}}
-        from agents.future_pair_state import is_bare_unknown_reply
+        from agents.future_pair_state import (
+            is_bare_unknown_reply, is_input_burden_complaint, paused_pair_feedback,
+        )
         pending = self.future_pair.pending
+        if (not new_comparison and pending is not None
+                and pending.get("status") == "NEEDS_INPUT"
+                and is_input_burden_complaint(question)):
+            # A complaint about the number of fields is a stop signal, not another
+            # invitation to advance the clarification sequence.
+            self.future_pair.costs_deferred = True
+            self.future_pair.specs_deferred = True
+            text = paused_pair_feedback(pending)
+            return {"status": "OK", "text": text, "report": text,
+                    "tool_results": [], "visible_results": [], "events": [],
+                    "state": self.store.snapshot(),
+                    "metrics": {"model_requests": 0, "dialogue_route": "input_burden_pause"}}
         if (not new_comparison and pending is not None
                 and pending.get("source_status") == "NEEDS_CLARIFICATION"
                 and is_bare_unknown_reply(question)):
@@ -264,7 +270,7 @@ class AgentSession:
                     "report": report_for([entry]), "tool_results": [entry],
                     "visible_results": [entry], "events": [],
                     "state": self.store.snapshot(), "metrics": {"model_requests": 0}}
-        if not new_comparison and not self.experimental_forecast:
+        if not new_comparison:
             direct = self.future_pair.apply_short_answer(question, on_progress=on_progress)
             if direct is not None:
                 entry = {"tool": "compare_future_pair", "result": direct}
@@ -300,57 +306,36 @@ class AgentSession:
         if self.price_history_query is not None and self.price_history_revision != source_revision:
             self.price_history_query = None
             self.price_history_revision = None
-        # [PR #3 충돌 방지] 기본 서비스의 도구 목록·프롬프트는 변경하지 않습니다.
-        # --experimental-forecast 모드에서만 별도의 연구용 도구를 선택합니다.
-        experimental_tools, experimental_prompt = [*TOOLS, TIMING_TOOL], SYSTEM_PROMPT
-        forced_forecast = False
-        if self.experimental_forecast:
-            from experiments.forecast_agent import (
-                EXPERIMENTAL_TOOL, EXPERIMENTAL_PROMPT, keep_experimental_route,
-            )
-            if self.experimental_forecast_revision != source_revision:
-                # [데이터 버전] 기존 버전의 날짜·규격을 새 시장 원천에 섞지 않습니다.
-                self.experimental_forecast_draft.reset()
-                self.experimental_forecast_revision = source_revision
-
-            user_text = " ".join(question.casefold().split())
-            explicitly_ml = any(keyword in user_text for keyword in (
-                "연구용 ml", "실험용 ml", "ml 모델", "ml 예측", "예측 모델", "연구용 예측",
-            ))
-            # [도구 충돌] 준억님 compare_future_pair가 조건 보완 중이라면,
-            # 실험 모드의 '언제 팔까요?' 자동 분류가 그 대화를 가로채지 않도록 합니다.
-            # 연구용 ML로 명시 전환한 경우와 기존 ML 보완 턴만 예외입니다.
-            pending_future_pair = self.future_pair.pending is not None
-            pending_ml = self.experimental_forecast_draft.awaiting_input
-            if pending_future_pair and not pending_ml and not explicitly_ml:
-                experimental_tools = [*TOOLS, TIMING_TOOL]
-            else:
-                forced_forecast = keep_experimental_route(question, self.experimental_forecast_draft)
-                experimental_tools = ([EXPERIMENTAL_TOOL] if forced_forecast
-                                      else [*TOOLS, TIMING_TOOL, EXPERIMENTAL_TOOL])
-                experimental_prompt = SYSTEM_PROMPT + EXPERIMENTAL_PROMPT
-        future_pair_route = not forced_forecast and is_future_pair_request(question, today)
-        new_comparison = new_comparison and not forced_forecast
+        offered_tools, instructions = [*TOOLS, TIMING_TOOL], SYSTEM_PROMPT
+        future_pair_route = is_future_pair_request(question, today)
         basis_stated = states_price_basis(question)
-        keep_pair = not new_comparison and self.future_pair.inputs["price_a"] is not None and continues_comparison(question)
-        has_box_price = not forced_forecast and mentions_box_price(question)
+        pair_inputs = self.future_pair.inputs
+        keep_pair = not new_comparison and pair_inputs["price_a"] is not None and (
+            continues_comparison(question) or changes_later_date_only(question)
+        )
+        excludes_price_history = forbids_historical_pair_price(question)
+        compact = "".join(question.split())
+        existing_reference_request = (
+            excludes_price_history and not new_comparison and not future_pair_route
+            and any(phrase in compact for phrase in ("손익분기만", "손익분기단가만", "필요한단가만"))
+            and all(pair_inputs[side]["delay_days"] is not None for side in ("option_a", "option_b"))
+        )
+        keep_pair |= existing_reference_request
+        has_box_price = mentions_box_price(question)
         quantity = explicit_shipment_quantity(question) if future_pair_route else None
         explicit_history = requests_historical_pair_price(question)
-        allow_price_history = (future_pair_route and not forbids_historical_pair_price(question)
+        allow_price_history = (future_pair_route and not excludes_price_history
                                and (explicit_history or not requests_manual_price(question)))
-        pending_value_reply = (not forced_forecast and not new_comparison and
-                               not future_pair_route and self.future_pair.is_compound_value_answer(question))
-        forced_tool = "compare_experimental_forecast" if forced_forecast else None
+        pending_value_reply = (not new_comparison and not future_pair_route
+                               and self.future_pair.is_compound_value_answer(question))
         if pending_value_reply:
-            forced_tool = "compare_future_pair"
-            experimental_prompt += ("\n현재의 A/B 비교 조건 보완 답변입니다. "
-                                    "기존 조건을 유지하고 action=edit로 명시한 값만 전달하세요. "
-                                    "expected_version은 현재 미래 출하 비교 상태의 version입니다. "
-                                    "값을 반영한 후 finish_turn=true로 종료하세요.")
+            instructions += ("\n이번 입력이 현재 A/B 비교의 조건 보완 답변이라면 compare_future_pair를 사용하세요. "
+                             "기존 조건을 유지하고 action=edit로 명시한 값만 전달하세요. "
+                             "expected_version은 현재 미래 출하 비교 상태의 version입니다. "
+                             "값을 반영한 후 finish_turn=true로 종료하세요.")
         if future_pair_route:
-            forced_tool = "compare_future_pair"
-            experimental_prompt += (
-                "\n이번 요청은 서로 다른 두 미래 출하일의 단일 비교입니다. 총 물량은 kg으로 반영하세요. "
+            instructions += (
+                "\n서로 다른 두 미래 날짜가 언급됐습니다. 제주 감귤 출하 비교가 맞다면 compare_future_pair를 사용하고 총 물량은 kg으로 반영하세요. "
                 "'며칠 뒤'의 기준일이 따로 없으면 위 오늘 날짜를 사용하고, 달력 날짜는 보관 시작일과 구분하세요. "
                 "명시된 날짜·기간·단가를 사용하고 불분명한 값만 확인하세요. "
                 "B안 단가를 사용자가 직접 정하지 않았고 과거 가격 제외 요청도 없으면 price_mode=history로 자료를 먼저 확인하세요. "
@@ -358,29 +343,32 @@ class AgentSession:
                 "누락된 거래규격은 실제 자료 후보를 제시해 한 번에 확인하고, 임의 규격을 선택하지 마세요. "
                 "과거 가격쌍 간격은 B 출하일−A 출하일입니다. 과거 사례를 미래 예측 확률이나 검증된 10일 가격 전망처럼 말하지 마세요."
             )
+        if excludes_price_history and (future_pair_route or existing_reference_request):
+            instructions += (
+                "\n현재 제주 감귤 비교의 손익분기 요청이라면 compare_future_pair를 사용하세요. 과거 가격을 조회하거나 재사용하지 마세요. "
+                "B안 단가를 명시하지 않았다면 비워 두고 이미 확인한 조건으로 참고 손익분기를 계산하세요."
+            )
         if new_comparison:
-            experimental_prompt += (
+            instructions += (
                 "\n이번 요청은 새 출하 비교입니다. 이번 메시지에서 확인된 조건으로 시작하세요. "
                 "두 미래 출하안은 action=new, 오늘과 나중은 update_scenario를 호출하세요. "
                 "수수료율이 있어도 수수료 차감 전·후 기준이 명시되지 않았다면 price_basis는 null입니다."
             )
         if has_box_price:
-            experimental_tools = [with_box_price(tool) if tool["name"] == "compare_future_pair" else tool
-                                  for tool in experimental_tools]
-            experimental_prompt += (
+            offered_tools = [with_box_price(tool) if tool["name"] == "compare_future_pair" else tool
+                             for tool in offered_tools]
+            instructions += (
                 "\n두 미래 출하일의 상자당 단가에는 box_price를 사용하세요. phrase에 상자당 가격 부분의 원문을 그대로 복사하고 "
                 "side에는 해당하는 A 또는 B를 넣으세요. 어느 안인지 불분명하면 null입니다. "
                 "상자 가격을 kg 단가로 넣지 마세요. 환산용 무게와 과거 조회 규격을 사용자가 따로 지정하면 "
                 "history_filters에는 조회 규격만 넣으세요. 나머지 명시한 조건은 함께 저장하세요."
             )
         from agents.tool_policy import select_offered_tools
-        experimental_tools, focused = select_offered_tools(
-            experimental_tools, enabled=self.focused_tools,
+        offered_tools, focused = select_offered_tools(
+            offered_tools, enabled=self.focused_tools,
             future_pair_request=future_pair_route,
-            experimental_forecast=self.experimental_forecast,
         )
         metrics["focused_toolset"] = focused
-        tool_choice = {"type": "function", "name": forced_tool} if forced_tool else "auto"
         routing = _TurnRouting(
             new_comparison=new_comparison,
             basis_stated=basis_stated,
@@ -388,8 +376,9 @@ class AgentSession:
             has_box_price=has_box_price,
             quantity=quantity,
             allow_price_history=allow_price_history,
+            excludes_price_history=excludes_price_history,
+            existing_reference_request=existing_reference_request,
             future_pair_route=future_pair_route,
-            forced_forecast=forced_forecast,
             pending_value_reply=pending_value_reply,
         )
         start_context_version = self.task_context.snapshot()["version"]
@@ -401,11 +390,6 @@ class AgentSession:
                     raise RunStopped("TIME_LIMIT")
                 latest_user = user_starts(self.messages)[-1]
                 self.task_context.reconcile_scenario(self.store.scenario)
-                # [트러블슈팅] 단문 후속 답변에서도 확정된 ML 조건은 서버 상태에서 복원합니다.
-                experimental_context = (
-                    "연구용 ML 가격 실험 조건: " + json.dumps(
-                        self.experimental_forecast_draft.snapshot(), ensure_ascii=False) + "\n"
-                ) if self.experimental_forecast else ""
                 starting = (new_comparison or (future_pair_route and not keep_pair)) and not routing.comparison_started
                 scenario = ({"version": self.store.version, "scenario": empty_scenario(), "provenance": {}}
                             if starting else self.store.snapshot())
@@ -417,14 +401,13 @@ class AgentSession:
                     f"두 미래 출하안 비교 조건: {json.dumps(self.future_pair.snapshot(start_new=starting), ensure_ascii=False)}\n"
                     f"두 미래 출하안에서 확인 중인 항목: {json.dumps([] if starting else (self.future_pair.pending or {}).get('missing_fields', []), ensure_ascii=False)}\n"
                     f"이번 A/B 비교에서 직전에 사용자에게 물은 항목: {json.dumps(None if starting else self.future_pair.waiting_field(), ensure_ascii=False)}\n"
-                    f"{experimental_context}"
                     f"정산 기록: {json.dumps({'available': bool(self.shipment and self.shipment.revision), 'revision': self.shipment.revision if self.shipment else None, 'details': 'local_only'}, ensure_ascii=False)}\n"
                     f"사용자: {question.strip()}")
                 metrics["trimmed_history_turns"] += bound_history(self.messages, self.policy.history_turns, self.policy.input_characters)
                 model_messages = self.messages[user_starts(self.messages)[-1]:] if new_comparison else self.messages
                 metrics["request_input_characters"].append(encoded_size(model_messages))
-                metrics["tools_offered_per_request"].append(len(experimental_tools))
-                metrics["instruction_chars_per_request"].append(len(experimental_prompt))
+                metrics["tools_offered_per_request"].append(len(offered_tools))
+                metrics["instruction_chars_per_request"].append(len(instructions))
                 phase = "model_request"
                 if on_progress and results:
                     on_progress("response")
@@ -433,9 +416,9 @@ class AgentSession:
                 client = self.client.with_options(timeout=min(30, remaining), max_retries=0) if hasattr(self.client, "with_options") else self.client
                 try:
                     response = client.responses.create(
-                        model=settings.model, instructions=experimental_prompt, input=deepcopy(model_messages),
-                        tools=experimental_tools,
-                        tool_choice=tool_choice,
+                        model=settings.model, instructions=instructions, input=deepcopy(model_messages),
+                        tools=offered_tools,
+                        tool_choice="auto",
                         parallel_tool_calls=False,
                         store=False, max_output_tokens=4000,
                     )
@@ -470,8 +453,6 @@ class AgentSession:
                         metrics["unsupported_answer_blocked"] = bool(candidate)
                     break
                 self.messages.extend(response.output)
-                # A forced initial route must not force every subsequent call in the turn.
-                tool_choice = "auto"
                 finished = False
                 for call in tool_calls:
                     phase = "tool_execution"
@@ -499,8 +480,7 @@ class AgentSession:
                                    "task_context_version": self.task_context.snapshot()["version"],
                                    "elapsed_seconds": round(time.monotonic() - tool_started, 3)})
                     log_latency("tool_execution", tool_started, tool=call.name, status=result["status"])
-                    model_output = model_receipt_for_tool(
-                        call.name, result, experimental_forecast=self.experimental_forecast)
+                    model_output = model_receipt_for_tool(call.name, result)
                     self.messages.append({"type": "function_call_output", "call_id": call.call_id,
                                           "output": json.dumps(model_output, ensure_ascii=False)})
                     if time.monotonic() - started >= self.policy.seconds:
@@ -510,7 +490,7 @@ class AgentSession:
                     elif isinstance(arguments, dict) and arguments.get("finish_turn") is True and (
                             result["status"] in {"OK", "NEEDS_INPUT", "NEEDS_CLARIFICATION", "NO_DATA", "PARTIAL", "CHECK_REQUIRED"}
                             or (call.name == "get_price_history" and result["status"] == "DATA_ERROR")
-                            or call.name in {"compare_future_pair", "compare_experimental_forecast"}):
+                            or call.name == "compare_future_pair"):
                         finished = True
                 if finished:
                     break
@@ -563,13 +543,7 @@ class AgentSession:
                                    pair_specs_deferred=self.future_pair.specs_deferred)
         else:
             text = "아직 확인된 자료로 답변을 완성하지 못했습니다. 요청하신 내용으로 다시 시도해 주세요."
-        report = text if pending_model_reply or not visible else report_for(visible)
-        if self.experimental_forecast and visible and visible[-1]["tool"] == "compare_experimental_forecast":
-            # [출력 경로] 준억님 출하 상담의 화면/PDF 렌더링은 그대로 유지합니다.
-            # 연구용 ML 결과만 전용 출력기로 표시합니다.
-            from experiments.forecast_agent import format_experimental_result
-            text = format_experimental_result(visible[-1]["result"])
-            report = text
+        report = report_for(visible) if visible else text
         if status != "OK":
             warning = "\n\n" + FAILURE_GUIDANCE.get(status, FAILURE_GUIDANCE["API_ERROR"]) + " 확인된 도구 결과까지만 부분 결과이며 요청 전체가 완료된 것은 아닙니다."
             text += warning

@@ -60,11 +60,14 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         return app
 
     def _fill(self, app, *, interval=7, **changes):
-        fields = {"variety": "조생귤", "grade": "특", "size": "소", "package": "상자", "package_kg": "5"}
+        fields = {"market_code": "110001", "variety": "조생귤", "grade": "특", "size": "소", "package": "상자", "package_kg": "5"}
         fields.update(changes)
-        for field, value in fields.items():
-            next(widget for widget in app.text_input if widget.key == "price_history_" + field).set_value(value)
-        next(widget for widget in app.number_input if widget.key == "price_history_interval_days").set_value(interval)
+        token = app.session_state.workspace.session.settings.api_key
+        with patch.dict(os.environ, {"OPENAI_API_KEY": token}):
+            for field, value in fields.items():
+                app.selectbox(key="price_history_spec_" + field).select(value).run()
+                self.assertFalse(app.exception)
+            app.selectbox(key="price_history_interval_days").select(interval).run()
 
     def _pdf_buttons(self, app):
         return [button for button in app.get("download_button") if button.label in
@@ -158,7 +161,8 @@ class 통합화면사용자흐름검수(unittest.TestCase):
     def test_키가_없어도_경락가격과_손익계산_진입점이_있음(self):
         app = self._app()
         self.assertTrue(app.text_input(key="shipment_question").disabled)
-        for label in ("과거 경락가격 직접 조회", "입력 조건 비교", "과거 출하량 조회"):
+        self.assertTrue(self._button(app, "과거 경락가격 조회").disabled)
+        for label in ("수정한 조건 저장 후 비교", "과거 출하량 조회"):
             self.assertFalse(self._button(app, label).disabled)
         self.assertTrue(any(button.label == "과거 경락가격" for button in app.button))
         self.assertTrue(any("과거 경락가격 비교" in entry.label for entry in app.expander))
@@ -167,7 +171,7 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         from pypdf import PdfReader
         app = self._app()
         self._fill(app)
-        self._run(app, "과거 경락가격 직접 조회")
+        self._run(app, "과거 경락가격 조회")
         ws = app.session_state.workspace
         entry = ws.current_entries()[0]
         self.assertEqual(entry["tool"], "get_price_history")
@@ -189,56 +193,51 @@ class 통합화면사용자흐름검수(unittest.TestCase):
     def test_조회_간격_변경시_기존_보고서를_숨기고_재조회(self):
         app = self._app()
         self._fill(app)
-        self._run(app, "과거 경락가격 직접 조회")
+        self._run(app, "과거 경락가격 조회")
         self.assertEqual(app.session_state.workspace.current_entries()[0]["result"]["clean_pairs"], 20)
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
-            next(widget for widget in app.number_input
-                 if widget.key == "price_history_interval_days").set_value(14).run()
+            app.selectbox(key="price_history_interval_days").select(14).run()
         self.assertEqual(list(app.exception), [])
         self.assertEqual(app.session_state.workspace.current_entries(), [])
         self.assertFalse(self._pdf_buttons(app))
         self.assertTrue(any("이전 과거 가격 결과를 숨겼습니다" in info.value for info in app.info))
-        self._run(app, "과거 경락가격 직접 조회")
+        self._run(app, "과거 경락가격 조회")
         result = app.session_state.workspace.current_entries()[0]["result"]
         self.assertEqual(result["status"], "OK")
         self.assertEqual(result["interval_days"], 14)
         self.assertEqual(result["clean_pairs"], 15)
         self.assertEqual(len(self._pdf_buttons(app)), 1)
 
-    def test_불완전한_규격은_이전값이나_영을_추측하지_않음(self):
+    def test_불완전한_규격은_조회버튼을_비활성화(self):
         app = self._app()
-        next(widget for widget in app.text_input if widget.key == "price_history_variety").set_value("조생귤")
-        next(widget for widget in app.number_input if widget.key == "price_history_interval_days").set_value(7)
-        self._run(app, "과거 경락가격 직접 조회")
-        result = app.session_state.workspace.current_entries()[0]["result"]
-        self.assertEqual(result["status"], "NEEDS_INPUT")
-        self.assertIn("grade", result["missing_fields"])
-        self.assertIn("package_kg", result["missing_fields"])
-        self.assertNotIn("examples", result)
-        self.assertNotIn("market_code", app.session_state.workspace.session.price_history_query)
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+            app.selectbox(key="price_history_spec_market_code").select("110001").run()
+            app.selectbox(key="price_history_spec_variety").select("조생귤").run()
+        self.assertTrue(self._button(app, "과거 경락가격 조회").disabled)
+        self.assertIsNone(app.selectbox(key="price_history_spec_grade").value)
+        self.assertIsNone(app.selectbox(key="price_history_spec_package_kg").value)
+        self.assertEqual(app.session_state.workspace.current_entries(), [])
         self.assertIsNone(app.session_state.workspace.store.scenario["current_price_per_kg"])
 
-    def test_포장중량_충돌은_자동선택하지_않고_오류표시(self):
+    def test_포장중량을_포장명에_섞어_입력할_수_없음(self):
         app = self._app()
-        self._fill(app, package="10kg 박스", package_kg="5")
-        self._run(app, "과거 경락가격 직접 조회")
-        result = app.session_state.workspace.current_entries()[0]["result"]
-        self.assertEqual(result["status"], "INVALID_INPUT")
-        self.assertIn("10kg", result["message"])
-        self.assertIn("5kg", result["message"])
-        self.assertNotIn("examples", result)
-        self.assertIsNone(app.session_state.workspace.store.scenario["current_price_per_kg"])
+        self._fill(app)
+        self.assertNotIn("10kg 박스", app.selectbox(key="price_history_spec_package").options)
+        self.assertEqual(app.selectbox(key="price_history_spec_package").value, "상자")
+        self.assertEqual(app.selectbox(key="price_history_spec_package_kg").value, "5")
+        self._run(app, "과거 경락가격 조회")
+        self.assertEqual(app.session_state.workspace.current_entries()[0]["result"]["status"], "OK")
 
     def test_과거가격_조회후_손익계산은_별개_결과로_교체됨(self):
         app = self._app()
         self._run(app, "가상 예시 조건 불러오기")
         before = deepcopy(app.session_state.workspace.store.snapshot())
         self._fill(app)
-        self._run(app, "과거 경락가격 직접 조회")
+        self._run(app, "과거 경락가격 조회")
         history = app.session_state.workspace.current_entries()[0]["result"]
         previous_price = f"{Decimal(history['examples'][0]['target_price_kg']):,.2f}"
         self.assertEqual(app.session_state.workspace.store.snapshot(), before)
-        self._run(app, "출하 조건 비교")
+        self._run(app, "현재 조건으로 다시 계산")
         entries = app.session_state.workspace.current_entries()
         self.assertEqual([entry["tool"] for entry in entries], ["compare_shipment_options"])
         self.assertEqual(entries[0]["result"]["options"][0]["minimum_whole_krw_per_kg"], "3109")
@@ -251,10 +250,10 @@ class 통합화면사용자흐름검수(unittest.TestCase):
     def test_손익계산후_다시_과거가격_조회해도_계산값을_가져오지_않음(self):
         app = self._app()
         self._run(app, "가상 예시 조건 불러오기")
-        self._run(app, "출하 조건 비교")
+        self._run(app, "현재 조건으로 다시 계산")
         before = deepcopy(app.session_state.workspace.store.snapshot())
         self._fill(app, interval=14)
-        self._run(app, "과거 경락가격 직접 조회")
+        self._run(app, "과거 경락가격 조회")
         entries = app.session_state.workspace.current_entries()
         self.assertEqual([entry["tool"] for entry in entries], ["get_price_history"])
         self.assertEqual(entries[0]["result"]["clean_pairs"], 15)
@@ -269,8 +268,8 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         app = self._app()
         self._run(app, "가상 예시 조건 불러오기")
         self._fill(app)
-        actions = [("과거 경락가격 직접 조회", "get_price_history"),
-                   ("출하 조건 비교", "compare_shipment_options")] * 2
+        actions = [("과거 경락가격 조회", "get_price_history"),
+                   ("현재 조건으로 다시 계산", "compare_shipment_options")] * 2
         with patch("streamlit.download_button", wraps=st.download_button) as download:
             for label, tool in actions:
                 with self.subTest(action=label):
@@ -298,29 +297,29 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         app = self._app()
         self._run(app, "가상 예시 조건 불러오기")
         self._fill(app)
-        self._run(app, "과거 경락가격 직접 조회")
+        self._run(app, "과거 경락가격 조회")
         self.assertEqual(len(self._pdf_buttons(app)), 1)
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             next(widget for widget in app.text_input if widget.key == "loss_0").set_value("4").run()
         self.assertEqual(list(app.exception), [])
-        self.assertTrue(self._button(app, "과거 경락가격 직접 조회").disabled)
+        self.assertTrue(self._button(app, "과거 경락가격 조회").disabled)
         self.assertFalse(self._pdf_buttons(app))
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
-            self._button(app, "입력 조건 비교").click().run()
+            self._button(app, "수정한 조건 저장 후 비교").click().run()
         self.assertEqual(list(app.exception), [])
-        self.assertFalse(self._button(app, "과거 경락가격 직접 조회").disabled)
+        self.assertFalse(self._button(app, "과거 경락가격 조회").disabled)
         self.assertEqual(str(app.session_state.workspace.store.scenario["options"][0]["loss_percent"]), "4")
         self.assertIsNone(app.session_state.workspace.store.scenario["options"][0]["future_price_per_kg"])
 
     def test_원천검증_오류에서도_직전_가격을_보여주지_않음(self):
         app = self._app()
         self._fill(app)
-        self._run(app, "과거 경락가격 직접 조회")
+        self._run(app, "과거 경락가격 조회")
         previous = app.session_state.workspace.current_entries()[0]["result"]
         previous_price = f"{Decimal(previous['examples'][0]['target_price_kg']):,.2f}"
         with patch("services.price_history_service.verify_integrated_price_sources",
                    return_value={"status": "DATA_ERROR", "reason": "VERSION_MISMATCH"}):
-            self._run(app, "과거 경락가격 직접 조회")
+            self._run(app, "과거 경락가격 조회")
         entries = app.session_state.workspace.current_entries()
         self.assertEqual(entries[0]["result"]["status"], "DATA_ERROR")
         self.assertNotIn("examples", entries[0]["result"])
@@ -332,33 +331,33 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         app = self._app()
         self._run(app, "가상 예시 조건 불러오기")
         self._fill(app)
-        self._run(app, "과거 경락가격 직접 조회")
+        self._run(app, "과거 경락가격 조회")
         scenario = deepcopy(app.session_state.workspace.store.snapshot())
         self._run(app, "대화만 비우기 · 조건 유지")
         self.assertEqual(app.session_state.workspace.store.snapshot(), scenario)
         self.assertIsNone(app.session_state.workspace.session.price_history_query)
         self.assertEqual(app.session_state.workspace.current_entries(), [])
         self.assertFalse(self._pdf_buttons(app))
-        self.assertEqual(app.session_state.price_history_variety, "조생귤")
+        self.assertEqual(app.session_state.price_history_spec_variety, "조생귤")
 
     def test_새비교를_시작하면_손익조건과_가격조회_양쪽_초기화(self):
         app = self._app()
         self._run(app, "가상 예시 조건 불러오기")
         self._fill(app)
-        self._run(app, "과거 경락가격 직접 조회")
+        self._run(app, "과거 경락가격 조회")
         self._run(app, "새 비교 시작 · 조건도 초기화")
         self.assertIsNone(app.session_state.workspace.store.scenario["current_price_per_kg"])
         self.assertEqual(app.session_state.workspace.store.scenario["options"], [])
         self.assertIsNone(app.session_state.workspace.session.price_history_query)
         self.assertEqual(app.session_state.workspace.current_entries(), [])
         self.assertFalse(self._pdf_buttons(app))
-        self.assertEqual(app.session_state.price_history_variety, "")
-        self.assertEqual(app.session_state.price_history_grade, "")
+        self.assertIsNone(app.selectbox(key="price_history_spec_variety").value)
+        self.assertIsNone(app.selectbox(key="price_history_spec_grade").value)
 
     def test_직접조회_후_모의대화로_과거간격만_변경(self):
         app = self._app(key=True)
         self._fill(app)
-        self._run(app, "과거 경락가격 직접 조회", key=True)
+        self._run(app, "과거 경락가격 조회", key=True)
         ws = app.session_state.workspace
         before = deepcopy(ws.store.snapshot())
         client = 모의_대화_클라이언트("get_price_history", {"follow_up": True, "interval_days": 14})

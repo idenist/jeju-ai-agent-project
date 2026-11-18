@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 
 
 LABELS = {
-    "market_code": "시장코드", "variety": "경매 품종", "grade": "등급", "size": "크기",
+    "market_code": "시장", "variety": "경매 품종", "grade": "등급", "size": "크기",
     "package": "포장 종류", "package_kg": "포장 중량(kg)",
     "trade_type": "거래 방식", "interval_days": "비교 간격(일)",
 }
@@ -61,8 +61,14 @@ def render_price_history(result: dict) -> str:
         lines.append("제시된 후보는 자동으로 선택하지 않습니다.")
     elif source_status in {"OK", "NO_CLEAN_COMPARISON"} and status in {"OK", "NO_DATA"}:
         conditions = result.get("conditions") or {}
-        visible_conditions = [f"{LABELS.get(field, field)}: {_text(conditions[field])}"
-                              for field in LABELS if field in conditions]
+        visible_conditions = []
+        for field in LABELS:
+            if field not in conditions:
+                continue
+            value = conditions[field]
+            if field == "market_code" and result.get("market_name"):
+                value = result["market_name"]
+            visible_conditions.append(f"{LABELS.get(field, field)}: {_text(value)}")
         lines.append("- 조회 조건: " + " / ".join(visible_conditions))
         lines.append(f"- 비교 간격: {result.get('interval_days')}일 (정확한 달력 날짜)")
         if result.get("base_date_filter"):

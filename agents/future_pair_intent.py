@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal
 
 
-_SHIPMENT = re.compile(r"출하|팔[지까면때고]|팔\s|판매")
+_SHIPMENT = re.compile(r"출하|팔[지까면때고]|팔\s|판매(?!\s*수수료)")
 _CHOICE = re.compile(r"비교|고민|아니면|언제|\b중\b|나을|낫|유리|대비|팔지|팔까")
 _OTHER_PURPOSE = re.compile(
     r"정산|검산|출하량|출하\s*통계|공급\s*집중도|제주\s*데이터\s*허브|#\s*855\b|"
@@ -35,11 +35,17 @@ _PRICE_BASIS = re.compile(
     r"(?:(?:차감|공제|제외|빼기|떼기)\s*(?:(?:하기|한)\s*)?(?:전|후|뒤)|뺀|빼고|떼고|뗀|빠진|포함|제외한)|실수취\s*(?:단가|가격|금액)"
 )
 _PRICE_BASIS_UNCERTAIN = re.compile(r"^\s*(?:(?:금액|단가|가격)\s*)?(?:인지|일지|이냐|또는|/|·)")
-_CONTINUE_COMPARISON = re.compile(r"(?:기존|현재|직전|아까(?:의)?)\s*(?:출하\s*)?비교|(?:나중\s*출하일|B안\s*(?:날짜|단가))만")
+_CONTINUE_COMPARISON = re.compile(
+    r"(?:기존|현재|직전|아까(?:의)?)\s*(?:출하\s*)?비교|(?:나중\s*출하일|B안\s*(?:날짜|단가))만"
+    r"|(?:앞서|방금)\s*(?:확인한|본)\s*(?:과거\s*)?(?:가격|단가)\s*가정"
+)
+_LATER_DATE_ONLY = re.compile(r"(?:나중\s*출하일|B\s*안\s*(?:출하일|날짜))만", re.I)
 _HISTORICAL_PRICE = re.compile(r"(?:과거\s*(?:경락\s*)?(?:가격|시세|자료|변동)|경락\s*가격|시장\s*(?:시세|자료)|도매\s*시세|과거가격|자료)")
 _EXCLUDE_HISTORICAL_PRICE = re.compile(
-    r"(?:을|를|은|는|도|와|과)?\s*(?:조회\s*(?:하지\s*말|안\s*(?:해|봐)|하지\s*않)|"
-    r"보지\s*(?:말|마|않아도)|참고하지\s*말|사용하지\s*말|비교하지\s*말|필요\s*없|없이|빼고|제외)"
+    r"(?:을|를|은|는|도|와|과)?\s*(?:조회\s*(?:하지\s*말|안\s*(?:해|봐|하고)|하지\s*않)|"
+    r"안\s*(?:보고|보|쓰고|쓰|사용하고|사용|참고하고|참고|조회하고|조회)|"
+    r"(?:보지|쓰지|사용하지|참고하지|비교하지|조회하지|활용하지)\s*(?:말|마|않)|"
+    r"필요\s*없|없이|빼고|제외)"
 )
 
 
@@ -78,6 +84,10 @@ def states_price_basis(question: str) -> bool:
 
 def continues_comparison(question: str) -> bool:
     return _CONTINUE_COMPARISON.search(question) is not None
+
+
+def changes_later_date_only(question: str) -> bool:
+    return _LATER_DATE_ONLY.search(question) is not None
 
 
 def is_future_pair_request(question: str, today: date) -> bool:

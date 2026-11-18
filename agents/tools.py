@@ -55,7 +55,7 @@ def with_box_price(tool_definition):
 
 
 TOOLS = [
-    tool("get_price_overview", "연도·월·기간별 과거 가격이 어느 정도인지 넓게 조회. '작년 감귤 가격'은 이 도구가 우선입니다. 시즌 보관자료에서 시장·품종별 가중평균, 실제 기간, 품질 표시와 등급/포장 후보를 제공합니다. 등급·시장·규격은 몰라도 조회 가능. 시장코드는 받지 않습니다. 조회 후 설명하려면 finish_turn=false로 도구 결과를 읽고 자연어로 답하세요.",
+    tool("get_price_overview", "제주산 감귤의 연도·월·기간별 과거 가격 요약. 감귤 외 작물의 가격을 묻는 요청에는 사용하지 않습니다. '작년 감귤 가격'은 이 도구가 우선입니다. 시즌 보관자료에서 시장·품종별 가중평균, 실제 기간, 품질 표시와 등급/포장 후보를 제공합니다. 등급·시장·규격은 몰라도 조회 가능. 시장코드는 받지 않습니다. 조회 후 설명하려면 finish_turn=false로 도구 결과를 읽고 자연어로 답하세요.",
          {"start_date": nullable("string", description="조회 시작일 YYYY-MM-DD. 작년은 오늘(KST)의 전년도 01-01."),
           "end_date": nullable("string", description="조회 마지막일 YYYY-MM-DD. 작년은 전년도 12-31. 한 번에 최대 366일."),
           **{k: nullable("string", description="사용자가 선택한 필터만 전달. 모르면 null; 후보를 사용자 조건으로 확정하지 말 것.")
@@ -242,8 +242,8 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
         return {"status": "DATA_ERROR", "message": "자료 파일과 계산 입력을 확인하세요."}
 
 
-def model_receipt_for_tool(name: str, result: dict, *, experimental_forecast: bool = False) -> dict:
-    """Expose tool evidence while keeping settlement and research amounts local."""
+def model_receipt_for_tool(name: str, result: dict) -> dict:
+    """Expose tool evidence while keeping settlement amounts local."""
     model_output = result
     if name == 'reconcile_settlement':
         from services.settlement import model_receipt
@@ -253,10 +253,6 @@ def model_receipt_for_tool(name: str, result: dict, *, experimental_forecast: bo
             "status", "source_status", "message", "missing_fields", "choices",
             "manual_price_required", "future_pair_version",
         ) if key in result}
-    elif name == "compare_experimental_forecast" and experimental_forecast:
-        # [근거 격리] 연구용 예측가격·손익은 LLM에게 재전송하지 않습니다.
-        from experiments.forecast_agent import model_receipt
-        model_output = model_receipt(result)
     elif name == "get_price_history":
         from services.price_history_service import price_history_model_receipt
         model_output = price_history_model_receipt(result)

@@ -132,8 +132,7 @@ class ActualRepositoryAcceptanceTests(unittest.TestCase):
         self.assertEqual(result["status"], "OK", result)
         self.assertTrue(result["full_content_verified"])
 
-    def test_latest_market_price_agrees_with_independent_baseline(self):
-        from services.baseline import load_price_observations
+    def test_latest_market_price_matches_csv_weighted_mean(self):
         from services.evidence import get_market_evidence
 
         query = {"market_code": "110001", "variety": "조생귤", "grade": "특",
@@ -142,12 +141,19 @@ class ActualRepositoryAcceptanceTests(unittest.TestCase):
         with patch("services.data_refresh.resolve_market_root", return_value=ROOT):
             result = get_market_evidence(query, ROOT)
         self.assertEqual(result["status"], "OK", result)
-        baseline = load_price_observations(ROOT / "data/processed/daily_prices.csv",
-                                           variety="조생귤", grade="특", size="소",
-                                           package_kg=Decimal("5"))
-        self.assertTrue(baseline)
-        self.assertEqual(result["observed_date"], baseline[-1].date.isoformat())
-        self.assertEqual(Decimal(result["price_per_kg"]), baseline[-1].price_per_kg)
+        spec = {key: query[key] for key in ("market_code", "variety", "grade", "size", "package")}
+        with (ROOT / "data/processed/daily_prices.csv").open(encoding="utf-8-sig", newline="") as source:
+            same_spec = [
+                row for row in csv.DictReader(source)
+                if row["trade_type"] == "경매" and all(row[key] == value for key, value in spec.items())
+                and Decimal(row["package_kg"]) == query["package_kg"]
+            ]
+        self.assertTrue(same_spec)
+        latest = max(row["date"] for row in same_spec)
+        rows = [row for row in same_spec if row["date"] == latest]
+        price = sum(Decimal(row["total_amount_krw"]) for row in rows) / sum(Decimal(row["total_kg"]) for row in rows)
+        self.assertEqual(result["observed_date"], latest)
+        self.assertEqual(Decimal(result["price_per_kg"]), price)
         normalized = normalize_tool_result("get_market_evidence", result)
         self.assertEqual(normalized["status"], "OK")
         self.assertFalse(normalized["data"]["is_producer_net_price"])

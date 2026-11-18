@@ -80,14 +80,11 @@ def _show_agent_reply(reply, current_version, draft_pending=False, past_future_p
     version = reply.get("state", {}).get("version")
     if past_future_pair:
         st.caption("이 답변은 이전 비교 조건에 대한 응답입니다.")
-        st.markdown(display_text)
     elif draft_pending or (version != current_version and not any(
             entry["tool"] == "compare_future_pair" for entry in reply.get("visible_results", []))):
         suffix = "카드에 저장 전 수정이 있습니다" if draft_pending else f"현재 버전 {current_version}"
-        with st.expander(f"이전 조건 버전 {version}의 응답 · {suffix}"):
-            st.markdown(display_text)
-    else:
-        st.markdown(display_text)
+        st.caption(f"이 답변은 이전 조건 버전 {version} 기준입니다 · {suffix}")
+    st.markdown(display_text)
     for result in settlements:
         with st.expander(f"정산 근거 보기 · 기록 버전 {result['record_revision']}"):
             st.markdown(citation_details(result))
@@ -219,6 +216,7 @@ def _render_shipment_composer(disabled, show_examples, *, busy=False):
 def _render_chat_timing_action(version, earlier, later):
     from services.shipment_timing import CATEGORIES
 
+    st.caption("보조 자료 · 제주데이터허브의 과거 신고 출하량입니다. 품종과 날짜가 맞는 기록만 확인하며, 현재 공급량이나 최적 출하일을 뜻하지 않습니다.")
     with st.expander("같은 날짜의 과거 출하량 보기"):
         st.caption(f"{earlier} · {later} 출하 기준")
         with st.form(f"chat_timing_{version}", border=False):
@@ -252,6 +250,13 @@ def _chat_basis_target(ws, reply):
                     and not pending.get("manual_price_required")):
                 return "future_pair", pair.version
             return None
+    pending = pair.pending or {}
+    if (pending.get("future_pair_version") == pair.version
+            and pending.get("status") == "NEEDS_INPUT"
+            and LABELS["price_basis"] in pending.get("missing_fields", ())
+            and pair.inputs["price_a"] is not None
+            and not pending.get("manual_price_required")):
+        return "future_pair", pair.version
     if reply.get("state", {}).get("version") == ws.store.version and ws.store.scenario["current_price_per_kg"] is not None:
         for entry in reply.get("visible_results", ()):
             result = entry["result"]
@@ -265,15 +270,25 @@ def _render_chat_basis(ws, messages):
     target = _chat_basis_target(ws, reply)
     if target is None:
         return
-    if any(message.get("reply", {}).get("deferred_basis") == target for message in messages):
+    deferred = any(message.get("reply", {}).get("deferred_basis") == target for message in messages)
+    reselection_key = f"basis_reselect_{target[0]}_{target[1]}"
+    if deferred and not st.session_state.get(reselection_key):
+        st.button("수수료 기준 다시 선택", key=f"{reselection_key}_button",
+                  on_click=_open_basis_reselection, args=(reselection_key,))
         return
     subject = "먼저 출하할 때 단가" if target[0] == "future_pair" else "지금 출하할 때 단가"
     answers = (f"{subject}는 수수료를 빼기 전 금액이에요.", f"{subject}는 수수료를 뺀 뒤 금액이에요.",
                "수수료를 뺀 뒤의 단가인지 잘 모르겠어요.")
+    choices = list(_BASIS_CHOICES.items())[:2] if deferred else list(_BASIS_CHOICES.items())
     with st.container(horizontal=True, gap="small", key="shipment_basis_choices"):
-        for (label, basis), answer in zip(_BASIS_CHOICES.items(), answers):
+        for (label, basis), answer in zip(choices, answers):
             st.button(label, key=f"chat_basis_{target[0]}_{target[1]}_{basis}",
                       on_click=_submit_shipment_question, args=(answer,), kwargs={"basis_choice": (*target, basis)})
+
+
+def _open_basis_reselection(key):
+    st.session_state[key] = True
+
 
 def _reply_to_chat_basis(ws, scope, version, basis, *, on_progress=None):
     pair = ws.session.future_pair
@@ -286,6 +301,7 @@ def _reply_to_chat_basis(ws, scope, version, basis, *, on_progress=None):
                 "기준을 확인하거나 계산을 위한 가정을 직접 정하면 이어서 비교할 수 있어요. "
                 "기준을 모르는 동안에는 이 단가로 총수취액을 계산할 수 없습니다.")
         return {"status": "OK", "state": ws.store.snapshot(), "text": text, "deferred_basis": (scope, version)}
+    st.session_state.pop(f"basis_reselect_{scope}_{version}", None)
     if scope == "future_pair":
         return _reply_to_future_pair_edit(ws, version, {"price_basis": basis}, on_progress=on_progress)
     ws.store.origin_turn_id = None
@@ -416,7 +432,7 @@ def _render_chat_report(report):
 def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, current_pair):
     if not key_present:
         st.title("감귤, 언제 출하할까요?")
-        st.info("채팅을 사용하려면 연결 설정이 필요합니다. ‘두 미래 출하안 A/B 비교’ 탭에서 API 키 없이 출하 조건을 비교할 수 있습니다.")
+        st.info("AI 연결이 아직 설정되지 않았어요. 위의 ‘직접 입력’에서 출하 조건을 비교하거나 ‘자료·도구’에서 과거 가격을 조회할 수 있어요.")
         _render_shipment_composer(disabled=True, show_examples=False)
         return
     if draft_pending or settlement_dirty:
@@ -426,6 +442,8 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
     disabled = draft_pending or settlement_dirty or pending is not None
     if not messages:
         st.title("감귤, 언제 출하할까요?")
+        st.write("출하할 수 있는 기간과 궁금한 점을 알려주세요. 가격 흐름을 살펴보고, 기다릴 때의 이득과 보관 부담을 함께 비교해요.")
+        st.caption("예: 감귤 4톤을 11월 23일부터 말일까지 출하할 수 있어요. 언제 파는 게 좋을까요?")
 
     pair_state = ws.session.future_pair
     latest_pair_message = next((index for index in reversed(range(len(messages)))
@@ -466,6 +484,7 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
             _render_chat_pair_actions(ws, current_pair,
                                       timing_already_shown=bool(previous_report and previous_report["kind"] == "shipment_timing"))
 
+    # The first input belongs beside the welcome copy; later turns stay pinned.
     composer_slot = getattr(st, "bottom", None) if messages else None
     with composer_slot if composer_slot is not None else st.container(key="shipment_welcome_input"):
         with st.container(key="shipment_footer"):
@@ -507,8 +526,14 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                     lambda report: _reply_to_chat_basis(ws, *choice, on_progress=report), started
                 )
             elif _REPORT_REQUEST.fullmatch(pending["content"]):
-                message = "방금 비교한 결과의 보고서입니다." if previous_report else "내려받을 최근 출하 비교 결과가 없습니다. 출하 조건을 비교한 뒤 다시 요청해 주세요."
-                reply = {"status": "OK", "text": message, "state": ws.store.snapshot(), "chat_report": previous_report}
+                report = previous_report
+                if report is None:
+                    economic = pair_state.current_result()
+                    if economic is not None:
+                        report = _chat_report(ws, {"visible_results": [{"tool": "compare_future_pair",
+                                                                          "result": economic}]})
+                message = "방금 비교한 결과의 보고서입니다." if report else "내려받을 최근 출하 비교 결과가 없습니다. 출하 조건을 비교한 뒤 다시 요청해 주세요."
+                reply = {"status": "OK", "text": message, "state": ws.store.snapshot(), "chat_report": report}
                 steps, elapsed = [], None
             else:
                 reply, steps, elapsed = _run_with_shipment_progress(

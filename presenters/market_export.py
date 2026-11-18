@@ -83,42 +83,46 @@ def market_markdown(result: dict) -> str:
 
     comp = result.get("comparison") or {}
     evidence = result.get("market_evidence") or {}
-    query = evidence.get("conditions") or result.get("query") or {}
+    query = result.get("display_conditions") or evidence.get("conditions") or result.get("query") or {}
     if not isinstance(query, dict):
         query = {}
-    names = {"market_code": "시장코드", "trade_type": "거래방식", "variety": "품종",
+    names = {"market_code": "시장", "trade_type": "거래방식", "variety": "품종",
              "grade": "등급", "size": "크기", "package": "포장", "package_kg": "상자중량(kg)",
              "month_day": "비교 월일", "window_days": "전후 범위(일)"}
     spec = " · ".join(f"{label} {_safe(query[key])}" for key, label in names.items() if query.get(key) is not None)
+    def date_label(value):
+        if not value:
+            return "날짜 미확인"
+        parts = str(value).split("-")
+        return f"{int(parts[1])}월 {int(parts[2])}일" if len(parts) == 3 else _safe(value)
+    earlier = date_label(comp.get("option_a_date"))
+    later = date_label(comp.get("option_b_date"))
     lines = ["**과거 동일규격 경매가격과 손익분기 조건**", "",
-             f"B안 최소 필요가격: **{_money(comp.get('minimum_whole_krw_per_kg', result.get('threshold_krw_per_kg')))}원/kg**",
-             f"B안 출하 예정일: {_safe(comp.get('option_b_date'))}"]
+             f"{later} 출하가 {earlier} 출하보다 손해 보지 않으려면 최소 **{_money(comp.get('minimum_whole_krw_per_kg', result.get('threshold_krw_per_kg')))}원/kg**이 필요합니다."]
     difference = comp.get("difference_vs_a_krw")
     if difference is not None:
         decision = comp.get("decision_under_assumptions")
         if decision == "B_ASSUMED_HIGHER":
-            lines.append(f"입력한 판매단가·비용 가정에서 B안 비교금액이 {_money(difference)}원 높습니다.")
+            lines.append(f"입력한 판매단가·비용 가정에서 {later} 출하가 {_money(difference)}원 높습니다.")
         elif decision == "A_ASSUMED_HIGHER":
-            lines.append(f"입력한 판매단가·비용 가정에서 A안 비교금액이 {_money(-Decimal(str(difference)))}원 높습니다.")
+            lines.append(f"입력한 판매단가·비용 가정에서 {earlier} 출하가 {_money(-Decimal(str(difference)))}원 높습니다.")
         else:
             lines.append("입력 가정의 비교금액은 같습니다.")
     lines += ["", "조회 규격: " + (spec or "미확인"), "",
-              "| 시즌 | 정상 관측일 | 기준 이상 일수 | 해당 일수 비율 | 해당 날짜 거래중량 비율 | 상태 |",
-              "| --- | --- | --- | --- | --- | --- |"]
+              "| 시즌 | 손익분기 가격 이상이었던 날 | 자료 상태 |",
+              "| --- | --- | --- |"]
     for item in evidence.get("seasons") or []:
         state = item.get("status", "UNKNOWN")
         label = ("부분 관측기간" if state == "OK" and not item.get("window_complete", False)
                  else STATUS_LABELS.get(state, state))
         days = item.get("days_clean", 0)
         above = item.get("days_above", 0)
-        daily = item.get("daily_share_percent")
-        kg = item.get("kg_share_percent")
         lines.append("| " + " | ".join([
-            _safe(item.get("season")), _safe(days), _safe(above),
-            _safe(daily) + "%" if daily is not None else "-",
-            _safe(kg) + "%" if kg is not None else "-", _safe(label)]) + " |")
-    lines.extend(["", "- 확인사항: 일별 동일규격 평균 경락가격으로 집계한 과거 관측일 비율이며, 미래 가격 달성 확률이나 개별 농가의 실수취가격이 아닙니다.",
+            _safe(item.get("season")),
+            f"{_safe(above)} / {_safe(days)}일" if item.get("status") == "OK" else "-",
+            _safe(label)]) + " |")
+    lines.extend(["", "- 확인사항: 일별 같은 규격의 평균 경락가격을 센 과거 기록입니다. 미래에 그 가격을 받을 확률이나 농가 실수취가격이 아닙니다.",
                   "- 확인사항: 실제 제시가격, 거래규격, 감모율, 보관비, 수수료·공제 항목, 출하 가능 여부를 확인해야 합니다."])
     if any(s.get("excluded_flagged_days", 0) for s in evidence.get("seasons") or []):
-        lines.append("- 확인사항: 원천 품질 경고가 있는 관측일은 비율에서 제외했습니다.")
+        lines.append("- 확인사항: 원천 품질 경고가 있는 날짜는 일수 집계에서 제외했습니다.")
     return "\n".join(lines)

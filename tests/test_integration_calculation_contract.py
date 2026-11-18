@@ -1,4 +1,4 @@
-"""기본 손익 계산과 확장 손익 계산의 공통 조건·비용 계약을 검증합니다."""
+"""출하 손익 계산의 기본 조건과 항목별 비용을 검산합니다."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ from copy import deepcopy
 from decimal import Decimal, ROUND_CEILING
 import unittest
 
-from services.baseline import calculate_break_even
 from services.economics import compare_shipment_options
 from agents.state import ScenarioStore, demo_scenario
 
@@ -17,7 +16,7 @@ def number(value: object) -> Decimal:
 
 
 def common_scenario(quantity, price, days, cost, loss, future=None) -> dict:
-    """두 엔진에 모두 존재하는 비용 없는 총액 기준의 동일 조건을 구성합니다."""
+    """수수료와 항목별 비용을 제외한 비교 조건을 구성합니다."""
     scenario = demo_scenario()
     scenario.update(
         quantity_kg=str(quantity), current_price_per_kg=str(price),
@@ -33,15 +32,11 @@ def common_scenario(quantity, price, days, cost, loss, future=None) -> dict:
 
 
 class SharedCalculationTests(unittest.TestCase):
-    """같은 경제적 가정에서만 두 엔진의 수치를 직접 대조합니다."""
+    """운영 계산 결과를 독립 기준식과 대조합니다."""
 
     def check_case(self, quantity, price, days, cost, loss, future=None) -> None:
         q, p, c, r = map(number, (quantity, price, cost, loss))
         f = None if future is None else number(future)
-        basic = calculate_break_even(
-            current_price_per_kg=p, quantity_kg=q, delay_days=days,
-            daily_storage_cost=c, loss_percent=r, future_price_per_kg=f,
-        )
         extended = compare_shipment_options(common_scenario(quantity, price, days, cost, loss, future))
         self.assertEqual(extended["status"], "OK", extended)
         option = extended["options"][0]
@@ -57,10 +52,6 @@ class SharedCalculationTests(unittest.TestCase):
             "storage_cost_krw": reference_cost,
             "break_even_price_per_kg": reference_threshold,
         }
-        self.assertEqual(basic.current_gross, expected["current_proceeds_krw"])
-        self.assertEqual(basic.remaining_kg, expected["remaining_kg"])
-        self.assertEqual(basic.extra_storage_cost, expected["storage_cost_krw"])
-        self.assertEqual(basic.break_even_price_per_kg, expected["break_even_price_per_kg"])
         self.assertEqual(number(extended["current_proceeds_krw"]), expected["current_proceeds_krw"])
         for key in ("remaining_kg", "storage_cost_krw", "break_even_price_per_kg"):
             self.assertEqual(number(option[key]), expected[key], key)
@@ -69,21 +60,17 @@ class SharedCalculationTests(unittest.TestCase):
             reference_threshold.to_integral_value(rounding=ROUND_CEILING),
         )
         if f is None:
-            self.assertIsNone(basic.future_net_if_given)
-            self.assertIsNone(basic.difference_if_given)
             self.assertIsNone(option["hypothetical_proceeds_krw"])
             self.assertIsNone(option["difference_krw"])
         else:
             expected_future = reference_remaining * f - reference_cost
             expected_difference = expected_future - reference_current
-            self.assertEqual(basic.future_net_if_given, expected_future)
-            self.assertEqual(basic.difference_if_given, expected_difference)
             self.assertEqual(number(option["hypothetical_proceeds_krw"]), expected_future)
             self.assertEqual(number(option["difference_krw"]), expected_difference)
         self.assertIs(extended["is_future_forecast"], False)
         self.assertIsNone(extended["recommended_option"])
 
-    def test_team_example_matches_both_engines(self):
+    def test_team_example_matches_reference(self):
         self.check_case(3000, 3000, 7, 20000, 2)
 
     def test_future_price_is_only_a_user_assumption(self):
@@ -104,7 +91,7 @@ class SharedCalculationTests(unittest.TestCase):
                 with self.subTest(days=days, loss=loss):
                     self.check_case(1200, 2400, days, 1500, loss, 2600)
 
-    def test_shared_invalid_inputs_are_rejected(self):
+    def test_invalid_inputs_are_rejected(self):
         cases = [
             (0, 1000, 7, 1000, 2), (100, 0, 7, 1000, 2),
             (100, 1000, 0, 1000, 2), (100, 1000, 7, -1, 2),
@@ -112,28 +99,16 @@ class SharedCalculationTests(unittest.TestCase):
         ]
         for quantity, price, days, cost, loss in cases:
             with self.subTest(case=(quantity, price, days, cost, loss)):
-                with self.assertRaises(ValueError):
-                    calculate_break_even(
-                        current_price_per_kg=number(price), quantity_kg=number(quantity),
-                        delay_days=days, daily_storage_cost=number(cost), loss_percent=number(loss),
-                    )
                 result = compare_shipment_options(common_scenario(quantity, price, days, cost, loss))
                 self.assertEqual(result["status"], "INVALID_INPUT", result)
 
-    def test_extended_period_limit_is_not_silently_equated(self):
+    def test_period_limit_is_365_days(self):
         scenario = common_scenario(100, 1000, 366, 100, 2)
         self.assertEqual(compare_shipment_options(scenario)["status"], "INVALID_INPUT")
-        # 기본 엔진의 허용 범위가 더 넓어도 통합 UI에서는 1~365일을 사용합니다.
-        self.assertGreater(
-            calculate_break_even(
-                current_price_per_kg=number(1000), quantity_kg=number(100),
-                delay_days=366, daily_storage_cost=number(100), loss_percent=number(2),
-            ).break_even_price_per_kg, 0,
-        )
 
 
 class ExtendedCalculationTests(unittest.TestCase):
-    """기본 엔진에 없는 수수료·항목별 비용·입력 상태를 독립적으로 검증합니다."""
+    """수수료·항목별 비용·입력 상태를 독립적으로 검증합니다."""
 
     def test_different_fees_and_costs_use_separate_formula(self):
         scenario = common_scenario(100, 200, 5, 20, 10, 250)
@@ -157,13 +132,6 @@ class ExtendedCalculationTests(unittest.TestCase):
         self.assertEqual(number(option["hypothetical_proceeds_krw"]), future)
         self.assertEqual(number(option["difference_krw"]), future - current)
         self.assertEqual(number(option["break_even_price_per_kg"]), threshold)
-        # 수수료·항목별 비용이 빠진 기본 엔진과 억지로 일치시키면 안 됩니다.
-        basic = calculate_break_even(
-            current_price_per_kg=number(200), quantity_kg=number(100),
-            delay_days=5, daily_storage_cost=number(20), loss_percent=number(10),
-            future_price_per_kg=number(250),
-        )
-        self.assertNotEqual(option["break_even_price_per_kg"], str(basic.break_even_price_per_kg))
 
     def test_commission_net_never_subtracts_fee_twice(self):
         scenario = demo_scenario()

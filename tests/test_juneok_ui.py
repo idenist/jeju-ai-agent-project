@@ -50,8 +50,8 @@ class UiTests(unittest.TestCase):
             next(x for x in app.text_input if x.key == "loss_0").set_value("4").run()
             self.assertTrue(app.text_input(key="shipment_question").disabled)
             self.assertEqual(len(app.get("download_button")), 0)
-            self.assertTrue(any("카드에 저장 전 수정" in x.label for x in app.expander))
-            next(b for b in app.button if b.label == "입력 조건 비교").click().run()
+            self.assertTrue(any("카드에 저장 전 수정" in x.value for x in app.caption))
+            next(b for b in app.button if b.label == "수정한 조건 저장 후 비교").click().run()
             self.assertFalse(app.text_input(key="shipment_question").disabled)
             self.assertIs(app.session_state.workspace.store, app.session_state.agent_session.store)
             app.text_input(key="shipment_question").set_value("방금 카드의 조건을 다시 확인해 줘")
@@ -85,12 +85,14 @@ class UiTests(unittest.TestCase):
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
         upload = io.BytesIO(fixture.payload([fixture.new]))
-        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}), \
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "", "JEJU_ADMIN_PASSWORD": "관리자-테스트"}), \
                 patch("streamlit.file_uploader", return_value=upload), \
                 patch("services.csv_import.preview_auction_csv", side_effect=lambda b: preview_auction_csv(b, fixture.root, fixture.today)), \
                 patch("services.csv_import.apply_auction_preview", side_effect=lambda p: apply_auction_preview(p, fixture.root, fixture.today)):
             app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
             next(b for b in app.button if b.label == "가상 예시 조건 불러오기").click().run()
+            next(x for x in app.text_input if x.label == "관리자 비밀번호").set_value("관리자-테스트")
+            next(b for b in app.button if b.label == "관리자 확인").click().run()
             next(b for b in app.button if b.label == "CSV 검사 · 변경 내용 미리보기").click().run()
             self.assertEqual(list(app.exception), [])
             self.assertEqual(market_status(fixture.root, fixture.today)["snapshot_id"], "shared-baseline")
@@ -104,9 +106,11 @@ class UiTests(unittest.TestCase):
 
     def test_csv_failure_keeps_previous_data_and_clears_preview(self):
         import io
-        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}), \
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "", "JEJU_ADMIN_PASSWORD": "관리자-테스트"}), \
                 patch("streamlit.file_uploader", return_value=io.BytesIO(b"bad,csv\n")):
             app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=20).run()
+            next(x for x in app.text_input if x.label == "관리자 비밀번호").set_value("관리자-테스트")
+            next(b for b in app.button if b.label == "관리자 확인").click().run()
             next(b for b in app.button if b.label == "CSV 검사 · 변경 내용 미리보기").click().run()
             self.assertEqual(list(app.exception), [])
             self.assertTrue(any("명세와 다릅니다" in x.value for x in app.error))
@@ -187,7 +191,7 @@ class UiTests(unittest.TestCase):
         app = self.make_app()
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             next(b for b in app.button if b.label == "가상 예시 조건 불러오기").click().run()
-            next(b for b in app.button if b.label == "입력 조건 비교").click().run()
+            next(b for b in app.button if b.label == "수정한 조건 저장 후 비교").click().run()
         self.assertEqual(list(app.exception), [])
         self.assertTrue(any("3,109원/kg" in str(x.value) for x in app.markdown))
 
@@ -195,7 +199,7 @@ class UiTests(unittest.TestCase):
         app = self.make_app()
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             next(b for b in app.button if b.label == "가상 예시 조건 불러오기").click().run()
-            next(b for b in app.button if b.label == "입력 조건 비교").click().run()
+            next(b for b in app.button if b.label == "수정한 조건 저장 후 비교").click().run()
             next(b for b in app.button if b.label == "가정 범위 비교").click().run()
             self.assertEqual(app.session_state.sensitivity_result["status"], "INVALID_INPUT")
             next(x for x in app.text_input if x.key == "sensitivity_losses").set_value("2,4").run()
@@ -212,7 +216,7 @@ class UiTests(unittest.TestCase):
     def test_empty_form_requests_information(self):
         app = self.make_app()
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
-            next(b for b in app.button if b.label == "입력 조건 비교").click().run()
+            next(b for b in app.button if b.label == "수정한 조건 저장 후 비교").click().run()
         self.assertEqual(list(app.exception), [])
         self.assertTrue(any("추가 입력이 필요" in str(x.value) for x in app.markdown))
 
@@ -220,15 +224,15 @@ class UiTests(unittest.TestCase):
         app = self.make_app()
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             next(b for b in app.button if b.label == "가상 예시 조건 불러오기").click().run()
-            next(b for b in app.button if b.label == "입력 조건 비교").click().run()
+            next(b for b in app.button if b.label == "수정한 조건 저장 후 비교").click().run()
             self.assertEqual(app.session_state.workspace.store.version, 1)
             self.assertEqual({b.label for b in app.get("download_button")}, {"출하 비교 PDF 저장", "MD 내려받기", "비교 JSON 내려받기"})
             next(x for x in app.text_input if x.key == "loss_0").set_value("4").run()
-            self.assertTrue(any("입력 조건이 바뀌었습니다" in x.value for x in app.warning))
+            self.assertTrue(any("조건을 수정했습니다" in x.value for x in app.warning))
             self.assertFalse(any("3,109원/kg" in str(x.value) for x in app.markdown))
             self.assertEqual(len(app.get("download_button")), 0)
             self.assertTrue(next(b for b in app.button if b.label == "가정 범위 비교").disabled)
-            next(b for b in app.button if b.label == "입력 조건 비교").click().run()
+            next(b for b in app.button if b.label == "수정한 조건 저장 후 비교").click().run()
             self.assertEqual(app.session_state.workspace.store.version, 2)
             self.assertEqual(app.session_state.quantity, "3000")
             self.assertEqual(app.session_state.price, "3000")
@@ -240,11 +244,11 @@ class UiTests(unittest.TestCase):
         app = self.make_app()
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             next(b for b in app.button if b.label == "가상 예시 조건 불러오기").click().run()
-            next(b for b in app.button if b.label == "입력 조건 비교").click().run()
+            next(b for b in app.button if b.label == "수정한 조건 저장 후 비교").click().run()
             next(x for x in app.number_input if x.key == "days_0").set_value(3).run()
             self.assertFalse(next(x for x in app.checkbox if x.key == "period_0").value)
             next(x for x in app.checkbox if x.key == "period_0").check().run()
-            next(b for b in app.button if b.label == "입력 조건 비교").click().run()
+            next(b for b in app.button if b.label == "수정한 조건 저장 후 비교").click().run()
             self.assertEqual(app.session_state.workspace.current_entries()[0]["result"]["status"], "OK")
             self.assertEqual(app.session_state.workspace.store.scenario["options"][0]["delay_days"], 3)
             self.assertEqual(app.session_state.workspace.store.scenario["options"][0]["loss_percent"], 2)
@@ -255,7 +259,7 @@ class UiTests(unittest.TestCase):
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             next(b for b in app.button if b.label == "가상 예시 조건 불러오기").click().run()
             next(x for x in app.text_input if x.key == "current_fee").set_value("5")
-            next(b for b in app.button if b.label == "입력 조건 비교").click().run()
+            next(b for b in app.button if b.label == "수정한 조건 저장 후 비교").click().run()
         self.assertEqual(list(app.exception), [])
         self.assertTrue(any("다시 차감할 수 없습니다" in str(x.value) for x in app.error))
 
@@ -263,9 +267,9 @@ class UiTests(unittest.TestCase):
         app = self.make_app()
         with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
             next(b for b in app.button if b.label == "가상 예시 조건 불러오기").click().run()
-            next(b for b in app.button if b.label == "입력 조건 비교").click().run()
+            next(b for b in app.button if b.label == "수정한 조건 저장 후 비교").click().run()
             next(x for x in app.number_input if x.key == "days_0").set_value(3)
-            next(b for b in app.button if b.label == "입력 조건 비교").click().run()
+            next(b for b in app.button if b.label == "수정한 조건 저장 후 비교").click().run()
         self.assertEqual(list(app.exception), [])
         self.assertFalse(next(x for x in app.checkbox if x.key == "period_0").value)
         self.assertTrue(any("추가 입력이 필요" in str(x.value) for x in app.markdown))

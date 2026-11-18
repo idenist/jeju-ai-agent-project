@@ -191,8 +191,12 @@ def get_price_history(args: dict, data_file: Path = DEFAULT_FILE) -> dict:
             if value.strip() and value not in {".", "-", "미상"}:
                 supplied[field] = value
                 applied_defaults[field] = value
+    selected_market = supplied.get("market_code")
+    market_name = next((row.get("market") for row in rows
+                        if row["market_code"] == selected_market and row.get("market")), None)
     common = {"is_future_forecast": False, "source": source, "cautions": CAUTIONS,
-              "applied_defaults": applied_defaults, "normalized_conditions": normalized_conditions}
+              "applied_defaults": applied_defaults, "normalized_conditions": normalized_conditions,
+              "market_name": market_name}
     if "market_code" in applied_defaults:
         names = sorted({r.get("market", "") for r in rows} - {""})
         common["applied_defaults_note"] = "시장: " + (" / ".join(names) or applied_defaults["market_code"])

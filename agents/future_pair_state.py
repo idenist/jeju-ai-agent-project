@@ -45,8 +45,20 @@ AMBIGUOUS_NUMERIC_RECOVERY = (
     "확정값이면 물음표 없이 알려주시고, 가정값이면 가정으로 정해 주세요."
 )
 _UNKNOWN_INPUT = re.compile(r"모르|몰라|몰랐|확인\s*(?:못|할\s*수\s*없)|아직\s*(?:정해지지\s*않|안\s*나왔)")
+_UNKNOWN_LOSS = re.compile(
+    r"(?:(?P<side>[AB])\s*안?\s*)?(?:새\s*기간(?:의)?\s*)?"
+    r"(?:감모율?|감량률?|얼마나\s*줄(?:지|어드는지))\s*(?:은|는|이|가|을|를)?\s*"
+    rf"(?:얼마인지\s*)?(?:(?:아직|잘|정확히|지금은)\s*)*(?:모릅|{_UNKNOWN_INPUT.pattern})",
+    re.I,
+)
 _UNKNOWN_COST = re.compile(r"비용|보관[비료]|저장[료비]|수수료|감모|감량|줄(?:어|지|는)")
 _UNKNOWN_SPEC = re.compile(r"품종|등급|크기|포장|상자\s*(?:무게|중량)|도매시장|시장코드|거래\s*방식")
+_INPUT_BURDEN = re.compile(
+    r"(?:질문|입력|조건|값).{0,20}(?:많|너무|계속)|"
+    r"(?:이렇게|너무).{0,20}(?:물어|묻|요구|입력|질문)|"
+    r"(?:안\s*쓸|그만\s*(?:할|하|해)|더\s*이상\s*(?:못|안)|답답|귀찮|불편)",
+    re.IGNORECASE,
+)
 HISTORY_FIELDS = {"variety": "품종", "grade": "등급", "size": "크기", "package": "포장 종류",
                   "package_kg": "포장 중량(kg)", "market_code": "시장코드", "trade_type": "거래방식"}
 HISTORY_STATUSES = {"NEEDS_CLARIFICATION": "NEEDS_INPUT", "INTERVAL_NOT_AVAILABLE": "NO_DATA",
@@ -95,6 +107,11 @@ def is_bare_unknown_reply(question: str) -> bool:
     ))
 
 
+def is_input_burden_complaint(question: str) -> bool:
+    """Recognize a request to stop a long clarification sequence."""
+    return isinstance(question, str) and bool(_INPUT_BURDEN.search(question))
+
+
 def is_questioned_numeric_reply(question: str) -> bool:
     """A numeric statement ending in a question mark is not a confirmed value."""
     return (isinstance(question, str) and bool(re.search(r"\d", question))
@@ -105,6 +122,11 @@ def unavailable_cost(question):
     return unavailable_input(question, _UNKNOWN_COST)
 
 
+def unavailable_loss_rate(question, option):
+    return any(match["side"] is None or match["side"].casefold() == option[-1]
+               for match in _UNKNOWN_LOSS.finditer(question))
+
+
 def unavailable_pair_inputs(result, question):
     if result.get("source_status") == "NEEDS_CLARIFICATION":
         return unavailable_input(question, _UNKNOWN_SPEC)
@@ -112,7 +134,10 @@ def unavailable_pair_inputs(result, question):
 
 
 def resume_pair_inputs(question):
-    return any(phrase in question for phrase in ("남은 조건", "빠진 조건", "더 필요한 값", "더 필요한 정보"))
+    return any(phrase in question for phrase in (
+        "남은 조건", "빠진 조건", "더 필요한 값", "더 필요한 정보",
+        "계속 계산", "정밀 비교", "조건 입력을 계속", "다시 조건 확인",
+    ))
 
 
 def asks_where_to_check(question):
@@ -152,6 +177,32 @@ def future_pair_feedback(result, *, pause_costs=False):
         if field in HISTORY_FIELDS and choices:
             lines.append(f"- {HISTORY_FIELDS[field]} 후보: " + ", ".join(str(choice) for choice in choices))
     return "\n".join(lines)
+
+
+def paused_pair_feedback(result):
+    """Acknowledge input fatigue and finish without another clarification."""
+    lines = ["맞아요. 확인할 조건을 너무 많이 물었어요. 여기서 입력 요청을 멈출게요."]
+    preview = result.get("history_preview") if isinstance(result, dict) else None
+    if preview:
+        start, end = preview["base_date_range"]
+        lines += [
+            "이미 확인한 과거 자료만 요약하면:",
+            f"- 같은 규격의 {preview['interval_days']}일 가격쌍 {preview['clean_pairs']}건 · 관측 기준일 {start}~{end}",
+            "- B안 가격 변화(과거 사례): " + " · ".join(
+                f"{label} {Decimal(row['change_pct']):+,.2f}%"
+                for label, row in zip(("낮은 사례", "중앙 사례", "높은 사례"), preview["scenarios"])
+            ),
+            "이 값은 과거 변동 범위이며 미래가격 예측은 아닙니다.",
+        ]
+    if result.get("source_status") == "NEEDS_CLARIFICATION":
+        reason = "거래규격이 확인되지 않아 다른 상품의 가격을 대신 끌어오지 않았습니다."
+    else:
+        reason = "일부 가격·감모·비용 조건이 확인되지 않았고, 과거 변동만으로 미래가격을 단정할 수도 없습니다."
+    lines += [
+        "현재 정보만으로는 두 출하일 중 어느 쪽이 더 이익인지 결론낼 수 없습니다. "
+        f"{reason} 이미 알려주신 조건은 유지하고, 더 입력을 요구하지 않을게요."
+    ]
+    return "\n\n".join(lines)
 
 
 def history_clarification(result, question="", *, pause_specs=False):
@@ -487,6 +538,8 @@ class FuturePairState:
         if status == "NO_CLEAN_COMPARISON":
             message = ("같은 규격의 과거 기록은 있지만 품질 기준을 통과한 가격쌍이 없어요. "
                        "나중 출하 단가를 직접 입력해 주세요.")
+        elif normalized == "NO_DATA":
+            message = "해당 기간의 과거 가격쌍이 없습니다. 나중 출하 단가를 직접 입력해 비교할 수 있어요."
         if status == "ERROR":
             normalized = "INVALID_INPUT" if result.get("error_kind") == "INVALID_INPUT" else "DATA_ERROR"
             if normalized == "INVALID_INPUT":
@@ -497,7 +550,7 @@ class FuturePairState:
                     "status": normalized, "source_status": status, "message": message}
         if result.get("choices"):
             response["choices"] = {field: choices[:8] for field, choices in result["choices"].items() if field in HISTORY_FIELDS}
-        if normalized == "DATA_ERROR":
+        if normalized in {"DATA_ERROR", "NO_DATA"}:
             response["manual_price_required"] = True
         return response
 
@@ -581,6 +634,8 @@ class FuturePairState:
         pending = self.pending or {}
         if (self.box_price is not None or pending.get("status") != "NEEDS_INPUT"
                 or not pending.get("comparison_inputs_pending")):
+            return False
+        if not re.match(r"\s*(?:[0-9]|[AB]\s*안|총\s*물량|물량|수수료|감모|보관비|별도\s*비용|단가)", question, re.I):
             return False
         if any(word in question for word in (
                 "뜻", "의미", "설명", "조회", "찾아", "출하량", "통계", "과거",

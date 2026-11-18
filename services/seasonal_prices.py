@@ -1,4 +1,4 @@
-"""Read-only same-grade, same-package auction price comparison across four seasons.
+"""Same-spec seasonal auction prices and comparisons with a gross break-even.
 
 This is an observation of different auction lots, NOT a future price forecast or
 an estimate of what the same farmer's stored fruit would earn.
@@ -6,6 +6,7 @@ an estimate of what the same farmer's stored fruit would earn.
 from __future__ import annotations
 
 import csv
+from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import lru_cache
@@ -54,6 +55,22 @@ def _snapshot(path: Path):
     return _load_csv(str(path), st.st_size, st.st_mtime_ns)
 
 
+def season_price_file(root: Path, season: str) -> Path:
+    return Path(root) / "data" / "seasons" / season / "daily_prices.csv"
+
+
+def seasonal_price_revision(root: Path = PROJECT_ROOT):
+    """A change to any season CSV invalidates the UI's previous price lookup."""
+    signature = []
+    for season in SEASONS:
+        try:
+            stat = season_price_file(root, season).stat()
+            signature.append((season, stat.st_size, stat.st_mtime_ns))
+        except FileNotFoundError:
+            signature.append((season, None, None))
+    return signature
+
+
 def _season_day(season: str, month_day: str):
     month, day = (int(v) for v in month_day.split("-"))
     start = int(season[:4])
@@ -67,15 +84,21 @@ def compare_seasonal_prices(query: dict, root: Path = PROJECT_ROOT) -> dict:
            trade_type, month_day (MM-DD), window_days (0..14).
     No input or model-produced price is ever written to stored comparison state.
     """
+    summary, _ = _seasonal_evidence(query, root)
+    return summary
+
+
+def _seasonal_evidence(query: dict, root: Path):
+    """Return the public summary and the exact same matched rows for the threshold check."""
     if not isinstance(query, dict):
-        return {"status": "INVALID_INPUT", "message": "조회조건을 확인해 주세요."}
+        return {"status": "INVALID_INPUT", "message": "조회조건을 확인해 주세요."}, {}
     unknown = set(query) - set((*FILTERS, "month_day", "window_days"))
     if unknown:
-        return {"status": "INVALID_INPUT", "message": "지원하지 않는 조회조건입니다."}
+        return {"status": "INVALID_INPUT", "message": "지원하지 않는 조회조건입니다."}, {}
     missing = [key for key in (*FILTERS, "month_day") if query.get(key) in (None, "")]
     if missing:
         return {"status": "NEEDS_INPUT", "missing_fields": missing,
-                "message": "같은 규격과 비교할 월·일을 확인해 주세요."}
+                "message": "같은 규격과 비교할 월·일을 확인해 주세요."}, {}
     try:
         filters = {key: str(query[key]).strip() for key in FILTERS if key != "package_kg"}
         package_kg = _number(query["package_kg"])
@@ -93,13 +116,13 @@ def compare_seasonal_prices(query: dict, root: Path = PROJECT_ROOT) -> dict:
         # Feb 29 is possible only in leap seasons; do not silently replace it with Feb 28.
         date(2024 if month == 2 and int(month_day[3:]) == 29 else 2025, month, int(month_day[3:]))
     except (ValueError, TypeError) as exc:
-        return {"status": "INVALID_INPUT", "message": str(exc)}
+        return {"status": "INVALID_INPUT", "message": str(exc)}, {}
 
-    root = Path(root)
     output = []
     matching_codes = set()
+    matched_by_season = {}
     for season in SEASONS:
-        path = root / "data" / "seasons" / season / "daily_prices.csv"
+        path = season_price_file(root, season)
         item = {"season": season, "status": "NOT_PREPARED", "observed_days": 0,
                 "transaction_count": 0, "total_kg": None, "price_per_kg": None,
                 "source_first_date": None, "source_last_date": None,
@@ -125,7 +148,7 @@ def compare_seasonal_prices(query: dict, root: Path = PROJECT_ROOT) -> dict:
             begin, end = center - timedelta(days=window), center + timedelta(days=window)
             item.update(window_start=begin.isoformat(), window_end=end.isoformat(),
                         window_complete=(first <= begin and end <= last))
-            matched = [(row, weight, amount, count, observed)
+            matched = [(observed, row, weight, amount, count)
                        for observed, row, weight, amount, count in rows
                        if begin <= observed <= end
                        and all(row[key] == filters[key] for key in filters)
@@ -135,32 +158,33 @@ def compare_seasonal_prices(query: dict, root: Path = PROJECT_ROOT) -> dict:
                 output.append(item)
                 continue
             codes = {(row["variety_code"], row["grade_code"], row["size_code"])
-                     for row, *_ in matched}
+                     for _, row, *_ in matched}
             if len(codes) != 1:
                 item.update(status="AMBIGUOUS_CODES")
                 output.append(item)
                 continue
             matching_codes.update(codes)
-            total_kg = sum((weight for _, weight, _, _, _ in matched), Decimal(0))
-            total_amount = sum((amount for _, _, amount, _, _ in matched), Decimal(0))
-            warnings = sorted({flag for row, *_ in matched
+            total_kg = sum((weight for _, _, weight, _, _ in matched), Decimal(0))
+            total_amount = sum((amount for _, _, _, amount, _ in matched), Decimal(0))
+            warnings = sorted({flag for _, row, *_ in matched
                                for flag in row["quality_flag"].split(";")
                                if flag and flag.upper() != "OK"})
-            item.update(status="OK", observed_days=len({observed for *_, observed in matched}),
-                        transaction_count=sum(count for _, _, _, count, _ in matched),
+            item.update(status="OK", observed_days=len({observed for observed, *_ in matched}),
+                         transaction_count=sum(count for *_, count in matched),
                         total_kg=str(total_kg),
                         price_per_kg=str((total_amount / total_kg).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)),
                         quality_warnings=warnings,
-                        classification_codes=list(next(iter(codes))))
+                         classification_codes=list(next(iter(codes))))
+            matched_by_season[season] = matched
         except (OSError, ValueError, UnicodeError, OverflowError):
             item.update(status="DATA_ERROR")
         output.append(item)
     if len(matching_codes) > 1:
         return {"status": "AMBIGUOUS_CODES", "message": "시즌마다 같은 표시명의 원천 품종·등급·크기 코드가 다릅니다. 자동 합산하지 않습니다.",
-                "seasons": output}
+                "seasons": output}, {}
     observed = [x for x in output if x["status"] == "OK"]
     status = "NO_DATA" if not observed else ("OK" if len(observed) == len(SEASONS) else "PARTIAL_DATA")
-    return {"status": status, "analysis_type": "seasonal_prices",
+    summary = {"status": status, "analysis_type": "seasonal_prices",
             "conditions": {**filters, "package_kg": str(package_kg), "month_day": month_day, "window_days": window},
             "seasons": output,
             "observed_seasons": len(observed),
@@ -169,3 +193,73 @@ def compare_seasonal_prices(query: dict, root: Path = PROJECT_ROOT) -> dict:
                        "basis": "동일 등록 규격 · 거래중량 가중 경락가격"},
             "warnings": ["시즌별 과거 거래가격입니다. 미래가격·농가 실수취액·보관 효과를 예측하지 않습니다.",
                          "창의 양 끝이 원천 관측기간 밖이면 부분 구간으로 표시합니다."]}
+    return summary, matched_by_season
+
+
+def _pct(num: Decimal, denom: Decimal) -> str | None:
+    return str((num / denom * 100).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)) if denom else None
+
+
+def compare_break_even_to_history(query: dict, threshold, *, price_basis: str,
+                                  root: Path = PROJECT_ROOT) -> dict:
+    """Compare past daily same-spec averages with a gross break-even in nominal KRW."""
+    if price_basis != "gross":
+        return {"status": "NOT_COMPARABLE", "message":
+                "손익분기 단가가 수수료 차감 후 기준입니다. 수수료 차감 전 경락가격과 직접 비교하지 않습니다."}
+    try:
+        t = Decimal(str(threshold))
+        if not t.is_finite() or t <= 0:
+            raise ValueError("손익분기 단가가 올바르지 않습니다.")
+    except (ValueError, TypeError, InvalidOperation) as exc:
+        return {"status": "INVALID_INPUT", "message": str(exc)}
+    basis, matched = _seasonal_evidence(query, root)
+    if basis["status"] in {"INVALID_INPUT", "NEEDS_INPUT", "AMBIGUOUS_CODES"}:
+        return basis
+    if basis["status"] == "NO_DATA":
+        return {**basis, "threshold_krw_per_kg": str(t)}
+
+    output = []
+    for item in basis["seasons"]:
+        season = item["season"]
+        new = {"season": season, "source_status": item["status"],
+               "source_first_date": item.get("source_first_date"),
+               "source_last_date": item.get("source_last_date"),
+               "window_complete": item.get("window_complete", False),
+               "days_matching": 0, "days_clean": 0, "days_above": 0,
+               "clean_kg": None, "kg_on_days_above": None,
+               "daily_share_percent": None, "kg_share_percent": None,
+               "excluded_flagged_days": 0, "status": item["status"]}
+        output.append(new)
+        if item["status"] != "OK":
+            continue
+        days = defaultdict(lambda: {"kg": Decimal(0), "amount": Decimal(0), "flagged": False})
+        for observed, row, kg, amount, _ in matched[season]:
+            day = days[observed]
+            day["kg"] += kg
+            day["amount"] += amount
+            if any(flag.strip() and flag.strip().upper() != "OK"
+                   for flag in row["quality_flag"].split(";")):
+                day["flagged"] = True
+        usable = [v for v in days.values() if not v["flagged"]]
+        flagged = sum(v["flagged"] for v in days.values())
+        new.update(days_matching=len(days), excluded_flagged_days=flagged)
+        if not usable:
+            new["status"] = "NO_CLEAN_DAYS"
+            continue
+        above = [v for v in usable if v["amount"] / v["kg"] >= t]
+        clean_kg = sum((v["kg"] for v in usable), Decimal(0))
+        above_kg = sum((v["kg"] for v in above), Decimal(0))
+        new.update(status="OK", days_clean=len(usable), days_above=len(above),
+                   clean_kg=str(clean_kg), kg_on_days_above=str(above_kg),
+                   daily_share_percent=_pct(Decimal(len(above)), Decimal(len(usable))),
+                   kg_share_percent=_pct(above_kg, clean_kg))
+    return {"status": "OK" if any(s["status"] == "OK" for s in output) else "NO_CLEAN_DAYS",
+            "analysis_type": "seasonal_threshold",
+            "threshold_krw_per_kg": str(t), "price_basis": "gross",
+            "conditions": basis["conditions"], "seasons": output,
+            "warnings": [
+                "기준가격 이상 비율은 해당 규격의 과거 *일별 평균 경락가격*으로 계산했습니다. 개별 거래가격의 비율이 아닙니다.",
+                "과거 관측 비율은 미래 가격 도달 확률이나 특정 농가의 실수취 가능성이 아닙니다.",
+                "원천 품질 경고가 있는 날짜는 비율 계산에서 제외했습니다. 연도별 물량·품질·물가와 관측일이 다릅니다.",
+                "가락시장 경락가격과 농가 제시가격은 가격 형성 및 공제 항목이 다를 수 있습니다.",
+            ]}

@@ -6,20 +6,27 @@ from decimal import Decimal, ROUND_HALF_UP
 
 
 _NUMBER = r"[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?"
-_AMOUNT = re.compile(rf"(?<![\d,.])({_NUMBER})\s*(만\s*)?원")
+_KOREAN_DIGITS = "일이삼사오육칠팔구"
+_KOREAN_UNITS = {"천": 1000, "백": 100, "십": 10}
+_KOREAN_NUMBER = rf"[{_KOREAN_DIGITS}천백십만](?:\s*[{_KOREAN_DIGITS}천백십만])*"
+_PRICE_AMOUNT = rf"(?<![\d,.])(?:{_NUMBER}\s*(?:만\s*)?|{_KOREAN_NUMBER}\s*)원"
+_AMOUNT = re.compile(_PRICE_AMOUNT)
+_ARABIC_AMOUNT = re.compile(rf"({_NUMBER})\s*(만\s*)?원")
+_KOREAN_PART = re.compile(rf"([{_KOREAN_DIGITS}]?)([천백십])|([{_KOREAN_DIGITS}])")
 _MASS = re.compile(rf"(?<![\d,.])({_NUMBER})\s*(?:kg|킬로그램)", re.I)
 _PACK = r"(?:상자|박스|포장)"
+_PACK_COUNT = r"(?:한\s*개|하나|1\s*개)"
 _PACK_WITH_WEIGHT = rf"{_NUMBER}\s*(?:kg|킬로그램)\s*(?:짜리\s*)?{_PACK}"
-_PRICED_AMOUNT = rf"(?<![\d,.]){_NUMBER}\s*(?:만\s*)?원"
 _BOX_PRICE = re.compile(
-    rf"(?:{_PACK_WITH_WEIGHT}(?:당|에)?|{_PACK}\s*(?:한\s*개\s*)?(?:당|에)|한\s*{_PACK}(?:당|에)?)"
-    rf"\s*(?:가격\s*(?:은|이)?\s*)?{_PRICED_AMOUNT}|{_PRICED_AMOUNT}\s*/\s*{_PACK}", re.I,
+    rf"(?:{_PACK_WITH_WEIGHT}(?:\s*{_PACK_COUNT})?\s*(?:당|에)?"
+    rf"|{_PACK}\s*(?:{_PACK_COUNT}\s*)?(?:당|에)|한\s*{_PACK}(?:당|에)?)"
+    rf"\s*(?:가격\s*(?:은|이)?\s*)?{_PRICE_AMOUNT}|{_PRICE_AMOUNT}\s*/\s*{_PACK}", re.I,
 )
 _SENTENCE_BREAK = re.compile(r"[!?。;；]|(?<!\d)\.|\.(?!\d)")
 _LIST_BREAK = re.compile(r"[，、\n]|(?<!\d),|,(?!\d)")
 _HISTORY_CONTEXT = re.compile(
     r"(?:과거|예전)\s*(?:경락\s*)?(?:가격|시세|경락가|자료|데이터|거래)"
-    r"|(?:시세|경락\s*가격|가격)\s*조회|조회\s*(?:용|규격|조건)"
+    r"|(?:시세|경락\s*가격|가격)\s*조회|조회\s*(?:용|규격|조건|는|할|기준|에선|에서는)"
 )
 _SALE_WEIGHT_CONTEXT = re.compile(
     rf"(?:실제\s*(?:(?:판매|출하)(?:용|할)?\s*)?|(?:판매|출하)(?:용|할)?\s*|[AB]\s*안(?:의|은|는)?\s*)"
@@ -28,10 +35,13 @@ _SALE_WEIGHT_CONTEXT = re.compile(
 _SIDE_A = re.compile(r"(?:a\s*안|먼저\s*(?:출하|팔))", re.I)
 _SIDE_B = re.compile(r"(?:b\s*안|나중\s*(?:출하|팔))", re.I)
 _PACK_WEIGHT = (
-    re.compile(rf"{_PACK}\s*(?:(?:한\s*개|하나|1\s*개)\s*)?(?:무게\s*(?:는|가)?\s*|당\s*|에\s*|는\s*|가\s*|\s*)({_NUMBER})\s*(?:kg|킬로그램)", re.I),
+    re.compile(rf"{_PACK}\s*(?:{_PACK_COUNT}\s*)?(?:무게\s*(?:는|가)?\s*|당\s*|에\s*|는\s*|가\s*|\s*)({_NUMBER})\s*(?:kg|킬로그램)", re.I),
     re.compile(rf"({_NUMBER})\s*(?:kg|킬로그램)\s*(?:짜리\s*)?{_PACK}", re.I),
 )
-_WEIGHT_REPLY = re.compile(rf"{_PACK}|^(?:아니요[, ]*)?\s*{_NUMBER}\s*(?:kg|킬로그램)", re.I)
+_WEIGHT_REPLY = re.compile(
+    rf"^(?:아니요[, ]*)?\s*(?:(?:실제\s*)?(?:(?:판매|출하)(?:용|할)?\s*)?{_PACK}"
+    rf"|{_NUMBER}\s*(?:kg|킬로그램))", re.I,
+)
 _ALTERNATE_WEIGHT = re.compile(rf"(?:kg|킬로그램)\s*(?:인지|이나|또는|아니면|혹은|[~/～–-])\s*({_NUMBER})\s*(?:kg|킬로그램)", re.I)
 _WEIGHT_RANGE = re.compile(rf"{_NUMBER}\s*[-~～–]\s*{_NUMBER}\s*(?:kg|킬로그램)", re.I)
 _UNCERTAIN = re.compile(r"모르|몰라|인지|일지|애매|헷갈|정도|가량|쯤|아마|듯|[~～–]")
@@ -41,6 +51,28 @@ _NO = re.compile(r"아니(?:요|에요)?|아니에요|아닙니다|취소(?:해\
 
 def mentions_box_price(text):
     return bool(_BOX_PRICE.search(text))
+
+
+def _quote_amount(text):
+    amount = _AMOUNT.search(text).group()
+    if found := _ARABIC_AMOUNT.fullmatch(amount):
+        return Decimal(found[1].replace(",", "")) * (10000 if found[2] else 1)
+
+    parts = "".join(amount[:-1].split()).split("만")
+    if len(parts) > 2:
+        return None
+    amounts = []
+    for part in parts:
+        total, last_unit = 0, 10000
+        for digit, unit, ones in _KOREAN_PART.findall(part):
+            value = _KOREAN_UNITS[unit] if unit else 1
+            if value >= last_unit:
+                return None
+            coefficient = _KOREAN_DIGITS.index(digit or ones) + 1 if digit or ones else 1
+            total += coefficient * value
+            last_unit = value
+        amounts.append(total)
+    return (amounts[0] or 1) * 10000 + amounts[1] if len(amounts) == 2 else amounts[0]
 
 
 def _sale_weight_text(text):
@@ -87,16 +119,15 @@ def proposed_box_price(text, model_quote):
     match = quotes[0]
     phrase = quote.get("phrase")
     matches_phrase = isinstance(phrase, str) and phrase in text and mentions_box_price(phrase)
-    value, ten_thousand = _AMOUNT.findall(match.group())[0]
-    amount = Decimal(value.replace(",", "")) * (10000 if ten_thousand else 1)
-    if not 0 < amount <= 10**12:
+    amount = _quote_amount(match.group())
+    if amount is None or not 0 < amount <= 10**12:
         return None
     side = quote.get("side") if matches_phrase else None
     clause = re.split(r"[.!?。\n]", text[:match.start()])[-1]
     explicit_sides = [label for label, pattern in (("A", _SIDE_A), ("B", _SIDE_B)) if pattern.search(clause)]
     if len(explicit_sides) == 1:
         side = explicit_sides[0]
-    return BoxPrice(amount, side if side in {"A", "B"} else None, _weight(_sale_weight_text(text)))
+    return BoxPrice(Decimal(amount), side if side in {"A", "B"} else None, _weight(_sale_weight_text(text)))
 
 
 def pending_box_arguments(question, arguments):
@@ -137,7 +168,8 @@ class BoxPrice:
             side = "B" if clean.casefold().startswith(("b", "나중")) else "A"
             return "clarify", replace(self, side=side)
         sale_text = _sale_weight_text(clean)
-        if _WEIGHT_REPLY.search(sale_text) and len(clean) <= 55 and not _AMOUNT.search(clean):
+        if (_WEIGHT_REPLY.match(sale_text) and _MASS.search(sale_text) and len(clean) <= 55
+                and not _AMOUNT.search(clean) and not re.search(r"[?？]", text)):
             weight = _weight(sale_text, reply=True)
             return "clarify", replace(self, weight=weight)
         if _YES.fullmatch(clean):

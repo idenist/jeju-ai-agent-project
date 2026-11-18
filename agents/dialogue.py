@@ -29,8 +29,8 @@ def remember_visible_reply(messages, question, reply):
     if not reply.get("metrics", {}).get("model_requests"):
         messages.append({"role": "user", "content": question})
     entries = reply.get("visible_results", [])
-    if any(e.get("tool") in {"reconcile_settlement", "compare_experimental_forecast"} for e in entries):
-        text = "검산·연구용 결과를 로컬 화면에 표시했습니다. 상세 금액은 모델에 전달하지 않습니다."
+    if any(e.get("tool") == "reconcile_settlement" for e in entries):
+        text = "검산 결과를 로컬 화면에 표시했습니다. 상세 금액은 모델에 전달하지 않습니다."
     else:
         text = reply["text"]
     last = messages[-1] if messages else None

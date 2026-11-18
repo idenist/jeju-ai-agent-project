@@ -13,8 +13,8 @@ AB_TOOL_NAMES = frozenset({
 
 
 def select_offered_tools(tools: list[dict], *, enabled: bool,
-                         future_pair_request: bool, experimental_forecast: bool) -> tuple[list[dict], bool]:
-    if not enabled or not future_pair_request or experimental_forecast:
+                         future_pair_request: bool) -> tuple[list[dict], bool]:
+    if not enabled or not future_pair_request:
         return tools, False
     reduced = [tool for tool in tools if tool.get("name") in AB_TOOL_NAMES]
     available = {tool.get("name") for tool in reduced}

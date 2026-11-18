@@ -1,10 +1,37 @@
 """Shared conversational/card workspace. CSV tools and PDF work without a model key."""
 from __future__ import annotations
 
+import hashlib
+import hmac
 import streamlit as st
 
 from core.config import Settings
 from presenters.presentation import connection_label
+
+
+def _render_admin_csv_manager(password: str) -> None:
+    with st.expander("관리자 기능 · 가격자료 관리", expanded=False):
+        if not password:
+            st.caption("가격자료 변경 기능은 잠겨 있습니다. 실행 환경에 JEJU_ADMIN_PASSWORD를 설정하면 사용할 수 있습니다.")
+            return
+        fingerprint = hashlib.sha256(password.encode("utf-8")).hexdigest()
+        auth_key = "market_admin_authorized_fingerprint"
+        if st.session_state.get(auth_key) not in (None, fingerprint):
+            st.session_state.pop(auth_key, None)
+        if st.session_state.get(auth_key) != fingerprint:
+            with st.form("market_admin_unlock", clear_on_submit=True):
+                candidate = st.text_input("관리자 비밀번호", type="password")
+                submitted = st.form_submit_button("관리자 확인")
+            if submitted:
+                if hmac.compare_digest(candidate.encode("utf-8"), password.encode("utf-8")):
+                    st.session_state[auth_key] = fingerprint
+                    st.rerun()
+                st.error("비밀번호를 확인해 주세요.")
+            return
+        if st.button("관리자 잠금", key="market_admin_lock"):
+            st.session_state.pop(auth_key, None)
+            st.rerun()
+        _render_csv_manager(embedded=True)
 
 
 
@@ -265,55 +292,60 @@ def main():
     from ui.settlement_ui import hide_pending_settlement
     settlement_dirty = hide_pending_settlement(ws)
     with st.sidebar:
-        st.subheader("실행과 자료")
+        st.subheader("설정 · 자료")
         connection_slot = st.empty()
-        st.caption("준비된 CSV로 시작합니다. 키 없는 조건 카드·통계·PDF도 사용할 수 있습니다.")
-        try:
-            from services.data_refresh import market_status
-            market = market_status()
-            st.caption(f"가격자료 {market['snapshot_id']}: {market['observed_first_date']} ~ {market['observed_last_date']}. 실시간 시세가 아닙니다.")
-            st.caption("#855 출하통계: 2018-01-01 ~ 2025-09-17. 현재 공급량이 아닙니다.")
-        except (OSError, ValueError, KeyError, TypeError):
-            st.warning("자료 목록을 읽지 못했습니다. 각 도구의 출처를 확인하세요.")
-        st.button("설정 상태 새로 확인")
-        st.button("대화만 비우기 · 조건 유지", on_click=_clear_chat_only)
-        st.button("새 비교 시작 · 조건도 초기화", on_click=_reset_all)
+        with st.expander("자료 상태", expanded=False):
+            try:
+                from services.data_refresh import market_status
+                market = market_status()
+                st.caption(f"경매가격 자료: {market['observed_first_date']}~{market['observed_last_date']} 관측분 · 현재 실시간 시세는 아닙니다.")
+                st.caption("과거 출하량 자료: 2018-01-01~2025-09-17 관측분 · 현재 출하량은 아닙니다.")
+            except (OSError, ValueError, KeyError, TypeError):
+                st.warning("자료 상태를 읽지 못했습니다.")
+        with st.expander("대화와 비교 관리", expanded=False):
+            st.button("설정 상태 새로 확인")
+            st.button("대화만 비우기 · 조건 유지", on_click=_clear_chat_only)
+            st.button("새 비교 시작 · 조건도 초기화", on_click=_reset_all)
         if notice := st.session_state.pop("csv_applied_notice", None):
             st.success(notice)
-        _render_csv_manager()
+        _render_admin_csv_manager(settings.admin_password)
         case_download_slot, case_name = _render_cases(ws, _card_dirty())
     with st.container(key="shipment_views"):
-        pair, chat, direct, tools = st.tabs(
-            ["두 미래 출하안 A/B 비교", "AI 대화", "오늘과 나중", "자료·도구"],
+        compare_view, tools = st.tabs(
+            ["출하 비교", "자료·도구"],
             key="shipment_view", on_change="rerun")
-        with chat, st.container(key="shipment_chat_area"):
-            chat_slot = st.empty()
-            chat_report = st.empty()
-        dirty_before = _card_dirty()
-        messages = st.session_state.get("agent_messages", [])
-        chat_running = bool(settings.api_key and messages and messages[-1].get("pending"))
-        if not chat.open:
-            st.html('<style>[data-testid="stBottom"]:has(:is(.st-key-shipment_composer, .st-key-shipment_composer_busy)) {display: none}</style>')
-        if chat_running:
-            # Run the turn before the condition widgets bind to the shared state.
-            with chat_slot.container():
-                _render_shipment_chat(ws, True, dirty_before, settlement_dirty, ws.session.future_pair.current_result())
-            _sync_card()
+        with compare_view:
+            chat, direct = st.tabs(["AI와 대화", "직접 입력"],
+                                   key="shipment_input_method", on_change="rerun")
+            with chat, st.container(key="shipment_chat_area"):
+                chat_slot = st.empty()
+                chat_report = st.empty()
             dirty_before = _card_dirty()
-        with pair:
-            st.caption("① 두 출하일·물량·단가 입력 → ② 감모율·비용 확인 → ③ A/B 손익과 과거 근거 비교")
-            st.caption("과거 경락가격은 미래 단가 예측이 아닙니다. 모르는 비용은 0원 대신 빈칸으로 남겨 주세요.")
-            from ui.future_pair_ui import render_future_pair
-            future_result = render_future_pair(ws.session.future_pair)
-            from ui.shipment_timing_ui import render_shipment_timing_panel
-            render_shipment_timing_panel(ws.session.future_pair)
-        with direct:
-            st.caption("현재 판매와 보관 후 판매를 비교하는 추가 기능입니다. 두 미래 출하일의 비교는 첫 번째 탭을 이용하세요.")
-            _render_card_summary(ws)
-            if st.button("출하 조건 비교", disabled=dirty_before):
-                ws.calculate()
-            dirty = _render_cards(ws)
-            comparison_report = st.empty()
+            messages = st.session_state.get("agent_messages", [])
+            chat_running = bool(settings.api_key and messages and messages[-1].get("pending"))
+            if not (compare_view.open and chat.open):
+                st.html('<style>[data-testid="stBottom"]:has(:is(.st-key-shipment_composer, .st-key-shipment_composer_busy)) {display: none}</style>')
+            if chat_running:
+                # Run the turn before the condition widgets bind to the shared state.
+                with chat_slot.container():
+                    _render_shipment_chat(ws, True, dirty_before, settlement_dirty, ws.session.future_pair.current_result())
+                _sync_card()
+                dirty_before = _card_dirty()
+            future_result = ws.session.future_pair.current_result()
+            with direct:
+                st.caption("비교할 상황을 고른 다음 입력하세요. 모르는 비용은 비워둘 수 있고, 실제로 없다고 확인한 경우에만 0을 입력합니다.")
+                pair_tab, now_tab = st.tabs(["두 출하일 비교", "지금 판매 vs 보관 후 판매"])
+                with pair_tab:
+                    from ui.future_pair_ui import render_future_pair
+                    future_result = render_future_pair(ws.session.future_pair)
+                    from ui.shipment_timing_ui import render_shipment_timing_panel
+                    render_shipment_timing_panel(ws.session.future_pair)
+                with now_tab:
+                    _render_card_summary(ws)
+                    if st.button("현재 조건으로 다시 계산", disabled=dirty_before):
+                        ws.calculate()
+                    dirty = _render_cards(ws)
+                    comparison_report = st.empty()
         with tools:
             data_tab, tools_tab = st.tabs(["자료 조회", "추가 도구"])
             with data_tab:
@@ -348,7 +380,7 @@ def main():
             _render_shipment_chat(ws, bool(settings.api_key), dirty, settlement_dirty, future_result)
     connection_slot.write(connection_label(bool(settings.api_key), st.session_state.get("last_agent_reply")))
     if dirty:
-        st.warning("입력 조건이 바뀌었습니다. ‘입력 조건 비교’를 눌러 적용하세요. 이전 결과·보고서·가정 범위 표는 숨겼습니다.")
+        st.warning("조건을 수정했습니다. ‘수정한 조건 저장 후 비교’를 눌러 새 결과를 확인하세요. 이전 결과는 숨겼습니다.")
         st.session_state.pop("sensitivity_result", None)
     if not dirty:
         entries = ws.current_entries()
