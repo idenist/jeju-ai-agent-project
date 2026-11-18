@@ -15,15 +15,16 @@ def _canonical(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
-def export_case(workspace, name):
+def export_case(workspace, name, *, archived_results=None):
     if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80:
         raise ValueError("비교 이름은 1~80자로 입력하세요.")
     if workspace.check_data_change():
         raise ValueError("사용 자료가 바뀌었습니다. 다시 계산한 뒤 저장하세요.")
+    results = workspace.current_entries() if archived_results is None else archived_results
     payload = {"name": name.strip(), "created_at_kst": datetime.now(timezone(timedelta(hours=9))).isoformat(),
         "input_context": workspace.input_context, "snapshot": workspace.store.snapshot(),
         "history": deepcopy(workspace.store.history[-100:]), "data_revision": list(workspace.data_revision),
-        "archived_results": [x for x in workspace.current_entries() if x.get("tool") != "reconcile_settlement"], "task_context": workspace.session.task_context.snapshot()}
+        "archived_results": [x for x in results if x.get("tool") != "reconcile_settlement"], "task_context": workspace.session.task_context.snapshot()}
     content = _canonical(payload)
     result = _canonical({"format": FORMAT, "version": 2, "payload": payload, "sha256": hashlib.sha256(content).hexdigest()})
     if len(result) > MAX_BYTES:

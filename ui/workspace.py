@@ -93,6 +93,7 @@ class SharedWorkspace:
         self.result_version: int | None = None
         self.data_revision = data_revision()
         self.result_data_revision = None
+        self._comparison = None
         from services.settlement import ShipmentStore
         self.shipment = ShipmentStore()
         self.session.shipment = self.shipment
@@ -121,10 +122,25 @@ class SharedWorkspace:
             entry["result"]["ui_context"]["kind"] = "evidence" if entry["tool"] in {"get_market_evidence", "get_historical_shipment_context", "get_price_history", "explore_data", "explain_term"} else "comparison"
         self.result_version = self.store.version
         self.result_data_revision = expected_data_revision if expected_data_revision is not None else data_revision()
+        comparisons = [entry for entry in self.entries if entry["tool"] == "compare_shipment_options"]
+        if comparisons:
+            self._comparison = None
+            if comparisons[-1]["result"]["status"] == "OK":
+                self._comparison = {
+                    "version": self.result_version, "source_revision": self.result_data_revision,
+                    "entries": deepcopy(self.entries),
+                }
         return deepcopy(self.entries)
 
     def current_entries(self):
         return deepcopy(self.entries) if self.result_version == self.store.version and self.result_data_revision == data_revision() else []
+
+    def current_comparison(self):
+        comparison = self._comparison
+        if (comparison is not None and comparison["version"] == self.store.version
+                and comparison["source_revision"] == data_revision()):
+            return deepcopy(comparison)
+        return None
 
     def check_data_change(self):
         current = data_revision()
@@ -226,9 +242,9 @@ class SharedWorkspace:
         self._freeze([*entries, {"tool": "explain_decision_conditions", "result": result}], "판단 조건 설명", expected_data_revision=revision)
         return result
 
-    def export_case(self, name):
+    def export_case(self, name, *, archived_results=None):
         from services.casefiles import export_case
-        return export_case(self, name)
+        return export_case(self, name, archived_results=archived_results)
 
     def compare_case(self, content, expected_version):
         from services.casefiles import parse_case
@@ -321,7 +337,7 @@ class SharedWorkspace:
         reply = self.session.run(question, on_progress=on_progress) if on_progress else self.session.run(question)
         visible = reply.get("visible_results", [])
         entries = [entry for entry in visible if entry["tool"] != "compare_future_pair"]
-        if entries or not visible or reply["status"] != "OK":
+        if entries or reply["status"] != "OK" or (not visible and not self.current_entries()):
             self._freeze(entries, "대화와 공유 조건", execution_status=reply.get("status", "ERROR"), expected_data_revision=revision)
         return reply
 
@@ -337,6 +353,7 @@ class SharedWorkspace:
         args = {"shipment_variety": variety, "option_a_date": earlier, "option_b_date": later}
         result = execute_tool("analyze_shipment_timing", args, self.store, future_pair=pair, on_progress=on_progress)
         entry = {"tool": "analyze_shipment_timing", "result": result}
+        self.session.remember_lookup([entry])
         return {"status": result["status"], "state": self.store.snapshot(),
                 "text": render_dialogue([entry]), "visible_results": [entry]}
 
@@ -344,6 +361,12 @@ class SharedWorkspace:
         self.session.messages = []
         self.session.price_history_query = None
         self.session.price_history_revision = None
+        self.session.lookup_evidence = None
+        self.session.shipment_variety = None
+        self.session.future_pair.cancel_shipment_window()
+        self.session.future_pair.shipment_lookup_version = None
+        self.session.future_pair.opening_field = None
+        self._comparison = None
         self.session.future_pair.costs_deferred = False
         self.session.future_pair.specs_deferred = False
         if not preserve_manual_pair or self.session.future_pair.inputs["history_filters"] is not None:

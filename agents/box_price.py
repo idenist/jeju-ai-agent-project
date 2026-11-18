@@ -13,7 +13,8 @@ _PRICE_AMOUNT = rf"(?<![\d,.])(?:{_NUMBER}\s*(?:만\s*)?|{_KOREAN_NUMBER}\s*)원
 _AMOUNT = re.compile(_PRICE_AMOUNT)
 _ARABIC_AMOUNT = re.compile(rf"({_NUMBER})\s*(만\s*)?원")
 _KOREAN_PART = re.compile(rf"([{_KOREAN_DIGITS}]?)([천백십])|([{_KOREAN_DIGITS}])")
-_MASS = re.compile(rf"(?<![\d,.])({_NUMBER})\s*(?:kg|킬로그램)", re.I)
+_WEIGHT_UNIT = r"(?:kg|킬로그램|킬로|키로)"
+_MASS = re.compile(rf"(?<![\d,.])({_NUMBER})\s*{_WEIGHT_UNIT}", re.I)
 _PACK = r"(?:상자|박스|포장)"
 _PACK_COUNT = r"(?:한\s*개|하나|1\s*개)"
 _PACK_WITH_WEIGHT = rf"{_NUMBER}\s*(?:kg|킬로그램)\s*(?:짜리\s*)?{_PACK}"
@@ -21,6 +22,11 @@ _BOX_PRICE = re.compile(
     rf"(?:{_PACK_WITH_WEIGHT}(?:\s*{_PACK_COUNT})?\s*(?:당|에)?"
     rf"|{_PACK}\s*(?:{_PACK_COUNT}\s*)?(?:당|에)|한\s*{_PACK}(?:당|에)?)"
     rf"\s*(?:가격\s*(?:은|이)?\s*)?{_PRICE_AMOUNT}|{_PRICE_AMOUNT}\s*/\s*{_PACK}", re.I,
+)
+_BOX_ANSWER = re.compile(
+    r"\s*(?:(?:[AB]\s*안|(?:먼저|나중)\s*(?:출하|판매|팔)(?:할)?\s*(?:때)?)\s*(?:은|는)?\s*"
+    r"(?:(?:받는\s*)?(?:가격|단가)\s*(?:은|는)?\s*)?)?"
+    rf"(?:{_BOX_PRICE.pattern})(?:이에요|예요|입니다|이요|요)?[.!。\s]*", re.I,
 )
 _SENTENCE_BREAK = re.compile(r"[!?。;；]|(?<!\d)\.|\.(?!\d)")
 _LIST_BREAK = re.compile(r"[，、\n]|(?<!\d),|,(?!\d)")
@@ -38,9 +44,12 @@ _PACK_WEIGHT = (
     re.compile(rf"{_PACK}\s*(?:{_PACK_COUNT}\s*)?(?:무게\s*(?:는|가)?\s*|당\s*|에\s*|는\s*|가\s*|\s*)({_NUMBER})\s*(?:kg|킬로그램)", re.I),
     re.compile(rf"({_NUMBER})\s*(?:kg|킬로그램)\s*(?:짜리\s*)?{_PACK}", re.I),
 )
+_PACK_SPEC_WEIGHT = re.compile(
+    rf"{_PACK}\s*(?:포장\s*)?(?:규격|중량|무게)\s*(?:은|는|이|가|:|=)?\s*({_NUMBER})\s*(?:kg|킬로그램)", re.I,
+)
 _WEIGHT_REPLY = re.compile(
     rf"^(?:아니요[, ]*)?\s*(?:(?:실제\s*)?(?:(?:판매|출하)(?:용|할)?\s*)?{_PACK}"
-    rf"|{_NUMBER}\s*(?:kg|킬로그램))", re.I,
+    rf"|{_NUMBER}\s*{_WEIGHT_UNIT})", re.I,
 )
 _ALTERNATE_WEIGHT = re.compile(rf"(?:kg|킬로그램)\s*(?:인지|이나|또는|아니면|혹은|[~/～–-])\s*({_NUMBER})\s*(?:kg|킬로그램)", re.I)
 _WEIGHT_RANGE = re.compile(rf"{_NUMBER}\s*[-~～–]\s*{_NUMBER}\s*(?:kg|킬로그램)", re.I)
@@ -51,6 +60,12 @@ _NO = re.compile(r"아니(?:요|에요)?|아니에요|아닙니다|취소(?:해\
 
 def mentions_box_price(text):
     return bool(_BOX_PRICE.search(text))
+
+
+def package_weight_offsets(text):
+    """Locate weights attached to an actual box/pack expression."""
+    return {match.start(1) for pattern in (*_PACK_WEIGHT, _PACK_SPEC_WEIGHT) for match in pattern.finditer(text)
+            if Decimal("0.001") <= Decimal(match[1].replace(",", "")) <= 1000}
 
 
 def _quote_amount(text):
@@ -128,6 +143,15 @@ def proposed_box_price(text, model_quote):
     if len(explicit_sides) == 1:
         side = explicit_sides[0]
     return BoxPrice(Decimal(amount), side if side in {"A", "B"} else None, _weight(_sale_weight_text(text)))
+
+
+def standalone_box_price(text, *, expected_side=None):
+    if not _BOX_ANSWER.fullmatch(text):
+        return None
+    quote = proposed_box_price(text, None)
+    if quote is not None and quote.side is None:
+        quote = replace(quote, side=expected_side)
+    return quote
 
 
 def pending_box_arguments(question, arguments):

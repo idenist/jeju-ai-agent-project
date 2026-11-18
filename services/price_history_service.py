@@ -4,24 +4,42 @@ from __future__ import annotations
 from copy import deepcopy
 
 from services.data_contract import verify_integrated_price_sources
+from services.price_data_gap import classify_price_gap, price_gap
 from services.result_contract import normalize_tool_result
 from core.config import PROJECT_ROOT
-from services.price_history import DEFAULT_FILE, execute_tool as execute_legacy_tool
+from services.price_history import DEFAULT_FILE, FILTERS, execute_tool as execute_legacy_tool
 
 
-def _unavailable(verification: dict) -> dict:
-    """가격 원본이 일치하지 않으면 과거 가격쌍을 절대 공개하지 않습니다."""
+def _with_price_gap(result: dict, arguments: dict) -> dict:
+    code = classify_price_gap(result)
+    if code is None:
+        return result
+    gap = price_gap(code)
+    conditions = {field: value for field in FILTERS
+                  if isinstance(value := arguments.get(field), (str, int, float))}
     return {
+        **result,
+        "data_gap": gap,
+        "requested_conditions": conditions,
+        "interval_days": result.get("interval_days", arguments.get("interval_days")),
+        "base_date_filter": result.get("base_date_filter", arguments.get("base_date")),
+    }
+
+
+def _unavailable(verification: dict, arguments: dict) -> dict:
+    """가격 원본이 일치하지 않으면 과거 가격쌍을 절대 공개하지 않습니다."""
+    return _with_price_gap({
         "analysis_type": "price_history",
         "status": "DATA_ERROR",
         "source_status": "SOURCE_VERIFICATION_FAILED",
         "reason": verification.get("reason", "SOURCE_VERIFICATION_FAILED"),
-        "message": "시장가격 원천과 과거 가격 비교 자료를 함께 검증하지 못해 조회를 중단했습니다. 자료 버전을 확인해 주세요.",
+        "message": "시장가격 원천과 과거 가격 비교 자료를 함께 검증하지 못해 조회를 중단했습니다.",
         "missing_fields": [],
         "warnings": ["검증에 실패한 가격 비교 결과는 표시하거나 미래가격 추정에 사용하지 않습니다."],
         "cautions": ["과거 경락가격은 미래가격 또는 농가 실수취가가 아닙니다."],
         "is_future_forecast": False,
-    }
+        "source_verification": {"status": "DATA_ERROR"},
+    }, arguments)
 
 
 def get_integrated_price_history(arguments: dict) -> dict:
@@ -37,7 +55,7 @@ def get_integrated_price_history(arguments: dict) -> dict:
 
     before = verify_integrated_price_sources(PROJECT_ROOT)
     if before.get("status") != "OK" or before.get("full_content_verified") is not True:
-        return _unavailable(before)
+        return _unavailable(before, arguments)
 
     original = execute_legacy_tool("get_price_history", deepcopy(arguments), DEFAULT_FILE)
 
@@ -46,11 +64,11 @@ def get_integrated_price_history(arguments: dict) -> dict:
             or before.get("comparison_source_sha256") != after.get("comparison_source_sha256")
             or before.get("selected_market_sha256") != after.get("selected_market_sha256")):
         return _unavailable(after if after.get("status") != "OK" else
-                            {"reason": "SOURCE_CHANGED_DURING_QUERY"})
+                            {"reason": "SOURCE_CHANGED_DURING_QUERY"}, arguments)
 
     normalized = normalize_tool_result("get_price_history", original)
     # 원본의 수치·예시·품질 건수는 변경하지 않고 상태만 공통 계약으로 바꿉니다.
-    return {
+    return _with_price_gap({
         **deepcopy(original),
         "analysis_type": "price_history",
         "status": normalized["status"],
@@ -70,7 +88,7 @@ def get_integrated_price_history(arguments: dict) -> dict:
             "verified_availability_rows": after["verified_availability_rows"],
         },
         "is_future_forecast": False,
-    }
+    }, arguments)
 
 
 def price_history_model_receipt(result: dict) -> dict:
@@ -79,7 +97,7 @@ def price_history_model_receipt(result: dict) -> dict:
     실제 관측 가격·변동률·원본 행은 로컬 Python 화면과 보고서에서만 표시합니다.
     이전 도구 호출 인수는 모델 대화 이력에 그대로 남으므로 조건을 반복하지 않습니다.
     """
-    keys = ("status", "source_status", "reason", "message", "missing_fields",
+    keys = ("status", "source_status", "reason", "message", "data_gap", "missing_fields",
             "choices", "available_intervals", "clean_pairs", "warning_pairs",
             "unavailable_pairs", "interval_days", "applied_defaults_note")
     return {key: deepcopy(result[key]) for key in keys if key in result}

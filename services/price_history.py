@@ -232,8 +232,11 @@ def get_price_history(args: dict, data_file: Path = DEFAULT_FILE) -> dict:
                 "choices": choices, "message": "빠진 비교 조건을 확인해 주세요."}
     selected = [r for r in candidates if int(r["interval_days"]) == interval
                 and (base_date is None or r["base_date"] == base_date)]
+    common.update(conditions={k: str(v) for k, v in supplied.items()},
+                  interval_days=interval, base_date_filter=base_date)
     if not selected:
-        return {**common, "status": "NO_DATA", "message": "지정한 조건·기준일의 기록이 없습니다. 조건을 확인해 주세요."}
+        return {**common, "status": "NO_DATA", "message": "지정한 조건·기준일의 기록이 없습니다. 조건을 확인해 주세요.",
+                "attempts": 0, "clean_pairs": 0, "warning_pairs": 0, "unavailable_pairs": 0}
     identities = {tuple(number(r[k]) if k == "package_kg" else r[k] for k in KEYS) for r in selected}
     if len(identities) != 1:
         return {**common, "status": "AMBIGUOUS_CODES", "message": "같은 표시명에 여러 코드가 있습니다. 코드 대응을 확인해 주세요."}
@@ -245,8 +248,6 @@ def get_price_history(args: dict, data_file: Path = DEFAULT_FILE) -> dict:
     changes = [number(r["price_change_pct"]) for r in clean]
     # 경고가 있는 쌍은 기본 사례와 변동 범위에서 제외하되, 제외 사실은 숨기지 않는다.
     return {**common, "status": "OK" if clean else "NO_CLEAN_COMPARISON",
-            "conditions": {k: str(v) for k, v in supplied.items()},
-            "interval_days": interval, "base_date_filter": base_date,
             "attempts": len(selected), "clean_pairs": len(clean),
             "warning_pairs": counts["COMPARABLE_WITH_WARNINGS"],
             "unavailable_pairs": counts["UNAVAILABLE"],

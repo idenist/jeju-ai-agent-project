@@ -1,29 +1,23 @@
 """Session conditions and the current result for two future shipments."""
 from copy import deepcopy
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 import re
 
-from services.data_contract import PAIR_FILES, PRICE_FILE, REPORT_FILE
 from services.future_pair import (
     compare_future_pair, compare_future_pair_history_reference,
     compare_future_pair_threshold_reference,
-    preview_future_pair_history,
+    preview_future_pair_history, price_revision, validate_future_pair_inputs,
+    HISTORY_FIELDS, INPUT_FIELDS, LABELS, MAX_RATE_PERCENT, OPTION_FIELDS, OPTION_LABELS,
 )
 from services.economics import decimal
-from core.config import PROJECT_ROOT
-from services.data_refresh import digest, resolve_market_root
-from services.task_context import data_revision
+from services.price_data_gap import PRICE_GAP_EVIDENCE, price_gap, render_price_gap
+from agents.future_pair_intent import (
+    explicit_shipment_quantity, shipment_choice_question, shipment_window_limit, shipment_window_start,
+)
 
 
-OPTION_FIELDS = ("delay_days", "loss_percent", "daily_storage_cost", "other_cost_krw", "fee_percent")
-MAX_RATE_PERCENT = 99.99
-INPUT_FIELDS = ("quantity", "price_basis", "start_date", "price_a", "price_b", "history_filters")
-LABELS = {"quantity": "비교 물량(kg)", "price_basis": "수수료 차감 전·후 기준",
-          "start_date": "보관 시작일", "price_a": "A안 가정 단가(원/kg)", "price_b": "B안 가정 단가(원/kg)"}
-OPTION_LABELS = {"delay_days": "보관일", "loss_percent": "기간 전체 감모율(%)",
-                 "daily_storage_cost": "전체 물량 하루 보관비(원)", "other_cost_krw": "별도 비용(원)",
-                 "fee_percent": "수수료율(%)"}
 COST_QUESTIONS = {
     OPTION_LABELS["daily_storage_cost"]: "감귤 전체의 하루 보관비는 얼마인가요?",
     OPTION_LABELS["other_cost_krw"]: "그 밖에 드는 비용은 얼마인가요?",
@@ -33,8 +27,8 @@ COST_NAMES = dict(zip(COST_QUESTIONS, ("하루 보관비", "별도 비용", "판
 UNKNOWN_SPEC_RECOVERY = (
     "상품 규격이 확인되지 않아 다른 감귤의 과거 가격을 연결하지 않겠습니다. "
     "출하명세나 포장 라벨의 품종·등급·크기·포장·상자중량을 확인하면 자료 후보와 맞춰 볼 수 있어요. "
-    "지금 확인하기 어렵다면 ‘자료 없이 손익분기’라고 말씀해 주세요. 현재 A안 가격만으로 가능한 기준을 계산하고, "
-    "B안 미래가격은 임의로 만들지 않겠습니다."
+    "지금 확인하기 어렵다면 ‘자료 없이 손익분기’라고 말씀해 주세요. "
+    "나중 출하 가격을 알고 있다면 가정 판매단가를 직접 입력할 수 있어요."
 )
 UNKNOWN_COST_RECOVERY = (
     "모르는 감모율·비용은 미확인으로 보존합니다. 0으로 간주하지 않습니다. "
@@ -59,8 +53,6 @@ _INPUT_BURDEN = re.compile(
     r"(?:안\s*쓸|그만\s*(?:할|하|해)|더\s*이상\s*(?:못|안)|답답|귀찮|불편)",
     re.IGNORECASE,
 )
-HISTORY_FIELDS = {"variety": "품종", "grade": "등급", "size": "크기", "package": "포장 종류",
-                  "package_kg": "포장 중량(kg)", "market_code": "시장코드", "trade_type": "거래방식"}
 HISTORY_STATUSES = {"NEEDS_CLARIFICATION": "NEEDS_INPUT", "INTERVAL_NOT_AVAILABLE": "NO_DATA",
                     "NO_CLEAN_COMPARISON": "NO_DATA", "AMBIGUOUS_CODES": "DATA_ERROR"}
 HISTORY_QUESTIONS = {
@@ -81,15 +73,6 @@ HISTORY_HELP = {
     "market_code": "출하처나 경락 내역에서 도매시장 이름을 확인해 보세요.",
     "trade_type": "출하처에 경매 등 어떤 방식으로 거래하는지 확인해 보세요.",
 }
-
-
-def _price_revision():
-    try:
-        active_price = resolve_market_root(PROJECT_ROOT) / PRICE_FILE
-        paths = dict.fromkeys([active_price, *(PROJECT_ROOT / path for path in (PRICE_FILE, *PAIR_FILES, REPORT_FILE))])
-        return (*data_revision(), *(digest(path) for path in paths))
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
 
 
 def unavailable_input(question, subject):
@@ -122,6 +105,11 @@ def unavailable_cost(question):
     return unavailable_input(question, _UNKNOWN_COST)
 
 
+def mentions_unknown_cost(question):
+    return any(_UNKNOWN_COST.search(clause) and _UNKNOWN_INPUT.search(clause)
+               for clause in re.split(r"[.!?\n,]+", question))
+
+
 def unavailable_loss_rate(question, option):
     return any(match["side"] is None or match["side"].casefold() == option[-1]
                for match in _UNKNOWN_LOSS.finditer(question))
@@ -144,7 +132,9 @@ def asks_where_to_check(question):
     return any(phrase in question for phrase in ("어디", "어떻게 확인", "확인하면"))
 
 
-def future_pair_feedback(result, *, pause_costs=False):
+def future_pair_feedback(result, *, pause_costs=False, one_question=False):
+    if result.get("data_gap"):
+        return render_price_gap(result)
     if result.get("ambiguous_input"):
         return AMBIGUOUS_NUMERIC_RECOVERY
     message = result.get("message") or "비교 조건을 확인해 주세요."
@@ -163,7 +153,8 @@ def future_pair_feedback(result, *, pause_costs=False):
             lines.append(note)
         if pause_costs:
             return "\n\n".join([*lines, UNKNOWN_COST_RECOVERY])
-        next_step = _missing_questions(result["missing_fields"], result.get("storage_days", {}))
+        question_for = next_pair_question if one_question else _missing_questions
+        next_step = question_for(result["missing_fields"], result.get("storage_days", {}))
         return "\n\n".join([*lines, next_step])
     fields = result.get("missing_fields", [])
     if not fields:
@@ -205,12 +196,12 @@ def paused_pair_feedback(result):
     return "\n\n".join(lines)
 
 
-def history_clarification(result, question="", *, pause_specs=False):
+def history_clarification(result, question="", *, pause_specs=False, one_question=False):
     fields = [field for field in result.get("missing_fields", ()) if field in HISTORY_QUESTIONS]
     if not fields:
         return None
     asks_for_help = asks_where_to_check(question)
-    if len(fields) > 1 and not pause_specs and not unavailable_input(question, _UNKNOWN_SPEC):
+    if len(fields) > 1 and not (pause_specs or one_question or unavailable_input(question, _UNKNOWN_SPEC)):
         lines = ["가격자료를 맞춰 보려면 출하명세나 포장 라벨의 거래규격이 필요해요. 확인되는 항목을 한 번에 알려주세요."]
         if asks_for_help:
             lines.append("품종·등급·크기·포장·상자중량은 포장 라벨이나 출하명세에서, 시장·거래방식은 출하처나 경락 내역에서 확인할 수 있어요.")
@@ -260,6 +251,13 @@ def next_pair_field(fields):
 
 _SIMPLE_NUM = r"(?:0|[1-9][0-9]*(?:,[0-9]{3})*)(?:\.[0-9]+)?"
 _SIMPLE_REPLY_SUFFIX = re.compile(r"(?:이에요|예요|입니다|이요|요)$")
+
+
+def shipment_variety_reply(question, varieties):
+    text = re.sub(r"(?:에요|인데요)$", "", question.strip().rstrip(".!。 "))
+    text = _SIMPLE_REPLY_SUFFIX.sub("", text).strip()
+    text = re.sub(r"^(?:재배\s*)?품종\s*(?:은|는|이|가)?\s*", "", text)
+    return text if text in varieties else None
 _SIMPLE_SIDE = re.compile(
     r"^(?:(A|B)\s*안|(?:(먼저|나중)\s*(?:출하(?:하는)?|팔(?:때)?)))"
     r"\s*(?:의\s*)?(?:판매\s*)?(?:단가|가격)?\s*(?:은|는|이|가)?\s*", re.I,
@@ -401,6 +399,15 @@ def _missing_questions(fields, storage_days):
     return text
 
 
+@dataclass(frozen=True)
+class _ShipmentWindow:
+    first: date
+    version: int
+    last: date | None = None
+    quantity: float | None = None
+    awaiting_shipment_variety: bool = False
+
+
 class FuturePairState:
     def __init__(self):
         self.version = 0
@@ -409,6 +416,9 @@ class FuturePairState:
         self.source_revision = None
         self.pending = None
         self.box_price = None
+        self.shipment_window = None
+        self.shipment_lookup_version = None
+        self.opening_field = None
         self.costs_deferred = False
         self.specs_deferred = False
 
@@ -425,9 +435,11 @@ class FuturePairState:
         self.source_revision = None
         self.pending = None
         self.box_price = None
+        self.shipment_lookup_version = None
+        self.opening_field = None
 
     def current_result(self):
-        if self.source_revision is not None and self.source_revision != _price_revision():
+        if self.source_revision is not None and self.source_revision != price_revision():
             self.clear_result()
         return deepcopy(self.result)
 
@@ -440,6 +452,7 @@ class FuturePairState:
     def reset(self):
         self.replace(self._empty())
         self.clear_result()
+        self.shipment_window = None
         self.costs_deferred = False
         self.specs_deferred = False
 
@@ -450,10 +463,25 @@ class FuturePairState:
     def _storage_days(self):
         return {f"{side}안": self.inputs[f"option_{side.lower()}"]["delay_days"] for side in ("A", "B")}
 
-    def calculate(self, *, preview_history=False, on_progress=None):
+    def saved_conditions_line(self):
+        from presenters.reporting import _number
+        from services.shipment_timing import resolve_pair_dates
+
+        first, later = resolve_pair_dates(self.inputs)
+        if not all(value is not None for value in (first, later, self.inputs["quantity"], self.inputs["price_a"])):
+            return ""
+        dates = [date.fromisoformat(value) for value in (first, later)]
+        quantity = _number(self.inputs["quantity"])
+        prices = f"A안 {_number(self.inputs['price_a'])}원/kg"
+        if self.inputs["price_b"] is not None:
+            prices += f" · B안 {_number(self.inputs['price_b'])}원/kg"
+        return (f"**저장한 조건** · 출하 {dates[0].month}/{dates[0].day} · {dates[1].month}/{dates[1].day}"
+                f" · {quantity}kg · {prices}")
+
+    def calculate(self, *, preview_history=False, allow_reference=True, on_progress=None):
         self.clear_result()
         historical = self.inputs["history_filters"] is not None
-        if not historical and self._threshold_reference_ready(self.inputs):
+        if allow_reference and not historical and self._threshold_reference_ready(self.inputs):
             result = compare_future_pair_threshold_reference(**{
                 key: self.inputs[key] for key in (
                     "quantity", "price_basis", "start_date", "option_a", "option_b", "price_a",
@@ -465,10 +493,13 @@ class FuturePairState:
                 return result
             if result["status"] != "NEEDS_INPUT":
                 return {**result, "analysis_type": "future_pair", "future_pair_version": self.version}
-        if missing := self._missing(self.inputs):
+        missing = self._missing(self.inputs)
+        if not allow_reference and not historical and self.inputs["price_b"] is None:
+            missing.append(LABELS["price_b"])
+        if missing:
             if preview_history and historical:
                 return self._preview_history(missing, on_progress)
-            if not historical and self.inputs["price_b"] is None:
+            if allow_reference and not historical and self.inputs["price_b"] is None:
                 optional_cost_fields = {
                     f"{side}안 {OPTION_LABELS[field]}"
                     for side in ("A", "B") for field in ("daily_storage_cost", "other_cost_krw")
@@ -476,16 +507,16 @@ class FuturePairState:
                 missing = [field for field in missing if field not in optional_cost_fields]
             return self._response("NEEDS_INPUT", "비교 조건을 확인해 주세요.", missing_fields=missing,
                                   comparison_inputs_pending=preview_history, storage_days=self._storage_days())
-        revision = _price_revision() if historical else None
+        revision = price_revision() if historical else None
         result = compare_future_pair(**self.inputs, on_progress=on_progress)
         if historical and ((revision is None and result["status"] == "OK")
-                           or (revision is not None and revision != _price_revision())):
-            return self._response("DATA_ERROR", "조회 중 가격 자료가 바뀌었습니다. B안 단가를 직접 입력할 수 있습니다.",
-                                  manual_price_required=True)
+                           or (revision is not None and revision != price_revision())):
+            return self._price_gap_changed()
+        result = {**result, "analysis_type": "future_pair", "future_pair_version": self.version}
         if result["status"] == "OK":
             self.result = deepcopy(result)
             self.source_revision = revision
-        return self._agent_result({**result, "analysis_type": "future_pair", "future_pair_version": self.version})
+        return self._agent_result(result)
 
     def _preview_history(self, missing, on_progress):
         start = self.inputs["start_date"]
@@ -493,16 +524,16 @@ class FuturePairState:
         date_labels = {LABELS["start_date"], "A안 보관일", "B안 보관일"}
         if date_fields := [field for field in missing if field in date_labels]:
             return self._response("NEEDS_INPUT", "과거 가격을 조회할 날짜부터 알려주세요.", missing_fields=date_fields)
-        revision = _price_revision()
+        revision = price_revision()
         if on_progress:
             on_progress("price_history")
         result = preview_future_pair_history(start, a, b, self.inputs["price_a"], self.inputs["history_filters"])
         if result.get("scenarios"):
-            if revision is None or revision != _price_revision():
-                return self._response("DATA_ERROR", "조회 중 가격 자료가 바뀌었습니다. B안 단가를 직접 입력할 수 있습니다.",
-                                      manual_price_required=True)
+            if revision is None or revision != price_revision():
+                return self._price_gap_changed()
             preview = {key: result[key] for key in ("interval_days", "clean_pairs", "base_date_range",
                                                     "scenarios", "conditions", "source")}
+            preview.update({key: result[key] for key in ("warning_pairs", "unavailable_pairs") if key in result})
             if result.get("small_sample"):
                 # 사례가 10쌍 미만이면 가격 도구가 붙인 안내를 미리보기에도 그대로 전달한다.
                 preview["sample_note"] = result["cautions"][0]
@@ -544,15 +575,24 @@ class FuturePairState:
             normalized = "INVALID_INPUT" if result.get("error_kind") == "INVALID_INPUT" else "DATA_ERROR"
             if normalized == "INVALID_INPUT":
                 message = result.get("error")
+        if result.get("data_gap"):
+            message = render_price_gap(result)
         if normalized == "DATA_ERROR" and not message:
             message = "과거 가격 자료를 검증하지 못했습니다. B안 단가를 직접 입력할 수 있습니다."
         response = {**{key: result[key] for key in ("analysis_type", "future_pair_version", "missing_fields", "manual_price_required") if key in result},
                     "status": normalized, "source_status": status, "message": message}
+        if result.get("data_gap"):
+            response.update({key: result[key] for key in ("data_gap", *PRICE_GAP_EVIDENCE) if key in result})
         if result.get("choices"):
             response["choices"] = {field: choices[:8] for field, choices in result["choices"].items() if field in HISTORY_FIELDS}
         if normalized in {"DATA_ERROR", "NO_DATA"}:
             response["manual_price_required"] = True
         return response
+
+    def _price_gap_changed(self):
+        gap = price_gap("FILE_UNVERIFIED", comparison=True)
+        return self._response("DATA_ERROR", render_price_gap({"data_gap": gap}),
+                              source_status="DATA_ERROR", data_gap=gap, manual_price_required=True)
 
     @staticmethod
     def _missing(inputs):
@@ -588,7 +628,7 @@ class FuturePairState:
         candidate = self._empty() if action == "new" else deepcopy(self.inputs)
         try:
             self._apply_patch(candidate, patch, clear_fields)
-            self._validate(candidate)
+            validate_future_pair_inputs(candidate)
         except ValueError as exc:
             return self._response("INVALID_INPUT", str(exc))
         self.replace(candidate, start_new=action == "new")
@@ -615,11 +655,17 @@ class FuturePairState:
     def waiting_field(self):
         """Field asked in the latest manual A/B clarification, if still pending."""
         pending = self.pending or {}
+        if self.opening_field is not None and not (self.costs_deferred or self.specs_deferred):
+            return self.opening_field
         if (self.box_price is not None or pending.get("status") != "NEEDS_INPUT"
-                or not pending.get("comparison_inputs_pending")):
+                or not pending.get("comparison_inputs_pending") or self.costs_deferred or self.specs_deferred):
             return None
         fields = pending.get("missing_fields", ())
-        return next_pair_field(fields) if len(fields) == 1 else None
+        # Historical previews display a list of remaining conditions. Bare values
+        # are safe there only if one field is left. Manual comparison asks one.
+        if pending.get("history_preview") and len(fields) != 1:
+            return None
+        return next_pair_field(fields)
 
     def apply_short_answer(self, question, *, on_progress=None):
         """Atomic local continuation; None means leave interpretation to the model."""
@@ -628,6 +674,122 @@ class FuturePairState:
         if patch is None:
             return None
         return self.apply("edit", self.version, patch, on_progress=on_progress)
+
+    def apply_explicit_pair_prices(self, question, *, on_progress=None):
+        """Use two explicitly labelled kg quotes to continue an active comparison."""
+        if (self.pending is None or self.box_price is not None
+                or any(option["delay_days"] is None for option in (self.inputs["option_a"], self.inputs["option_b"]))):
+            return None
+        parts = re.split(r"[,\n]\s*(?=[AB]\s*안)", question.strip(), flags=re.I)
+        if len(parts) != 2:
+            return None
+        prices = {}
+        for part in parts:
+            side = re.match(r"([AB])\s*안", part, re.I)
+            if side is None or "원" not in part:
+                return None
+            field = f"price_{side[1].lower()}"
+            if (price := _simple_slot_patch(LABELS[field], part)) is None:
+                return None
+            prices.update(price)
+        if len(prices) != 2:
+            return None
+        return self.apply("edit", self.version, {**prices, "price_mode": "manual"}, on_progress=on_progress)
+
+    def cancel_shipment_window(self):
+        if self.shipment_window is not None and self.shipment_window.version == self.version:
+            self.pending = None
+        self.shipment_window = None
+
+    def _shipment_window_lookup(self, window, variety, on_progress):
+        from services.shipment_timing import analyze_shipment_timing
+
+        if on_progress:
+            on_progress("shipment_csv")
+        self.shipment_window = replace(window, awaiting_shipment_variety=False)
+        return "", analyze_shipment_timing({
+            "shipment_variety": variety, "option_a_date": window.first.isoformat(),
+            "option_b_date": window.last.isoformat(),
+        })
+
+    def follow_up_shipment_window(self, question, today, *, previous_reply="", shipment_variety=None,
+                                  on_progress=None):
+        """Use a stated shipping window to obtain a dated, per-kg A quote."""
+        stated_limit = None
+        if (first := shipment_window_start(question, today)) is not None and 1 <= (first - today).days < 365:
+            self.shipment_window = _ShipmentWindow(first, self.version, quantity=explicit_shipment_quantity(question))
+            stated_limit = shipment_window_limit(re.split(r"[.!?]", question, maxsplit=1)[0], first)
+            if stated_limit is None:
+                return f"{first.month}월 {first.day}일 이후에 출하할 수 있군요. 늦어도 언제까지 출하해야 하나요?", None
+        window = self.shipment_window
+        if window is None or window.version != self.version:
+            return None
+
+        first, last = window.first, window.last
+        first_label = f"{first.month}월 {first.day}일"
+        if last is None:
+            last = stated_limit or shipment_window_limit(question, first)
+            if last is None:
+                return None
+            if last <= first:
+                return f"{first_label}보다 늦게 출하할 수 있는 날이 있나요?", None
+            if (last - today).days > 365:
+                return "출하 비교는 보관 시작일로부터 365일 이내에서 할 수 있어요. 더 가까운 날을 알려주시겠어요?", None
+            result = self.apply("new", self.version, {
+                "start_date": today.isoformat(),
+                "quantity": window.quantity,
+                "option_a": {"delay_days": (first - today).days},
+            })
+            if result["status"] != "NEEDS_INPUT":
+                return None
+            self.shipment_window = replace(window, last=last, version=self.version)
+            self.pending = {**result, "missing_fields": [LABELS["price_a"]]}
+            return (f"{last.month}월 {last.day}일까지 출하할 수 있군요. "
+                    f"{first_label} 출하 단가는 kg당 얼마로 제안받으셨나요?", self.pending)
+
+        last_label = f"{last.month}월 {last.day}일"
+        confirmation = f"{first_label}과 {last_label}을 먼저 비교해 볼까요?"
+        if window.awaiting_shipment_variety:
+            from services.shipment_timing import CATEGORIES
+
+            if variety := shipment_variety_reply(question, CATEGORIES):
+                return self._shipment_window_lookup(window, variety, on_progress)
+
+        if self.inputs["price_a"] is None and self.waiting_field() == LABELS["price_a"]:
+            text = question.strip()
+            text = re.sub(rf"^(?:{first.month}\s*월\s*)?{first.day}\s*일"
+                          r"\s*(?:에|출하\s*시)?\s*(?:제시받은\s*)?"
+                          r"(?:kg\s*당\s*)?(?:단가\s*(?:=|은|는)?\s*)?", "", text)
+            unknown_quote = re.sub(r"^(?:제시받은\s*)?(?:단가|가격)\s*(?:은|는|을|를)?\s*", "", text)
+            if is_bare_unknown_reply(unknown_quote):
+                if shipment_variety:
+                    return self._shipment_window_lookup(window, shipment_variety, on_progress)
+                self.shipment_window = replace(window, awaiting_shipment_variety=True)
+                return (f"{first_label}과 {last_label}의 과거 같은 시기 출하량부터 볼 수 있어요. "
+                        "출하통계에서 어떤 품종을 찾아볼까요?", None)
+            result = self.apply_short_answer(text, on_progress=on_progress)
+            if result is None:
+                return None
+            self.shipment_window = replace(window, version=self.version, awaiting_shipment_variety=False)
+            price = decimal(self.inputs["price_a"], LABELS["price_a"])
+            return (f"{first_label} 제시 단가를 **{price:,.12g}원/kg**으로 저장했어요. " + confirmation, result)
+
+        if self.inputs["price_a"] is None:
+            return None
+        accepts = re.fullmatch(r"\s*(?:네|예|좋아요|(?:(?:네|예)[,\s]+)?(?:비교)?해\s*(?:줘|주세요))[.!\s]*", question)
+        if accepts and previous_reply.endswith(confirmation):
+            self.shipment_window = None
+            start = date.fromisoformat(self.inputs["start_date"])
+            result = self.apply("edit", self.version, {"option_b": {"delay_days": (last - start).days}},
+                                on_progress=on_progress)
+            return (f"{first_label}과 {last_label}을 비교할게요. "
+                    + future_pair_feedback(result), result)
+        if shipment_choice_question(question) and "언제" in question:
+            price = decimal(self.inputs["price_a"], LABELS["price_a"])
+            return (f"{first_label} 제시 단가는 **{price:,.12g}원/kg**이에요. "
+                    "나중에 받는 단가와 보관비를 알아야 어느 쪽이 유리한지 판단할 수 있어요. "
+                    + confirmation, None)
+        return None
 
     def is_compound_value_answer(self, question):
         """Require an A/B update tool for unmistakable data-only multi-slot replies."""
@@ -734,41 +896,3 @@ class FuturePairState:
             option.update({key: value for key, value in updates.items() if value is not None})
         if filters:
             candidate["history_filters"].update(filters)
-
-    @staticmethod
-    def _validate(inputs):
-        if inputs["price_basis"] not in (None, "gross", "commission_net"):
-            raise ValueError("수수료 차감 전·후 단가 기준을 확인해 주세요.")
-        start_date = inputs["start_date"]
-        if start_date is not None:
-            try:
-                start = date.fromisoformat(start_date)
-                inputs["start_date"] = start.isoformat()
-            except (ValueError, TypeError):
-                raise ValueError("보관 시작일을 연-월-일로 알려 주세요.") from None
-        for field in ("quantity", "price_a", "price_b"):
-            value = inputs[field]
-            if value is None:
-                continue
-            number = decimal(value, LABELS[field])
-            if number < 0 or (field != "price_b" and number == 0):
-                raise ValueError(f"{LABELS[field]}의 범위를 확인해 주세요.")
-        for key, side in (("option_a", "A"), ("option_b", "B")):
-            for field, value in inputs[key].items():
-                if value is None:
-                    continue
-                label = f"{side}안 {OPTION_LABELS[field]}"
-                if field == "delay_days":
-                    if type(value) is not int or not 1 <= value <= 365:
-                        raise ValueError(f"{label}은 1~365일 사이 정수여야 합니다.")
-                    if start_date is not None and value > (date.max - start).days:
-                        raise ValueError("보관 시작일과 보관일로 출하일을 계산할 수 없습니다.")
-                    continue
-                number = decimal(value, label)
-                if number < 0 or (field in {"loss_percent", "fee_percent"} and number > Decimal(str(MAX_RATE_PERCENT))):
-                    raise ValueError(f"{label}의 범위를 확인해 주세요.")
-                if field == "fee_percent" and inputs["price_basis"] == "commission_net" and number != 0:
-                    raise ValueError("수수료 차감 후 단가와 별도 수수료율이 함께 입력됐습니다. 단가 기준을 확인해 주세요.")
-        a, b = (inputs[side]["delay_days"] for side in ("option_a", "option_b"))
-        if a is not None and b is not None and a >= b:
-            raise ValueError("B안 보관일은 A안보다 길어야 합니다.")

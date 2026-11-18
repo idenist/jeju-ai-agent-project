@@ -151,7 +151,7 @@ def render_threshold_evidence(pair_result: dict, location: str):
         if spec:
             st.caption("시장 참고 규격 (실제 출하 상품과 일치 여부를 확인하세요): " + _fmt_spec(spec))
         else:
-            st.info("비교할 상품의 거래규격이 없습니다. 다른 탭으로 이동하지 않고 여기서 입력하세요.")
+            st.info("다년도 시장 비교에 사용할 거래규격을 아래에서 선택하세요.")
         with st.expander("시장 규격 설정·수정", expanded=spec is None):
             changed, draft_changed = _spec_form(location, spec)
             if changed is not None:

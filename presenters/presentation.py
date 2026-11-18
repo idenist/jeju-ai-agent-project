@@ -35,7 +35,7 @@ def select_results(results: list[dict], version: int) -> list[dict]:
 
 
 def render_dialogue(results: list[dict], *, question: str = "", pair_costs_deferred=False,
-                    pair_specs_deferred=False) -> str:
+                    pair_specs_deferred=False, pair_one_question=False) -> str:
     """Concise questions; canonical Python numbers and evidence remain unchanged."""
     sections = []
     for entry in results:
@@ -54,13 +54,23 @@ def render_dialogue(results: list[dict], *, question: str = "", pair_costs_defer
                                                 (f"**{conclusion}**", minimum, favorable, warning) if part))
         elif result.get("analysis_type") == "future_pair":
             from agents.future_pair_state import future_pair_feedback, history_clarification, unavailable_cost
-            sections.append(history_clarification(result, question, pause_specs=pair_specs_deferred) or
-                            future_pair_feedback(result, pause_costs=pair_costs_deferred or unavailable_cost(question)))
+            sections.append(history_clarification(result, question, pause_specs=pair_specs_deferred,
+                                                   one_question=pair_one_question) or
+                            future_pair_feedback(result, pause_costs=pair_costs_deferred or unavailable_cost(question),
+                                                 one_question=pair_one_question))
         elif result.get("analysis_type") in {"price_history", "price_overview"}:
             sections.append(render_result(result))
         elif result.get("analysis_type") == "shipment_timing":
             from services.shipment_timing import format_timing_report
             sections.append(format_timing_report(result, details=False))
+        elif entry["tool"] == "get_historical_shipment_context" and result.get("status") == "NO_DATA":
+            sections.append(render_result(result))
+            query = result.get("input", {})
+            variety = query.get("shipment_variety")
+            month = query.get("target_month")
+            if variety in result.get("available_varieties", ()) and month:
+                sections.append(f"같은 품종의 다른 해 {month}월 자료를 찾아볼 수 있어요. "
+                                f"‘{variety}의 다른 해 {month}월 출하량을 보여줘’라고 말해 주세요.")
         elif entry["tool"] == "get_market_evidence" and result.get("status") == "NEEDS_INPUT":
             sections.append("이 조회는 특정 상품 규격의 가격을 확인하는 기능입니다. "
                             "대략적인 가격은 등급·포장을 몰라도 기간별 시장가격 요약으로 볼 수 있습니다. "
