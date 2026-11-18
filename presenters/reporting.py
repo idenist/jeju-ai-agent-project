@@ -173,6 +173,13 @@ def future_pair_summary(result: dict) -> tuple[str, str, str]:
     return f"{heading}에서 {comparison}", threshold, favorable
 
 
+def _reach_lines(result, later="B안"):
+    from services.past_reach import reach_sentence
+
+    sentence = reach_sentence(result.get("past_reach"), later)
+    return [sentence] if sentence else []
+
+
 def _price_source_period(source):
     period = source.get("observed_period") if isinstance(source, dict) else None
     if isinstance(period, (list, tuple)) and len(period) == 2 and all(period):
@@ -199,6 +206,7 @@ def _render_future_pair(result: dict) -> str:
                 f"가격쌍 기준일 {start} ~ {end}",
                 *_price_source_period(preview.get("source")),
                 f"**미확인 비용 차이를 0원으로 둔 참고 손익분기 가격: {_number(result['minimum_whole_krw_per_kg'], 0)}원/kg**",
+                *_reach_lines(result),
                 f"A안 확인 가능 금액: {_whole_won(result['a_reference_amount_krw'])} · 미확인 비용 제외",
                 f"계산에 반영한 확인 비용 합계: A안 {_whole_won(a['known_cost_krw'])} · B안 {_whole_won(b['known_cost_krw'])}",
                 "",
@@ -233,6 +241,7 @@ def _render_future_pair(result: dict) -> str:
     lines = [
         f"**비교 결론 · {conclusion}**",
         f"**{minimum}**",
+        *_reach_lines(result, later),
         *([favorable] if favorable else []),
         *([warning] if warning else []),
         "",

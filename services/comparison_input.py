@@ -131,6 +131,7 @@ def to_future_pair_input(scenario: dict, *, option_a: dict, option_b: dict) -> d
                 "option_a": dict(zip(OPTION_KEYS, (a_key, a_days, a_loss, a_storage, a_price))),
                 "options_b": base["comparison_input"]["options"]},
             "evidence": evidence, "cautions": base["cautions"],
+            "change_pcts": scenario.get("change_pcts"),
             "hidden_engine_fields": ["difference_krw", "break_even_price_per_kg",
                                      "minimum_whole_krw_per_kg", "current_proceeds_krw"],
             "message": PAIR_NOTE}

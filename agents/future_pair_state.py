@@ -535,7 +535,8 @@ class FuturePairState:
                 return self._price_gap_changed()
             preview = {key: result[key] for key in ("interval_days", "clean_pairs", "base_date_range",
                                                     "scenarios", "conditions", "source")}
-            preview.update({key: result[key] for key in ("warning_pairs", "unavailable_pairs") if key in result})
+            preview.update({key: result[key] for key in ("warning_pairs", "unavailable_pairs", "change_pcts")
+                            if key in result})
             if result.get("small_sample"):
                 # 사례가 10쌍 미만이면 가격 도구가 붙인 안내를 미리보기에도 그대로 전달한다.
                 preview["sample_note"] = result["cautions"][0]

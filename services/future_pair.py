@@ -259,8 +259,12 @@ def compare_future_pair_history_reference(*, quantity, price_basis, start_date,
             "known_cost_krw": b["known_cost_krw"],
             "remaining_kg": b["remaining_kg"],
         })
+    from services.past_reach import past_pairs_reaching
+
     reference.update({
         "history_scenarios": True,
+        "past_reach": past_pairs_reaching(history_preview.get("change_pcts"), price_a,
+                                          reference["break_even_vs_a_krw_per_kg"], history_preview["interval_days"]),
         "history_preview": {key: history_preview[key] for key in
                             ("interval_days", "clean_pairs", "warning_pairs", "unavailable_pairs",
                              "base_date_range", "conditions", "source")
@@ -318,7 +322,7 @@ def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b
               "included_costs": ["commission"] if price_basis == "commission_net" else [], "current_costs": []}
     a_template = template(option_a, "option_a", price_a)
     evidence = {"option_a": {"summary": "A안 단가 · 사용자 입력 가정", "sale_date": sale_a}}
-    cautions = []
+    cautions, change_pcts = [], None
     if history_filters is None:
         b_templates = [template(option_b, "manual_b", price_b)]
         evidence["manual_b"] = {"summary": "B안 단가 · 사용자 입력 가정", "sale_date": sale_b}
@@ -342,6 +346,9 @@ def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b
         b_templates = converted_input["options_b"]
         evidence = converted["evidence"]
         cautions = converted["cautions"]
+        change_pcts = converted.get("change_pcts")
+
+    from services.past_reach import past_pairs_reaching
 
     a_input = _engine_option(option_a, a_template)
     if on_progress:
@@ -382,6 +389,7 @@ def compare_future_pair(*, quantity, price_basis, start_date, option_a, option_b
                           for result, option in zip(result_b["options"], options_b)],
             "break_even_vs_a_krw_per_kg": fixed(threshold),
             "minimum_whole_krw_per_kg": str(threshold.to_integral_value(rounding=ROUND_CEILING)),
+            "past_reach": past_pairs_reaching(change_pcts, price_a, threshold, days_b - days_a),
             "historical_price_lookup": "used" if history_filters is not None else "not_used",
             "suppress_market_evidence": history_filters is None,
             "warnings": [*result_b["warnings"], *cautions]}
