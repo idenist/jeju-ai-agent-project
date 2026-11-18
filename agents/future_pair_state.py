@@ -150,7 +150,9 @@ def future_pair_feedback(result, *, pause_costs=False):
     message = result.get("message") or "비교 조건을 확인해 주세요."
     if preview := result.get("history_preview"):
         start, end = preview["base_date_range"]
+        from presenters.data_basis import data_basis_line
         lines = [f"**같은 규격의 과거 {preview['interval_days']}일 가격쌍 {preview['clean_pairs']}개를 찾았습니다.**",
+                 data_basis_line(preview),
                  f"관측 기준일 {start} ~ {end}",
                  " · ".join(f"{label} {Decimal(row['change_pct']):+,.2f}%"
                             for label, row in zip(("최저", "중앙", "최고"), preview["scenarios"]))]
