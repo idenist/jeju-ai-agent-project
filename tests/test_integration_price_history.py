@@ -124,7 +124,11 @@ class 가격조회통합검수(unittest.TestCase):
         self.assertEqual(result["status"], "NO_DATA")
         self.assertEqual(result["source_status"], "NO_CLEAN_COMPARISON")
         self.assertEqual(result["warning_pairs"], 2)
-        self.assertIn("경고 없는 비교쌍이 없어", render_price_history(result))
+        gap = result["data_gap"]
+        self.assertEqual(gap["code"], "QUALITY_EXCLUDED")
+        report_text = render_price_history(result)
+        self.assertIn(gap["reason"], report_text)
+        self.assertEqual(report_text.count(gap["next_action"]), 1)
 
     def test_조건_누락시_과거_가격_전용_질문을_표시(self):
         raw = {"status": "NEEDS_CLARIFICATION", "missing_fields": ["grade", "interval_days"],

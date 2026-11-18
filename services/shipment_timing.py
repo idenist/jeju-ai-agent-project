@@ -94,13 +94,18 @@ def _load(root: Path) -> tuple[dict, dict, str]:
         data[key] = (amount, row["data_warning"])
     if not data:
         raise DataIssue("출하량 CSV가 비어 있습니다.")
-    report_path = root / REPORT_PATH
-    quality = json.loads(report_path.read_text(encoding="utf-8-sig")) if report_path.exists() else {}
+    try:
+        report_bytes = (root / REPORT_PATH).read_bytes()
+    except FileNotFoundError:
+        quality, report_sha = {}, None
+    else:
+        quality = json.loads(report_bytes.decode("utf-8-sig"))
+        report_sha = hashlib.sha256(report_bytes).hexdigest()
     if quality and (not isinstance(quality, dict) or
                     quality.get("daily_rows") != len(data) or
                     quality.get("unit") != "ton"):
         raise DataIssue("출하량 전처리 품질보고서와 실제 CSV가 일치하지 않습니다.")
-    return data, quality, sha
+    return data, quality, sha, report_sha
 
 
 def _reference_date(day: date, year: int, base_year: int) -> date:
@@ -166,13 +171,15 @@ def analyze_shipment_timing(args: dict, root: Path = ROOT) -> dict:
     except (ValueError, TypeError, OverflowError) as exc:
         return _response("INVALID_INPUT", str(exc))
     try:
-        data, report, sha = _load(Path(root))
+        data, report, sha, report_sha = _load(Path(root))
         source_first = min(d for d, _, _ in data).isoformat()
         source_last = max(d for d, _, _ in data).isoformat()
         source = {
             "dataset": SOURCE_NAME, "url": SOURCE_URL, "file": str(DAILY_PATH),
-            "unit": "ton", "source_first_date": source_first, "source_last_date": source_last,
-            "data_sha256": sha, "reference_years_requested": list(REFERENCE_YEARS),
+            "unit": "ton", "date_meaning": "신고 출하일",
+            "source_first_date": source_first, "source_last_date": source_last,
+            "data_sha256": sha, "quality_report_sha256": report_sha,
+            "reference_years_requested": list(REFERENCE_YEARS),
             "window_days": WINDOW_DAYS, "window_definition": "중심일 전후 3일씩 포함한 7일",
         }
         years, skipped = [], []

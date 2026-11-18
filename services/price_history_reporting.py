@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 
+from services.price_data_gap import render_price_gap
+
 
 LABELS = {
     "market_code": "시장", "variety": "경매 품종", "grade": "등급", "size": "크기",
@@ -37,6 +39,7 @@ def render_price_history(result: dict) -> str:
         return "과거 가격 조회 결과를 확인할 수 없습니다."
     status = result.get("status")
     source_status = result.get("source_status")
+    gap = result.get("data_gap")
     lines = ["**동일 거래조건의 과거 경락가격 비교**"]
 
     changes = result.get("normalized_conditions") or {}
@@ -47,7 +50,23 @@ def render_price_history(result: dict) -> str:
     if result.get("applied_defaults_note"):
         lines.append("- 자료에서 유일해 적용한 조건: " + _text(result["applied_defaults_note"]))
 
-    if source_status == "INTERVAL_NOT_AVAILABLE":
+    if gap:
+        lines.extend(("", render_price_gap(result)))
+        conditions = result.get("conditions") or result.get("requested_conditions") or {}
+        if conditions:
+            display_conditions = dict(conditions)
+            if "market_code" in display_conditions and result.get("market_name"):
+                display_conditions["market_code"] = result["market_name"]
+            visible = [f"{label}: {_text(display_conditions[field])}"
+                       for field, label in LABELS.items() if field in display_conditions]
+            lines.append("- 요청 규격: " + " / ".join(visible))
+        if type(days := result.get("interval_days")) is int:
+            lines.append(f"- 비교 간격: {days}일")
+        if result.get("base_date_filter"):
+            lines.append("- 기준일 제한: " + _text(result["base_date_filter"]))
+        if "clean_pairs" in result:
+            lines.append(f"- 유효 {result['clean_pairs']}쌍 · 품질 경고 {result.get('warning_pairs', 0)}쌍 · 비교 불가 {result.get('unavailable_pairs', 0)}쌍")
+    elif source_status == "INTERVAL_NOT_AVAILABLE":
         lines.append("요청한 비교 간격의 자료가 없습니다.")
         lines.append("- 지원되는 간격: " + ", ".join(f"{n}일" for n in result.get("available_intervals", [])))
     elif source_status == "PACKAGE_WEIGHT_CONFLICT":
@@ -103,7 +122,8 @@ def render_price_history(result: dict) -> str:
                      + " ~ " + _text(verification.get("observed_last_date")))
     if result.get("source"):
         lines.append("- 조회 자료: " + _text(result["source"]))
-    for caution in result.get("cautions") or []:
-        lines.append("- 해석 주의: " + _text(caution))
-    lines.append("**과거 거래끼리 비교한 값입니다. 같은 감귤을 실제 보관한 결과가 아니며, 미래 가격·출하일·농가 실수취 수익을 예측하지 않습니다.**")
+    if not gap:
+        for caution in result.get("cautions") or []:
+            lines.append("- 해석 주의: " + _text(caution))
+        lines.append("**과거 거래끼리 비교한 값입니다. 같은 감귤을 실제 보관한 결과가 아니며, 미래 가격·출하일·농가 실수취 수익을 예측하지 않습니다.**")
     return "\n".join(lines)

@@ -173,6 +173,13 @@ def future_pair_summary(result: dict) -> tuple[str, str, str]:
     return f"{heading}에서 {comparison}", threshold, favorable
 
 
+def _price_source_period(source):
+    period = source.get("observed_period") if isinstance(source, dict) else None
+    if isinstance(period, (list, tuple)) and len(period) == 2 and all(period):
+        return [f"가격 원천 관측기간 {period[0]} ~ {period[1]}"]
+    return []
+
+
 def _render_future_pair(result: dict) -> str:
     a = result["option_a"]
     b = result["options_b"][0]
@@ -188,7 +195,9 @@ def _render_future_pair(result: dict) -> str:
             start, end = preview["base_date_range"]
             lines = [
                 "**가격자료 비교 · 과거 사례 가정이며 미래가격 예측은 아닙니다**",
-                f"A안 {a['sale_date']}와 B안 {b['sale_date']} 사이 {preview['interval_days']}일 간격의 과거 가격쌍 {preview['clean_pairs']}건을 사용했습니다 ({start} ~ {end}).",
+                f"A안 {a['sale_date']}와 B안 {b['sale_date']} 사이 {preview['interval_days']}일 간격의 과거 가격쌍 {preview['clean_pairs']}쌍을 사용했습니다.",
+                f"가격쌍 기준일 {start} ~ {end}",
+                *_price_source_period(preview.get("source")),
                 f"**미확인 비용 차이를 0원으로 둔 참고 손익분기 가격: {_number(result['minimum_whole_krw_per_kg'], 0)}원/kg**",
                 f"A안 확인 가능 금액: {_whole_won(result['a_reference_amount_krw'])} · 미확인 비용 제외",
                 f"계산에 반영한 확인 비용 합계: A안 {_whole_won(a['known_cost_krw'])} · B안 {_whole_won(b['known_cost_krw'])}",
@@ -254,8 +263,9 @@ def _render_future_pair(result: dict) -> str:
         start, end = sample["base_date_range"]
         labels = {**FIELD_NAMES, "trade_type": "거래방식"}
         conditions = " / ".join(f"{labels.get(k, k)} {_text(v)}" for k, v in sample["conditions"].items())
-        lines += [f"- 과거가격 조회 조건: {conditions}", f"- 관측 기준일 범위: {start} ~ {end}",
-                  "- 비교 자료: 과거 동일 규격 경락가격쌍"]
+        lines += [f"- 과거가격 조회 조건: {conditions}", f"- 가격쌍 기준일 {start} ~ {end}",
+                  "- 비교 자료: 과거 동일 규격 경락가격쌍",
+                  *(f"- {line}" for line in _price_source_period(sample.get("source")))]
     return "\n".join([*lines, *_warnings(result)])
 
 
@@ -448,7 +458,7 @@ def _render_result_body(result: dict) -> str:
 
 def render_result(result: dict) -> str:
     body = _render_result_body(result)
-    if result.get("analysis_type") == "settlement":
+    if result.get("analysis_type") == "settlement" or result.get("data_gap"):
         return body
     context = result.get("ui_context") if isinstance(result, dict) else None
     if not context:
@@ -517,7 +527,10 @@ def render_report(results: list[dict]) -> str:
     fingerprint = hashlib.sha256(json.dumps({"format_version": 2, "results": results},
         ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:12].upper()
     settlement_only = bool(results) and all(x.get('result', x).get('analysis_type') == 'settlement' for x in results)
-    if results and all(x.get("tool") == "explain_term" for x in results):
+    price_gaps_only = bool(results) and all(x.get("result", x).get("data_gap") for x in results)
+    if price_gaps_only:
+        title = "제주 감귤 과거 가격 조회 기록"
+    elif results and all(x.get("tool") == "explain_term" for x in results):
         title = "제주 감귤 출하 용어 설명"
     elif results and all(x.get("tool") == "analyze_shipment_timing" for x in results):
         title = "제주 감귤 과거 출하량 보고서"
@@ -545,6 +558,8 @@ def render_report(results: list[dict]) -> str:
                 captioned += [f"**표 {table_number}. {caption}**", ""]
             captioned.append(line)
         sections += [f"## {index:02d}. {label}", "\n".join(captioned)]
+    if price_gaps_only:
+        return "\n\n".join(sections).strip() + "\n"
     result_objects = [x.get("result", x) if isinstance(x, dict) else {} for x in results]
     if any("current_proceeds_krw" in x or "missing_fields" in x for x in result_objects):
         notices.insert(0, "입력 확인: 가격·비용·감모와 입력 구분은 사용자 제공값 또는 가정이며 외부 사실 검증을 뜻하지 않습니다.")

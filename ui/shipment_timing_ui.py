@@ -5,6 +5,7 @@ No API key, model prediction, or implicit category mapping is required.
 """
 from __future__ import annotations
 
+from datetime import date
 import streamlit as st
 
 from services.shipment_timing import CATEGORIES, analyze_shipment_timing, format_timing_report, resolve_pair_dates
@@ -57,7 +58,7 @@ def render_integrated_chat_report(report: dict) -> None:
         render_integrated_downloads(report["entries"], report["json"], "chat")
 
 
-def render_shipment_timing_panel(pair_state_or_inputs=None):
+def render_shipment_timing_panel(pair_state_or_inputs=None, *, shipment_variety=None):
     """Called under the existing two-future-shipment tab, after the economic result UI."""
     inputs, economic_candidate = _state_inputs_and_economic(pair_state_or_inputs)
     with st.expander("제주데이터허브 출하 시기 분석 · A/B", expanded=False):
@@ -66,47 +67,82 @@ def render_shipment_timing_panel(pair_state_or_inputs=None):
         if not (planned_a and planned_b):
             st.info("위쪽에서 보관 시작일과 A/B 보관일을 입력해 주세요. 날짜를 다시 입력할 필요는 없습니다.")
             return None
+        return _render_shipment_lookup(planned_a, planned_b, economic_candidate, shipment_variety=shipment_variety)
+
+
+def render_shipment_lookup(pair_inputs=None, *, shipment_variety=None, timing_query=None):
+    if timing_query is None:
+        dates = resolve_pair_dates(pair_inputs)
+    else:
+        dates = timing_query["option_a_date"], timing_query["option_b_date"]
+        shipment_variety = timing_query["shipment_variety"]
+    defaults = {
+        "timing_lookup_earlier": date.fromisoformat(dates[0]) if dates[0] else None,
+        "timing_lookup_later": date.fromisoformat(dates[1]) if dates[1] else None,
+        "timing_lookup_variety": shipment_variety if shipment_variety in CATEGORIES else None,
+    }
+    previous = st.session_state.get("timing_lookup_defaults", {})
+    if defaults != previous:
+        for key, value in defaults.items():
+            if st.session_state.get(key) == previous.get(key):
+                st.session_state[key] = value
+        st.session_state.timing_lookup_defaults = defaults
+    st.caption("품종과 두 날짜로 과거 신고 출하량을 확인해요.")
+    earlier = st.date_input("먼저 출하할 날짜", value=None, key="timing_lookup_earlier")
+    later = st.date_input("나중 출하할 날짜", value=None, key="timing_lookup_later")
+    return _render_shipment_lookup(earlier.isoformat() if earlier else None,
+                                   later.isoformat() if later else None, prefix="timing_lookup")
+
+
+def _render_shipment_lookup(planned_a, planned_b, economic_candidate=None, *, prefix="timing", shipment_variety=None):
+    if planned_a and planned_b:
         st.write(f"분석할 출하일: A **{planned_a}** · B **{planned_b}**")
-        variety = st.selectbox("출하통계 품종 · 경매 품종과 별개", list(CATEGORIES),
-                               index=None, placeholder="제주데이터허브 품종을 선택하세요", key="timing_variety")
-        signature = (variety, planned_a, planned_b, source_fingerprint())
-        can_analyze = bool(variety and planned_a and planned_b)
-        if st.button("A/B 과거 출하량 분석", key="timing_run", disabled=not can_analyze):
-            args = {"shipment_variety": variety, "option_a_date": planned_a, "option_b_date": planned_b}
-            st.session_state.timing_result = analyze_shipment_timing(args)
-            st.session_state.timing_signature = signature
-        result = st.session_state.get("timing_result")
-        if result is None:
-            return None
-        if (st.session_state.get("timing_signature") != signature or
-                result.get("source", {}).get("data_sha256") != signature[3][0]):
-            st.info("품종·날짜·출하량 원본이 변경됐습니다. 다시 분석해 주세요. 이전 보고서는 표시하지 않습니다.")
-            return None
-        if result["status"] == "OK":
-            summary = result["summary"]
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.metric("A 주변 7일 중앙값", f"{float(summary['a_median_7day_tons']):,.1f}톤")
-            with c2:
-                st.metric("B 주변 7일 중앙값", f"{float(summary['b_median_7day_tons']):,.1f}톤")
-            with c3:
-                st.metric("B가 더 많았던 연도", f"{summary['b_higher_years']}/{result['paired_year_count']}개")
-        elif result["status"] == "INSUFFICIENT_DATA":
-            st.warning(result["message"])
-        else:
-            st.error(result["message"])
-            return result
-        st.markdown(format_timing_report(result))
-        economic = aligned_economic(result, economic_candidate)
-        entries = report_entries(result, economic)
-        if economic is None:
-            st.caption("현재 출하량 분석은 완료됐습니다. 위쪽 경제성 비교 조건까지 입력·계산하면 같은 날짜의 경제성 결과도 함께 저장됩니다.")
-        else:
-            from presenters.reporting import future_pair_summary
-            conclusion, minimum, favorable = future_pair_summary(economic)
-            st.markdown("\n\n".join(part for part in
-                                      (f"**현재 A/B 경제성 계산과 함께 보기** · {conclusion}", minimum, favorable)
-                                      if part))
-            st.caption("경제성은 입력한 가정 단가·감모·비용에 따른 계산이며 출하량으로 추정한 미래수익이 아닙니다.")
-        render_integrated_downloads(entries, export_json(result, economic), "direct")
+    varieties = list(CATEGORIES)
+    default = varieties.index(shipment_variety) if shipment_variety in CATEGORIES else None
+    variety = st.selectbox("출하통계 품종 · 경매 품종과 별개", varieties,
+                           index=default, placeholder="제주데이터허브 품종을 선택하세요", key=f"{prefix}_variety")
+    signature = (variety, planned_a, planned_b, source_fingerprint())
+    result_key, signature_key = f"{prefix}_result", f"{prefix}_signature"
+    if st.button("A/B 과거 출하량 분석", key=f"{prefix}_run", disabled=not (variety and planned_a and planned_b)):
+        args = {"shipment_variety": variety, "option_a_date": planned_a, "option_b_date": planned_b}
+        st.session_state[result_key] = analyze_shipment_timing(args)
+        st.session_state[signature_key] = signature
+    result = st.session_state.get(result_key)
+    if result is None:
+        return None
+    if st.session_state.get(signature_key) != signature:
+        st.info("품종·날짜·출하량 원본이 변경됐습니다. 다시 분석해 주세요.")
+        return None
+    if (result["status"] in {"OK", "INSUFFICIENT_DATA"}
+            and result.get("source", {}).get("data_sha256") != signature[3][0]):
+        st.info("조회 중 자료가 바뀌었습니다. 다시 분석해 주세요.")
+        return None
+    if result["status"] == "OK":
+        summary = result["summary"]
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("A 주변 7일 중앙값", f"{float(summary['a_median_7day_tons']):,.1f}톤")
+        with c2:
+            st.metric("B 주변 7일 중앙값", f"{float(summary['b_median_7day_tons']):,.1f}톤")
+        with c3:
+            st.metric("B가 더 많았던 연도", f"{summary['b_higher_years']}/{result['paired_year_count']}개")
+    elif result["status"] == "INSUFFICIENT_DATA":
+        st.warning(result["message"])
+    else:
+        st.error(result["message"])
         return result
+    st.markdown(format_timing_report(result))
+    economic = aligned_economic(result, economic_candidate)
+    entries = report_entries(result, economic)
+    if economic is None and prefix == "timing":
+        st.caption("위에서 경제성 비교를 계산하면 같은 날짜의 경제성 결과를 함께 저장할 수 있습니다.")
+    elif economic is not None:
+        from presenters.reporting import future_pair_summary
+        conclusion, minimum, favorable = future_pair_summary(economic)
+        st.markdown("\n\n".join(part for part in
+                                  (f"**현재 A/B 경제성 계산과 함께 보기** · {conclusion}", minimum, favorable)
+                                  if part))
+        st.caption("경제성은 입력한 가정 단가·감모·비용에 따른 계산이며 출하량으로 추정한 미래수익이 아닙니다.")
+    context = "direct" if prefix == "timing" else "lookup"
+    render_integrated_downloads(entries, export_json(result, economic), context)
+    return result

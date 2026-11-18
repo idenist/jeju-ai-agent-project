@@ -58,6 +58,9 @@ def to_comparison_input(scenario: dict, *, delay_days, loss_percent=None, daily_
         result = {"status": status, "comparison_input": None, "evidence": {},
                   "manual_price_required": manual,
                   "message": message}
+        from services.price_data_gap import PRICE_GAP_EVIDENCE
+
+        result.update({key: scenario[key] for key in (*PRICE_GAP_EVIDENCE, "error_kind") if key in scenario})
         if status == "NEEDS_CLARIFICATION":
             result.update(missing_fields=scenario["missing_fields"], choices=scenario.get("choices", {}))
         return result
@@ -70,6 +73,7 @@ def to_comparison_input(scenario: dict, *, delay_days, loss_percent=None, daily_
         evidence[key] = {"price_type": "assumption", "label": item["label"], "change_pct": item["change_pct"],
                          "price_interval_days": interval, "delay_days": delay_days,
                          "clean_pairs": scenario["clean_pairs"], "base_date_range": scenario["base_date_range"],
+                         **{count: scenario[count] for count in ("warning_pairs", "unavailable_pairs") if count in scenario},
                          "conditions": scenario["conditions"], "source": scenario["source"],
                          "summary": f"B안 {_won(item['option_b_price_per_kg'])}원/kg · 동일 규격 {interval}일 과거 "
                                     f"{scenario['clean_pairs']}쌍의 {SHORT[item['basis']]} 적용 · 가정"}

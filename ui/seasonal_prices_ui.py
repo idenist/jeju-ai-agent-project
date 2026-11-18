@@ -47,14 +47,14 @@ def render_seasonal_prices():
             rows.append({
                 "시즌": item["season"] + (" (부분시즌)" if item["season"] == "2026-2027" else ""),
                 "가격(원/kg)": f"{Decimal(item['price_per_kg']):,.2f}" if item["price_per_kg"] is not None else "-",
-                "관측일": item["observed_days"], "거래건수": item["transaction_count"],
-                "원천기간": f"{item.get('source_first_date') or '-'} ~ {item.get('source_last_date') or '-'}",
+                "조회 범위 관측일 수": item["observed_days"], "거래건수": item["transaction_count"],
+                "시즌 관측기간": f"{item.get('source_first_date') or '-'} ~ {item.get('source_last_date') or '-'}",
                 "가격 기간": f"{item.get('window_start', '-') } ~ {item.get('window_end', '-')}",
                 "상태": ("관측기간 일부만 확보" if item["status"] == "OK" and not item["window_complete"]
                          else "참고(원천 주의)" if item["quality_warnings"] and item["status"] == "OK"
                          else "조회됨" if item["status"] == "OK" else labels.get(item["status"], item["status"])),
             })
         st.dataframe(rows, hide_index=True, use_container_width=True)
-        st.caption("가격은 거래금액 합계 ÷ 거래중량 합계입니다. 품질이 같은 개별 상품을 추적한 값이 아닙니다.")
+        st.caption("관측일 수는 조회 범위에서 실제 가격 기록이 있는 날의 수입니다. 가격은 거래금액 합계 ÷ 거래중량 합계입니다.")
         if any(item["status"] == "NOT_PREPARED" for item in result["seasons"]):
             st.info("아직 조회할 수 있도록 준비되지 않은 시즌이 있습니다. 자료 담당자에게 해당 시즌의 가격자료 준비를 요청해 주세요.")

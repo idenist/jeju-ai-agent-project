@@ -58,6 +58,7 @@ def check_source(prices_file: Path, report_file: Path, data_file: Path) -> dict:
         raise DataVersionError("비교표 파일이 보고서와 다른 버전입니다. 비교표를 다시 생성해 주세요.")
     return {"price_file": report.get("input_file"), "price_sha256": expected,
             "comparison_sha256": table, "hash_basis": report.get("output_hash_basis"),
+            "date_field": "거래정산일자", "url": "https://www.data.go.kr/data/15141810/openapi.do",
             "observed_period": [report.get("observed_date_min"), report.get("observed_date_max")]}
 
 
@@ -111,9 +112,10 @@ def get_price_scenarios(args: dict, data_file: Path = DEFAULT_FILE, prices_file:
         return {**common, "status": status, "missing_fields": history["missing_fields"],
                 "choices": history["choices"], "message": history["message"]}
     if status != "OK":
+        from services.price_data_gap import PRICE_GAP_EVIDENCE
+
         # 같은 조건의 기록이 없거나 경고 없는 사례가 0건이면 가정 단가를 만들지 않는다.
-        keep = {k: history[k] for k in ("clean_pairs", "warning_pairs", "unavailable_pairs",
-                                         "unavailable_reasons") if k in history}
+        keep = {k: history[k] for k in PRICE_GAP_EVIDENCE if k != "source" and k in history}
         return {**common, **keep, "status": status, "manual_price_allowed": True,
                 "message": f"{history.get('message', '비교할 과거 사례가 없습니다.')} {MANUAL_PRICE}"}
 

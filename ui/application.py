@@ -333,19 +333,31 @@ def main():
                 dirty_before = _card_dirty()
             future_result = ws.session.future_pair.current_result()
             with direct:
-                st.caption("비교할 상황을 고른 다음 입력하세요. 모르는 비용은 비워둘 수 있고, 실제로 없다고 확인한 경우에만 0을 입력합니다.")
-                pair_tab, now_tab = st.tabs(["두 출하일 비교", "지금 판매 vs 보관 후 판매"])
+                pair_tab, volume_tab, now_tab = st.tabs(["두 출하일 비교", "과거 출하량만 보기", "지금 판매 vs 보관 후 판매"])
                 with pair_tab:
                     from ui.future_pair_ui import render_future_pair
                     future_result = render_future_pair(ws.session.future_pair)
                     from ui.shipment_timing_ui import render_shipment_timing_panel
-                    render_shipment_timing_panel(ws.session.future_pair)
+                    render_shipment_timing_panel(ws.session.future_pair, shipment_variety=ws.session.shipment_variety)
                 with now_tab:
                     _render_card_summary(ws)
                     if st.button("현재 조건으로 다시 계산", disabled=dirty_before):
                         ws.calculate()
                     dirty = _render_cards(ws)
                     comparison_report = st.empty()
+                with volume_tab:
+                    from ui.shipment_timing_ui import render_shipment_lookup
+
+                    pair = ws.session.future_pair
+                    _, timing_report = _latest_chat_report(
+                        messages, ws.store.version, pair.current_result(), pair.version, target="timing",
+                    )
+                    timing_query = next(
+                        (entry["result"]["input"] for entry in timing_report["entries"]
+                         if entry["tool"] == "analyze_shipment_timing"), None,
+                    ) if timing_report else None
+                    render_shipment_lookup(pair.inputs, shipment_variety=ws.session.shipment_variety,
+                                           timing_query=timing_query)
         with tools:
             data_tab, tools_tab = st.tabs(["자료 조회", "추가 도구"])
             with data_tab:

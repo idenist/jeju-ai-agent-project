@@ -5,6 +5,7 @@ import json
 import os
 import unittest
 from copy import deepcopy
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -144,6 +145,22 @@ class 직접가격조회화면검수(unittest.TestCase):
         self.assertTrue(any("과거 경락가격" in str(x.value) for x in app.markdown))
         self.assertTrue(any(button.label == "PDF 보고서 내려받기" for button in app.get("download_button")))
         self.assertIsNone(app.session_state.workspace.store.scenario["current_price_per_kg"])
+
+    def test_관측이_없는_기준일에는_하나의_행동과_조회기록을_표시(self):
+        app = self._app()
+        self._fill(app)
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+            app.date_input(key="price_history_base_date_picker").set_value(date(2026, 10, 4)).run()
+            next(button for button in app.button if button.label == "과거 경락가격 조회").click().run()
+        self.assertEqual(list(app.exception), [])
+        gap = app.session_state.workspace.current_entries()[0]["result"]["data_gap"]
+        self.assertEqual(gap["code"], "NO_OBSERVATION")
+        screen = "\n".join(str(item.value) for item in app.markdown)
+        self.assertIn(gap["reason"], screen)
+        self.assertEqual(screen.count(gap["next_action"]), 1)
+        labels = {button.label for button in app.get("download_button")}
+        self.assertTrue({"가격 조회 기록 PDF 저장", "가격 조회 기록 JSON 저장"} <= labels)
+        self.assertNotIn("PDF 보고서 내려받기", labels)
 
     def test_화면_조회필터를_수정하면_이전_보고서를_숨김(self):
         app = self._app()

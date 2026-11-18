@@ -238,7 +238,7 @@ class 통합실행경로검수(TestCase):
             with patch("services.calculation_service._primary_calculate", wraps=원래_계산) as 추적:
                 화면 = AppTest.from_file(str(프로젝트_경로 / "app.py"), default_timeout=25).run()
                 next(버튼 for 버튼 in 화면.button if 버튼.label == "가상 예시 조건 불러오기").click().run()
-                next(버튼 for 버튼 in 화면.button if 버튼.label == "입력 조건 비교").click().run()
+                next(버튼 for 버튼 in 화면.button if 버튼.label == "현재 조건으로 다시 계산").click().run()
 
         self.assertEqual(list(화면.exception), [])
         self.assertGreaterEqual(추적.call_count, 2)

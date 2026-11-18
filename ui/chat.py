@@ -1,7 +1,6 @@
 """Shared conversational/card workspace. CSV tools and PDF work without a model key."""
 from __future__ import annotations
 
-import json
 import re
 from time import monotonic, time
 from datetime import date, timedelta
@@ -10,11 +9,17 @@ import streamlit as st
 from core.latency import latency_logging_enabled, log_latency
 from presenters.reporting import manual_price_warning
 from presenters.presentation import render_dialogue
+from services.task_context import data_revision
 
+_REPORT_FORMAT = (
+    r"\s*(?:결과)?\s*(?:를|을)?\s*"
+    r"(?:보고서\s*(?:로|를)?\s*)?"
+    r"(?:(?:pdf|피디에프)\s*(?:파일)?\s*(?:로|를)?|(?:프린트|인쇄)\s*할\s*수\s*있게|보고서\s*(?:로|를)?)\s*"
+    r"(?:다시\s*)?(?:줘(?:요)?|주세요|보여\s*줘(?:요)?|보여\s*주세요|받을\s*수\s*있나요|다운로드)?[.!?\s]*"
+)
 _REPORT_REQUEST = re.compile(
-    r"(?:방금|아까|직전|마지막|최근)\s*(?:한\s*)?(?:출하\s*)?비교\s*(?:결과)?\s*(?:를|을)?\s*"
-    r"(?:(?:보고서\s*(?:로|를)?\s*)?(?:pdf|피디에프)\s*(?:파일)?\s*(?:로|를)?|보고서\s*(?:로|를)?)\s*"
-    r"(?:다시\s*)?(?:줘(?:요)?|주세요|보여\s*줘(?:요)?|보여\s*주세요|받을\s*수\s*있나요|다운로드)?[.!?\s]*",
+    r"(?:(?:방금|아까|직전|마지막|최근)\s*(?:한\s*)?)?"
+    r"(?P<target>(?:출하\s*)?비교|(?:과거\s*)?출하량\s*(?:비교|분석)?)?" + _REPORT_FORMAT,
     re.IGNORECASE,
 )
 _BASIS_CHOICES = {"빼기 전": "gross", "뺀 뒤": "commission_net", "잘 모르겠어요": None}
@@ -315,6 +320,16 @@ def _reply_to_chat_basis(ws, scope, version, basis, *, on_progress=None):
     return {"status": result["status"], "state": ws.store.snapshot(), "visible_results": entries,
             "text": render_dialogue(entries)}
 
+def _submit_pending_pair_price(version, key):
+    price = st.session_state.get(key)
+    if price is None:
+        st.session_state[f"{key}_missing"] = True
+        return
+    st.session_state.pop(f"{key}_missing", None)
+    _submit_shipment_question(f"나중 출하 단가를 kg당 {price:,.12g}원으로 비교",
+                              pair_edit=(version, {"price_mode": "manual", "price_b": price}))
+
+
 def _render_pending_pair_price(ws, messages):
     from services.shipment_timing import resolve_pair_dates
 
@@ -335,13 +350,10 @@ def _render_pending_pair_price(ws, messages):
         price = st.number_input("나중 출하의 가정 단가 (원/kg)", min_value=0.01, value=None, key=key)
         if warning := manual_price_warning(state.inputs["price_a"], price):
             st.warning(warning)
-        if st.button("이 단가로 비교", key=f"{key}_submit"):
-            if price is None:
-                st.warning("나중 출하의 가정 단가를 입력해 주세요.")
-            else:
-                _submit_shipment_question(f"나중 출하 단가를 kg당 {price:,.12g}원으로 비교",
-                                          pair_edit=(state.version, {"price_mode": "manual", "price_b": price}))
-                st.rerun()
+        st.button("이 단가로 비교", key=f"{key}_submit",
+                  on_click=_submit_pending_pair_price, args=(state.version, key))
+        if st.session_state.pop(f"{key}_missing", False) and price is None:
+            st.warning("나중 출하의 가정 단가를 입력해 주세요.")
 
 def _render_box_price_actions(pair):
     quote = pair.box_price
@@ -367,13 +379,24 @@ def _chat_report(ws, reply):
                    entry.get("result", {}).get("status") in {"OK", "INSUFFICIENT_DATA"}), None)
     if timing is not None:
         from services.shipment_timing_bundle import report_entries, json_from_entries, source_fingerprint
+        fingerprint = source_fingerprint()
+        source = timing["source"]
+        if fingerprint != (source["data_sha256"], source.get("quality_report_sha256")):
+            return None
         economic = ws.session.future_pair.current_result()
         entries = report_entries(timing, economic)
         return {"kind": "shipment_timing", "version": ws.store.version,
                 "pair_version": ws.session.future_pair.version,
                 "source_sha256": timing["source"]["data_sha256"],
-                "source_fingerprint": source_fingerprint(),
+                "source_fingerprint": fingerprint,
                 "entries": entries, "json": json_from_entries(entries)}
+    gap = next((entry for entry in reply.get("visible_results", []) if entry["result"].get("data_gap")), None)
+    if gap is not None:
+        from services.future_pair import price_revision
+
+        return {"kind": "price_gap", "version": ws.store.version, "entry": gap,
+                "pair_version": gap["result"].get("future_pair_version"),
+                "source_revision": price_revision()}
     pair = _chat_pair(reply)
     if pair is not None:
         state = ws.session.future_pair
@@ -383,49 +406,92 @@ def _chat_report(ws, reply):
         return {
             "kind": "future_pair", "version": pair["future_pair_version"],
             "entries": [{"tool": "compare_future_pair", "result": result}],
-            "json": json.dumps({"format": "jeju-future-pair", "version": 1, "result": result},
-                               ensure_ascii=False, indent=2),
         }
     if not any(item["tool"] == "compare_shipment_options" and item["result"]["status"] == "OK"
                for item in reply.get("visible_results", [])):
         return None
-    entries = ws.current_entries() or reply["visible_results"]
-    try:
-        report_json = ws.export_case("내 출하 비교")
-    except ValueError:
-        report_json = ""
-    return {"kind": "comparison", "version": reply.get("state", {}).get("version", ws.store.version),
-            "entries": entries, "json": report_json}
+    return _current_comparison_report(ws)
 
-def _latest_chat_report(messages, version, current_pair, pair_version=None):
+
+def _current_comparison_report(ws):
+    comparison = ws.current_comparison()
+    if comparison is None:
+        return None
+    try:
+        report_json = ws.export_case("내 출하 비교", archived_results=comparison["entries"])
+    except ValueError:
+        if ws.current_comparison() is None:
+            return None
+        report_json = ""
+    return {"kind": "comparison", **comparison, "json": report_json}
+
+def _latest_chat_report(messages, version, current_pair, pair_version=None, *, target=None):
     for index in range(len(messages) - 1, -1, -1):
         reply = messages[index].get("reply", {})
         if report := reply.get("chat_report"):
+            if report["kind"] == "price_gap":
+                if target == "comparison" and report["pair_version"] is not None:
+                    return None, None
+                if target is not None:
+                    continue
+                from services.future_pair import price_revision
+
+                current = (report["version"] == version and report["source_revision"] == price_revision()
+                           and report["pair_version"] in (None, pair_version))
+                return (index, report) if current else (None, None)
+            timing = report["kind"] == "shipment_timing"
+            economic = next((entry["result"] for entry in report["entries"]
+                             if entry["tool"] == "compare_future_pair"), None) if timing else None
+            if (target == "timing" and not timing) or (target == "comparison" and timing and economic is None):
+                continue
             if report["kind"] == "future_pair":
-                current = current_pair == report["entries"][0]["result"]
-            elif report["kind"] == "shipment_timing":
+                current = report["version"] == pair_version and current_pair == report["entries"][0]["result"]
+            elif timing:
                 from services.shipment_timing_bundle import source_fingerprint
-                economic = next((entry["result"] for entry in report["entries"]
-                                 if entry["tool"] == "compare_future_pair"), None)
                 current = (version == report["version"] and pair_version == report["pair_version"]
                            and tuple(report["source_fingerprint"]) == source_fingerprint()
                            and (economic is None or economic == current_pair))
             else:
-                current = version == report["version"]
+                current = version == report["version"] and report.get("source_revision") == data_revision()
             return (index, report) if current else (None, None)
-        if any(item["tool"] in {"compare_shipment_options", "compare_future_pair"} and
+        if target != "timing" and any(item["tool"] in {"compare_shipment_options", "compare_future_pair"} and
                item["result"].get("status") in {"OK", "NEEDS_INPUT", "NEEDS_CLARIFICATION", "NO_DATA"}
                for item in reply.get("visible_results", [])):
             break
     return None, None
 
+def _requested_chat_report(ws, messages, target=None):
+    pair = ws.session.future_pair
+    economic = pair.current_result()
+    _, report = _latest_chat_report(messages, ws.store.version, economic, pair.version, target=target)
+    if report is not None or target == "timing":
+        return report
+    if economic is not None:
+        return _chat_report(ws, {"visible_results": [{"tool": "compare_future_pair",
+            "result": {**economic, "future_pair_version": pair.version}}]})
+    latest_comparison = next((
+        entry["tool"] for message in reversed(messages)
+        for entry in reversed(message.get("reply", {}).get("visible_results", ()))
+        if entry["tool"] in {"compare_shipment_options", "compare_future_pair"}
+    ), None)
+    if latest_comparison == "compare_future_pair" or (latest_comparison is None and pair.pending is not None):
+        # A pending A/B comparison cannot be replaced by an earlier ordinary calculation.
+        return None
+    return _current_comparison_report(ws)
+
+
 def _render_chat_report(report):
-    if report["kind"] == "shipment_timing":
+    if report["kind"] == "price_gap":
+        from ui.price_gap_ui import render_price_gap_downloads
+
+        entry = report["entry"]
+        render_price_gap_downloads(entry["result"], entry["tool"], "chat")
+    elif report["kind"] == "shipment_timing":
         from ui.shipment_timing_ui import render_integrated_chat_report
         render_integrated_chat_report(report)
     elif report["kind"] == "future_pair":
         from ui.future_pair_ui import render_future_pair_result
-        render_future_pair_result(report["entries"][0]["result"], "chat", report_json=report["json"])
+        render_future_pair_result(report["entries"][0]["result"], "chat")
     else:
         _render_report(report["entries"], chat_json=report["json"])
 
@@ -525,14 +591,19 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                 reply, steps, elapsed = _run_with_shipment_progress(
                     lambda report: _reply_to_chat_basis(ws, *choice, on_progress=report), started
                 )
-            elif _REPORT_REQUEST.fullmatch(pending["content"]):
-                report = previous_report
-                if report is None:
-                    economic = pair_state.current_result()
-                    if economic is not None:
-                        report = _chat_report(ws, {"visible_results": [{"tool": "compare_future_pair",
-                                                                          "result": economic}]})
-                message = "방금 비교한 결과의 보고서입니다." if report else "내려받을 최근 출하 비교 결과가 없습니다. 출하 조건을 비교한 뒤 다시 요청해 주세요."
+            elif request := _REPORT_REQUEST.fullmatch(pending["content"]):
+                subject = request["target"]
+                target = ("timing" if "출하량" in subject else "comparison") if subject else None
+                report = _requested_chat_report(ws, messages, target)
+                if report and report["kind"] == "price_gap":
+                    message = "이 조회의 가격 조회 기록입니다."
+                elif target == "timing" or (target is None and report and report["kind"] == "shipment_timing"
+                                          and len(report["entries"]) == 1):
+                    message = ("최근 과거 출하량 조회 보고서입니다." if report
+                               else "내려받을 과거 출하량 조회 결과가 없어요. 품종과 비교할 날짜를 알려주시면 조회할게요.")
+                else:
+                    message = ("방금 비교한 결과의 보고서입니다." if report else
+                               "내려받을 최근 출하 비교 결과가 없습니다. 출하 조건을 비교한 뒤 다시 요청해 주세요.")
                 reply = {"status": "OK", "text": message, "state": ws.store.snapshot(), "chat_report": report}
                 steps, elapsed = [], None
             else:

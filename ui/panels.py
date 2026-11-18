@@ -30,7 +30,7 @@ from ui.context import (
 def _render_cases(ws, disabled):
     from services.casefiles import parse_case
     with st.expander("비교 건 저장·불러오기"):
-        st.caption("조건과 당시 결과를 로컬 JSON으로 보관합니다. 대화·API 키는 포함하지 않습니다. 가져온 값의 사실 여부는 별도로 확인하세요.")
+        st.caption("이곳에서 저장한 비교 파일은 다시 열 수 있습니다. 두 출하일 비교 화면의 결과 JSON은 기록용입니다. 가져온 조건이 맞는지 확인하세요.")
         name = st.text_input("저장할 비교 이름", value="내 출하 비교", max_chars=80, key="case_name")
         download_slot = st.empty()
         uploaded = st.file_uploader("저장한 비교 JSON", type=["json"], key="case_upload")
@@ -267,6 +267,17 @@ def _render_report(entries, *, chat_json=None):
     if not entries:
         return
     tools = {entry["tool"] for entry in entries}
+    if (tools == {"get_price_history"} and len(entries) == 1
+            and entries[0]["result"].get("data_gap")
+            and entries[0]["result"].get("ui_context", {}).get("channel") == "과거 경락가격 직접 조회"):
+        from services.price_history_reporting import render_price_history
+        from ui.price_gap_ui import render_price_gap_downloads
+
+        result = entries[0]["result"]
+        st.subheader("과거 가격 조회 기록")
+        st.markdown(render_price_history(result))
+        render_price_gap_downloads(result, "get_price_history", "direct")
+        return
     if tools == {"explain_term"}:
         pdf_label, pdf_name = "용어 설명 PDF 저장", "제주감귤_용어설명.pdf"
     elif "compare_shipment_options" in tools:
@@ -407,9 +418,7 @@ def _render_price_history(ws, disabled):
             st.info("조회 조건이 바뀌어 이전 과거 가격 결과를 숨겼습니다. 다시 조회해 주세요.")
         if st.button("과거 경락가격 조회", disabled=disabled or not complete):
             st.session_state.price_history_submitted_query = dict(query)
-            result = ws.price_history(query)
-            if result.get("status") == "DATA_ERROR":
-                st.warning("가격 비교 자료의 원천 검증이 실패했습니다. 검증 전 가격 결과는 표시하지 않습니다.")
+            ws.price_history(query)
         st.caption("시장과 상품 규격은 확보된 경매자료에 실제 있는 조합만 고를 수 있습니다. 비교 간격은 출하 손익 계산의 보관일과 다릅니다.")
 
 def _render_history(ws, disabled):
