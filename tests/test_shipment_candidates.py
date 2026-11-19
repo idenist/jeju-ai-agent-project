@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from agents.agent import AgentSession
 from agents.shipment_candidates import requested_candidate_dates
-from presenters.reporting import render_result
+from presenters.reporting import render_result, shipment_candidate_summary
 from services.shipment_candidates import compare_shipment_candidates
 from test_juneok_harness import FakeClient, call, response
 
@@ -27,6 +27,21 @@ class CandidateTests(TestCase):
         draft.by_date.update(quotes)
         draft.result = draft.calculate()
         return agent, draft
+
+    @patch("services.data_refresh.kst_today", return_value=TODAY)
+    def test_no_quote_opening_keeps_storage_start_out_of_timing_selection(self, _today):
+        agent = AgentSession(client=FakeClient([]))
+        reply = agent.run("노지온주 3톤을 11/20부터 보관해서 11/23, 11/28, 11/30 출하 후보일을 비교해줘. "
+                          "아직 견적을 하나도 못 받았어요.")
+        draft = agent.current_shipment_candidates()
+        self.assertIn("먼저 볼 날짜 두 개를 골라 주세요.", reply["text"])
+        self.assertEqual(draft.timing_dates, ())
+        result = agent.run("11/23과 11/28")["visible_results"][0]["result"]
+        self.assertEqual(result["input"], {"shipment_variety": "노지온주", "option_a_date": "2026-11-23",
+                                           "option_b_date": "2026-11-28"})
+        self.assertEqual(draft.eligible, DATES)
+        self.assertEqual(draft.common["start"], date(2026, 11, 20))
+        self.assertIsNone(draft.result)
 
     def test_same_costs_use_each_dates_storage_duration_and_order(self):
         result = compare_shipment_candidates(DATES, excluded_dates=[], by_date=QUOTES, **COMMON)
@@ -62,6 +77,16 @@ class CandidateTests(TestCase):
                 repriced = compare_shipment_candidates(DATES, excluded_dates=[],
                                                        by_date={**QUOTES, DATES[1]: (quote, 3)}, **COMMON)
                 self.assertEqual(Decimal(repriced["rows"][1]["difference_vs_reference_krw"]) >= 0, expected)
+
+    def test_one_quote_leads_with_the_first_candidate_whose_needed_price_is_available(self):
+        quotes = {**QUOTES, DATES[1]: (None, 3), DATES[2]: (None, 5)}
+        result = compare_shipment_candidates(DATES, excluded_dates=[], by_date=quotes, **COMMON)
+        summary = shipment_candidate_summary(result)
+        self.assertTrue(summary.startswith("**11월 28일 출하 때 2,570원/kg 이상 받을 수 있는지 판매처에 확인해 보세요.**"))
+        self.assertIn("기준 후보일 · 2026-11-23 · 비교금액 7,018,750원", summary)
+        report = render_result(result)
+        self.assertIn(summary, report)
+        self.assertIn("견적 미확인 · 2,632원/kg 이상 필요", report)
 
     def test_earliest_unknown_uses_first_eligible_quote_and_leaves_old_first_based_delta_blank(self):
         inputs = {**QUOTES, DATES[0]: (None, 1)}
@@ -118,7 +143,7 @@ class CandidateTests(TestCase):
         report = render_result(draft.result)
         self.assertIn("2,570원/kg 이상 필요", report)
         self.assertIn("미확인", report)
-        self.assertIn("2026-11-23 견적을 기준으로", report)
+        self.assertIn("기준 후보일 · 2026-11-23 · 비교금액 7,018,750원", report)
         self.assertNotIn("가장 높습니다", report)
 
     @patch("services.data_refresh.kst_today", return_value=TODAY)
@@ -175,14 +200,170 @@ class CandidateTests(TestCase):
                 draft.save_form_inputs({**COMMON, "daily_storage": None}, draft.by_date)
                 draft.save_initial_inputs(3000, {DATES[0]: 2500})
                 agent.run("모르겠어요")
-                for non_daily in ("총 10만원", "10일에 총 10만원", "상자당 500원", "월 30만원"):
+                for non_daily, question in (("상자당 500원", "하루 보관하는 데 드는 금액"),
+                                            ("월 30만원", "하루 보관하는 데 드는 금액"),
+                                            ("총 10만원", "며칠 보관할 때의 금액"),
+                                            ("10일에 총 10만원", "일할로 계산하나요")):
                     reply = agent.run(non_daily)
-                    self.assertIn("하루 보관하는 데 드는 금액", reply["text"])
+                    self.assertIn(question, reply["text"])
                     self.assertIsNone(draft.common["daily_storage"])
                     self.assertIsNone(draft.result)
                 agent.run(daily_cost)
                 self.assertEqual(draft.common["daily_storage"], 10000)
+                self.assertIsNone(draft.pending_storage_bill)
+                self.assertIsNone(draft.storage_billing)
                 self.assertEqual(draft.result, before)
+
+    @patch("services.data_refresh.kst_today", return_value=TODAY)
+    def test_candidate_storage_does_not_extend_a_bill_past_its_confirmed_period(self, _today):
+        agent, draft = self.draft_for_quote(QUOTES)
+        draft.save_form_inputs({**COMMON, "daily_storage": None}, draft.by_date)
+        draft.save_initial_inputs(3000, {DATES[0]: 2500})
+        self.assertIn("기간을 1일", agent.run("0일 보관에 총 7만원")["text"])
+        self.assertIn("일할로 계산하나요", agent.run("7일 보관에 총 7만원")["text"])
+        self.assertIn("확인한 7일을 넘는 보관비", agent.run("일할")["text"])
+        self.assertIn("며칠에 총 얼마", agent.run("100,000원")["text"])
+        self.assertIsNone(draft.common["daily_storage"])
+        self.assertIsNone(draft.result)
+        self.assertEqual(draft.by_date, QUOTES)
+        self.assertIn("10일 보관에 총 100,000원", agent.run("열흘 보관에 총 10만원")["text"])
+        agent.run("정액")
+        self.assertEqual([Decimal(row["storage_cost_krw"]) for row in draft.result["rows"]],
+                         [100000, 100000, 100000])
+
+    @patch("services.data_refresh.kst_today", return_value=TODAY)
+    def test_editor_mode_change_preserves_exact_conditions_and_the_quoted_reference(self, _today):
+        box_price = Decimal(13000) / 6
+        _, draft = self.draft_for_quote({DATES[0]: (box_price, 0), DATES[1]: (2650, 3), DATES[2]: (None, 5)})
+        draft.common.update(start=DATES[0], daily_storage=None)
+        draft.storage_billing = {"mode": "fixed", "days": 10, "total_krw": Decimal(100000)}
+        draft.result = draft.calculate(reference_date=DATES[1])
+        before = draft.result
+        previous = draft.common.copy(), draft.by_date.copy()
+        self.assertEqual(before["reference_date"], DATES[1].isoformat())
+        self.assertEqual(Decimal(before["rows"][0]["proceeds_krw"]).quantize(Decimal(1)), Decimal(6170000))
+        draft.invalidate()
+        common = {**draft.common, "quantity": 3000., "other_cost": 5000., "fee": 5.}
+        float_inputs = {day: (float(price) if price is not None else None, float(loss))
+                        for day, (price, loss) in draft.by_date.items()}
+        draft.save_form_inputs(common, float_inputs, storage_mode="prorated")
+        self.assertEqual((draft.common, draft.by_date), previous)
+        after = draft.calculate()
+        self.assertEqual(after["reference_date"], before["reference_date"])
+        for key in ("price_per_kg", "remaining_kg", "proceeds_krw", "minimum_whole_krw_per_kg"):
+            self.assertEqual(after["rows"][0][key], before["rows"][0][key])
+        self.assertEqual([Decimal(row["storage_cost_krw"]) for row in after["rows"]], [0, 50000, 70000])
+        self.assertEqual(str(after["quantity_kg"]), "3000")
+        self.assertEqual(str(after["other_cost_krw"]), "5000")
+
+    @patch("services.data_refresh.kst_today", return_value=TODAY)
+    def test_candidate_data_term_does_not_replace_the_saved_shipment_variety(self, _today):
+        agent, draft = self.draft_for_quote(QUOTES)
+        lookup = agent.run("11/23과 11/28 과거 출하량을 보여줘. 레드향입니다.")
+        self.assertEqual(lookup["metrics"]["dialogue_route"], "candidate_shipment_timing")
+        before = draft.timing_dates, draft.timing_variety, draft.revision, draft.result
+        agent.client = FakeClient([response(call("explain_term", {"topic": "data_scope"}))])
+        explanation = agent.run("노지온주 과거 출하량 조회는 무슨 뜻인가요?")
+        self.assertEqual(explanation["visible_results"][0]["tool"], "explain_term")
+        self.assertEqual((draft.timing_dates, draft.timing_variety, draft.revision, draft.result), before)
+
+    @patch("services.data_refresh.kst_today", return_value=TODAY)
+    def test_candidate_loss_accepts_saleable_weight_for_the_waiting_date(self, _today):
+        agent, draft = self.draft_for_quote({
+            DATES[0]: (2500, None), DATES[1]: (None, None), DATES[2]: (None, 5),
+        })
+        draft.save_initial_inputs(3000, {DATES[0]: 2500, DATES[1]: None, DATES[2]: None})
+        comparison_before = agent.future_pair.snapshot()
+
+        reply = agent.run("11월 23일에는 3톤 중 2,940kg은 팔 수 있어요")
+        self.assertIn("11월 28일", reply["text"])
+        self.assertEqual(draft.by_date[DATES[0]], (2500, Decimal("2")))
+        self.assertEqual(draft.by_date[DATES[1]], (None, None))
+        self.assertEqual(draft.by_date[DATES[2]], (None, 5))
+        self.assertIsNone(draft.result)
+
+        reply = agent.run("2.91톤 판매 가능, 감모율은 3%예요")
+        self.assertEqual(reply["metrics"]["dialogue_route"], "shipment_candidate_condition")
+        first, second, third = draft.result["rows"]
+        self.assertEqual([Decimal(row["remaining_kg"]) for row in (first, second, third)], [2940, 2910, 2850])
+        self.assertEqual(Decimal(first["proceeds_krw"]), 6947500)
+        self.assertEqual(agent.future_pair.snapshot(), comparison_before)
+
+    @patch("services.data_refresh.kst_today", return_value=TODAY)
+    def test_ambiguous_candidate_loss_weight_keeps_all_conditions(self, _today):
+        agent, draft = self.draft_for_quote({**QUOTES, DATES[0]: (2500, None)})
+        draft.save_initial_inputs(3000, {DATES[0]: 2500})
+        previous = deepcopy(draft.by_date)
+        for question, message in (
+            ("11/28은 2,940kg 판매 가능", "지금은 11월 23일"),
+            ("11월 28일 감모율 2%", "지금은 11월 23일"),
+            ("2.9톤 중 2,850kg은 팔 수 있어요", "전체 물량이 현재 비교할 물량과 달라요"),
+            ("3,010kg 팔 수 있어요", "전체 물량 이하여야 해요"),
+            ("0kg 남아요", "0kg보다 크고"),
+            ("2,940kg은 팔 수 있어요, 감모율은 3%예요", "어느 값을 적용할까요?"),
+        ):
+            with self.subTest(question=question):
+                reply = agent.run(question)
+                self.assertEqual(reply["metrics"]["dialogue_route"], "shipment_candidate_condition")
+                self.assertIn(message, reply["text"])
+                self.assertEqual(draft.by_date, previous)
+                self.assertIsNone(draft.result)
+        self.assertIsNone(draft.answer_condition("5kg 상자"))
+        agent.run("2940kg")
+        self.assertEqual(draft.by_date[DATES[0]], (2500, Decimal("2")))
+        self.assertIsNotNone(draft.result)
+
+    @patch("services.data_refresh.kst_today", return_value=TODAY)
+    def test_quantity_edit_rechecks_only_absolute_saleable_weight(self, _today):
+        quotes = {**QUOTES, DATES[0]: (2500, None)}
+        agent, draft = self.draft_for_quote(quotes)
+        draft.save_initial_inputs(3000, {DATES[0]: 2500})
+        agent.run("2,940kg")
+        self.assertEqual(Decimal(draft.result["rows"][0]["remaining_kg"]), 2940)
+        self.assertEqual(draft.absolute_loss_days, {DATES[0]})
+
+        unchanged_weights = {**QUOTES, DATES[0]: (2500, 2.0)}
+        self.assertFalse(draft.save_form_inputs({**COMMON, "quantity": 3000.0}, unchanged_weights))
+        self.assertEqual(draft.absolute_loss_days, {DATES[0]})
+        self.assertTrue(draft.save_form_inputs({**COMMON, "quantity": 3500}, draft.by_date.copy()))
+        self.assertIsNone(draft.result)
+        self.assertIn("전체 물량을 바꿔서 다시", draft.next_condition().question)
+        self.assertEqual(draft.next_condition().day, DATES[0])
+        self.assertEqual(draft.by_date, quotes)
+        self.assertEqual(draft.common["daily_storage"], 10000)
+
+        agent.run("2%")
+        self.assertEqual(Decimal(draft.result["rows"][0]["remaining_kg"]), 3430)
+        self.assertFalse(draft.absolute_loss_days)
+        self.assertFalse(draft.save_form_inputs({**COMMON, "quantity": 3600}, draft.by_date.copy()))
+        self.assertEqual(Decimal(draft.calculate()["rows"][0]["remaining_kg"]), 3528)
+
+    @patch("services.data_refresh.kst_today", return_value=TODAY)
+    def test_initial_inputs_reentered_on_new_basis_also_recheck_saleable_weight(self, _today):
+        agent, draft = self.draft_for_quote({**QUOTES, DATES[0]: (2500, None)})
+        draft.save_initial_inputs(3000, {DATES[0]: 2500})
+        agent.run("2,940kg")
+        self.assertTrue(draft.save_form_inputs({**COMMON, "basis": "commission_net"}, draft.by_date.copy()))
+        draft.save_initial_inputs(2900, {DATES[0]: 2500})
+        self.assertEqual(draft.next_condition().day, DATES[0])
+        self.assertIsNone(draft.result)
+        reply = agent.run("2,940kg")
+        self.assertIn("전체 물량 이하여야", reply["text"])
+        self.assertIsNone(draft.result)
+        agent.run("2,842kg")
+        self.assertEqual(Decimal(draft.result["rows"][0]["remaining_kg"]), 2842)
+
+    @patch("services.data_refresh.kst_today", return_value=TODAY)
+    def test_unknown_rechecked_saleable_weight_is_not_asked_again(self, _today):
+        agent, draft = self.draft_for_quote({**QUOTES, DATES[0]: (2500, None)})
+        draft.save_initial_inputs(3000, {DATES[0]: 2500})
+        agent.run("2,940kg")
+        draft.save_form_inputs({**COMMON, "quantity": 3500}, draft.by_date.copy())
+        reply = agent.run("모르겠어요")
+        self.assertIsNone(draft.next_condition())
+        self.assertIn("미확인", reply["text"])
+        self.assertIsNone(draft.by_date[DATES[0]][1])
+        self.assertIsNone(draft.result["rows"][0]["remaining_kg"])
 
     @patch("services.data_refresh.kst_today", return_value=TODAY)
     def test_changing_storage_start_rechecks_losses_for_new_period_before_reporting(self, _today):

@@ -11,6 +11,7 @@ from copy import deepcopy
 from uuid import uuid4
 from core.config import Settings
 from agents.box_price import mentions_box_price, pending_box_arguments, standalone_box_price
+from agents.candidate_storage_billing import asks_storage_mode_hypothetically, storage_mode_correction
 from agents.future_pair_intent import (
     changes_later_date_only, continues_comparison, dated_storage_periods, explicit_later_storage_period, explicit_shipment_quantity, forbids_historical_pair_price,
     is_future_pair_request, requests_break_even_without_later_quote, requests_manual_price,
@@ -279,13 +280,16 @@ class AgentSession:
         request, allow_writes, term_topic = question, True, None
         if isinstance(question, str) and len(question) <= 6000:
             edit, topic = split_term_question(question)
-            if topic and self._pair_storage_edit_period(edit) is not None:
-                request, term_topic = edit, topic
+            if topic:
+                draft = self.current_shipment_candidates()
+                if (self._pair_storage_edit_period(edit) is not None
+                        or (draft is not None and draft.storage_billing and storage_mode_correction(edit))):
+                    request, term_topic = edit, topic
             request, allow_writes = condition_request(request)
         if not self.messages or (allow_writes and isinstance(request, str) and starts_new_comparison(request)):
             self.lookup_evidence = None
         reply = self._run(request, allow_condition_writes=allow_writes, on_progress=on_progress)
-        if term_topic and reply.get("metrics", {}).get("dialogue_route") == "later_storage_edit":
+        if term_topic and reply.get("metrics", {}).get("dialogue_route") in {"later_storage_edit", "shipment_candidate_condition"}:
             from presenters.presentation import report_for
 
             term = {"tool": "explain_term", "result": execute_tool("explain_term", {"topic": term_topic}, self.store)}
@@ -321,6 +325,18 @@ class AgentSession:
                 "report": report_for([entry]), "tool_results": [entry], "visible_results": [entry],
                 "events": [], "state": self.store.snapshot(),
                 "metrics": {"model_requests": 0, "dialogue_route": route}}
+
+    def _candidate_timing_reply(self, draft, question, *, on_progress=None):
+        request = draft.timing_request(question)
+        if isinstance(request, str):
+            return self._local_reply(request, "candidate_shipment_timing")
+        if request is not None:
+            reply = self._shipment_lookup_reply(question, request, "candidate_shipment_timing",
+                                               on_progress=on_progress)
+            if not draft.has_quote():
+                reply["text"] += "\n\n견적을 받으면 날짜와 kg당 금액을 알려주세요. 이 비교를 이어갈게요."
+            return reply
+        return None
 
     def _same_spec_history_reply(self, intervals, *, on_progress=None):
         from presenters.presentation import render_dialogue, report_for
@@ -420,8 +436,12 @@ class AgentSession:
         draft = self.current_shipment_candidates()
         if draft is not None and draft.cancel_quote(question):
             return self._local_reply("견적은 그대로 둘게요.", "shipment_candidate_quote")
+        if draft is not None and draft.storage_billing and asks_storage_mode_hypothetically(question):
+            return self._local_reply("현재 청구 방식은 그대로 뒀어요. 실제로 적용할 방식이 확인되면 알려주세요.",
+                                     "read_only_conditions")
         candidate_term = explicit_term_topic(question) if draft is not None and (
             draft.pending_quote is not None or draft.next_condition() is not None or draft.storage_pause is not None
+            or draft.timing_dates is not None or draft.storage_billing is not None
         ) else None
         if candidate_term:
             allow_condition_writes = False
@@ -437,10 +457,17 @@ class AgentSession:
                 draft = open_candidate_draft(dates, start, question, today, pair, self.store.version,
                                              new_comparison=new_comparison)
                 self.shipment_candidates = draft
+                if timing := self._candidate_timing_reply(draft, question, on_progress=on_progress):
+                    return timing
                 return self._local_reply(draft.summary(), "shipment_candidates")
             if draft is not None and not new_comparison:
                 if draft.update_availability(question, today) or draft.complete_selection(question, today):
                     return self._local_reply(draft.summary(), "shipment_candidates")
+        if draft is not None and allow_condition_writes and not new_comparison:
+            if timing := self._candidate_timing_reply(draft, question, on_progress=on_progress):
+                return timing
+        if allow_condition_writes:
+            if draft is not None and not new_comparison:
                 if answer := draft.answer_condition(question):
                     result, unknown = answer
                     if result["status"] == "OK":

@@ -131,7 +131,8 @@ TOOLS = [
           "follow_up": {"type": "boolean", "description": "앞선 과거 경락가격 조회의 일부만 변경하거나 미확인 조건에 답하는 후속 질문일 때만 true. 새 조회는 false."},
           "clear_fields": {"type": "array", "items": {"type": "string", "enum": ["market_code", "variety", "grade", "size", "package", "package_kg", "trade_type", "interval_days", "base_date"]}, "description": "사용자가 이전 조회 조건을 명시적으로 철회할 때만 해당 필드를 넣습니다. 그 외에는 빈 배열."}}),
     tool("explain_term", "가격기준·감모·비용·자료 범위에 대한 검증된 사용 안내를 표시합니다. 용어 질문에는 계산 조건을 요구하지 마세요.",
-         {"topic": {"type": "string", "enum": ["price_basis", "loss_rate", "cost_policy", "data_scope", "forecast_limits"]}}),
+         {"topic": {"type": "string", "enum": ["price_basis", "loss_rate", "cost_policy", "data_scope", "forecast_limits",
+                                                "storage_billing"]}}),
 ]
 
 TIMING_TOOL = tool("analyze_shipment_timing", "제주데이터허브 #855의 과거 같은 시기 7일 출하량으로 두 출하 예정일을 비교합니다. 경매 품종을 자동 매핑하거나 미래가격·유리한 출하일을 예측하지 않습니다. 출하통계 품종을 사용자가 명시해야 합니다. 날짜를 모르면 null, 이미 확인된 두 미래 출하안 날짜가 있을 때만 재사용합니다.",
@@ -143,6 +144,7 @@ HELP = {
     "price_basis": "수수료 차감 후 단가는 판매수수료를 이미 뺀 가격입니다. 수수료를 다시 차감하지 않습니다. 선별·포장·운송·보관비까지 포함됐는지는 따로 확인해야 합니다. 차감 전 단가라면 수수료율을 별도로 입력합니다.",
     "loss_rate": "감모율은 보관하는 동안 팔 수 있는 감귤이 얼마나 줄었는지를 나타내요. 100kg을 보관해 끝날 때 96kg을 팔 수 있다면, 그 보관기간 전체의 감모율은 4%예요.",
     "cost_policy": "보관비 외 고정비가 양쪽에서 동일하다고 확인한 경우에만 비교에서 제외합니다. 다른 비용은 항목별로 입력하고 단가에 이미 포함된 비용은 다시 빼지 않습니다. 빈칸은 비용 없음이 아니라 미확인입니다.",
+    "storage_billing": "일할은 실제 보관한 일수만큼 비례해서 내는 방식이에요. 정액은 확인한 기간 안에서 일찍 출하해도 같은 금액을 내는 방식이에요.",
     "data_scope": "시장자료는 실제 관측일의 경락가격이며 농가 실수취 단가가 아닙니다. 제주 출하통계는 과거 신고 출하량입니다. 조회 결과의 출처·기간·품종·단위를 확인하고 서로 다른 분류나 기간을 자동 연결하지 않습니다.",
     "forecast_limits": "현재 확보자료만으로 미래가격이나 최적 출하일을 확정하지 않습니다. 사용자 조건에서 기다리려면 필요한 최소 단가를 계산하거나, 사용자가 정한 미래 단가 가정에서 금액을 비교할 수 있습니다.",
 }

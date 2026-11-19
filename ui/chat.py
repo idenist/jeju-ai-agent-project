@@ -423,7 +423,8 @@ def _chat_report(ws, reply):
         source = timing["source"]
         if fingerprint != (source["data_sha256"], source.get("quality_report_sha256")):
             return None
-        economic = ws.session.future_pair.current_result()
+        candidate_timing = reply.get("metrics", {}).get("dialogue_route") == "candidate_shipment_timing"
+        economic = None if candidate_timing else ws.session.future_pair.current_result()
         entries = report_entries(timing, economic)
         return {"kind": "shipment_timing", "version": ws.store.version,
                 "pair_version": ws.session.future_pair.version,
@@ -503,21 +504,29 @@ def _latest_chat_report(messages, version, current_pair, pair_version=None, *, t
     return None, None
 
 
-def _candidate_timing_report(messages, eligible_dates):
+def _candidate_timing_report(messages, draft):
     """Reuse the newest #855 lookup for the current dates without its economic attachment."""
     from services.shipment_timing_bundle import json_from_entries, report_entries, source_fingerprint
 
-    eligible = {day.isoformat() for day in eligible_dates}
+    eligible = {day.isoformat() for day in draft.eligible}
+    selected = {day.isoformat() for day in draft.timing_dates} if draft.timing_dates is not None else None
     if len(eligible) < 2:
         return None, None
     for index in range(len(messages) - 1, -1, -1):
-        report = messages[index].get("reply", {}).get("chat_report")
+        reply = messages[index].get("reply", {})
+        if reply.get("metrics", {}).get("dialogue_route") == "read_only_conditions":
+            continue
+        report = reply.get("chat_report")
+        if not report and any(entry["tool"] == "analyze_shipment_timing" for entry in reply.get("visible_results", ())):
+            return None, None
         if not report or report["kind"] != "shipment_timing":
             continue
         timing = next(entry["result"] for entry in report["entries"] if entry["tool"] == "analyze_shipment_timing")
         query = timing["input"]
         observed = {query["option_a_date"], query["option_b_date"]}
-        if len(observed) != 2 or not observed <= eligible or tuple(report["source_fingerprint"]) != source_fingerprint():
+        if (len(observed) != 2 or not observed <= eligible or (selected is not None and observed != selected)
+                or (draft.timing_variety and query["shipment_variety"] != draft.timing_variety)
+                or tuple(report["source_fingerprint"]) != source_fingerprint()):
             return None, None
         if len(report["entries"]) == 1:
             return index, report
@@ -528,14 +537,14 @@ def _candidate_timing_report(messages, eligible_dates):
 
 def _active_chat_report(ws, messages, current_pair):
     if draft := ws.session.current_shipment_candidates():
-        return _candidate_timing_report(messages, draft.eligible)
+        return _candidate_timing_report(messages, draft)
     return _latest_chat_report(messages, ws.store.version, current_pair, ws.session.future_pair.version)
 
 
 def _requested_chat_report(ws, messages, target=None):
     if draft := ws.session.current_shipment_candidates():
         if target == "timing":
-            return _candidate_timing_report(messages, draft.eligible)[1]
+            return _candidate_timing_report(messages, draft)[1]
         return {"kind": "shipment_candidates"} if draft.result is not None else None
     pair = ws.session.future_pair
     economic = pair.current_result()
@@ -740,7 +749,9 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
             if candidate := ws.session.current_shipment_candidates():
                 from ui.shipment_candidates import render_shipment_candidates
                 last_reply = messages[-1].get("reply", {}) if messages else {}
-                render_shipment_candidates(candidate, last_reply_text=last_reply.get("text"))
+                report = active_report if pending is not None else previous_report
+                render_shipment_candidates(candidate, last_reply_text=last_reply.get("text"),
+                                           submit_question=_submit_shipment_question, timing_available=bool(report))
             else:
                 _render_chat_basis(ws, messages)
                 _render_pending_pair_price(ws, messages)

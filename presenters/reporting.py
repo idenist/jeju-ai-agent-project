@@ -327,7 +327,14 @@ def shipment_candidate_summary(result):
     if result.get("ranking_complete", True):
         conclusion = f"입력 조건에서 {lead}의 비교금액이 {tied}가장 높습니다."
     elif sum(row["proceeds_krw"] is not None for row in result["rows"]) == 1:
-        conclusion = f"{lead} 견적을 기준으로 다른 후보일의 필요 단가를 확인했습니다."
+        check_quote = next((row for row in result["rows"] if row["price_per_kg"] is None
+                            and row["minimum_whole_krw_per_kg"] is not None), None)
+        if check_quote is not None:
+            day = date.fromisoformat(check_quote["sale_date"])
+            minimum = _number(check_quote["minimum_whole_krw_per_kg"], 0)
+            conclusion = f"{day.month}월 {day.day}일 출하 때 {minimum}원/kg 이상 받을 수 있는지 판매처에 확인해 보세요."
+        else:
+            conclusion = f"{lead} 견적의 비교금액을 확인했습니다."
     elif any(row.get("unconfirmed") for row in result["rows"]):
         conclusion = f"비교금액을 계산할 수 있는 후보 중 {lead}의 금액이 {tied}가장 높습니다."
     else:
@@ -337,19 +344,29 @@ def shipment_candidate_summary(result):
     first = result["rows"][0]
     reference = result.get("reference_date", first["sale_date"])
     amount = result.get("reference_proceeds_krw", first["proceeds_krw"])
+    if billing := result.get("storage_billing"):
+        days = billing["days"]
+        total = _whole_won(billing["total_krw"])
+        storage = (f"보관비 {days}일 총 {total} · 실제 보관일수에 일할 적용" if billing["mode"] == "prorated" else
+                   f"보관비 {days}일 이내 정액 {total}")
+    else:
+        storage = f"하루 보관비 {_whole_won(result['daily_storage_cost_krw'])}"
     lines = [f"**{conclusion}**",
              f"기준 후보일 · {reference} · 비교금액 {_whole_won(amount)}",
              f"공통 조건 · 보관 시작 {result['start_date']} · {_number(result['quantity_kg'])}kg · {basis}{fee}",
-             f"하루 보관비 {_whole_won(result['daily_storage_cost_krw'])} · 별도 비용 {_whole_won(result['other_cost_krw'])}"]
+             f"{storage} · 별도 비용 {_whole_won(result['other_cost_krw'])}"]
     if result["excluded_dates"]:
         lines.append("비교에서 제외한 날짜 · " + ", ".join(result["excluded_dates"]))
     return "\n\n".join(lines)
 
 
 def _render_shipment_candidates(result):
-    lines = [shipment_candidate_summary(result)]
-    lines += ["", "| 출하일 | 보관일 | 단가·필요 단가 | 기간 전체 감모 | 비교금액 | 기준 후보 대비 |",
-              "| --- | ---: | ---: | ---: | ---: | ---: |"]
+    columns = ["출하일", "보관일", "단가·필요 단가", "기간 전체 감모", "비교금액", "기준 후보 대비"]
+    show_storage = bool(result.get("storage_billing"))
+    if show_storage:
+        columns.insert(4, "보관비")
+    lines = [shipment_candidate_summary(result), "", "| " + " | ".join(columns) + " |",
+             "| --- |" + " ---: |" * (len(columns) - 1)]
     for row in result["rows"]:
         if row["price_per_kg"] is None:
             quote = f"견적 미확인 · {_candidate_required_price(row)}"
@@ -360,8 +377,10 @@ def _render_shipment_candidates(result):
             delta = row.get("difference_vs_reference_krw", row["difference_vs_first_krw"])
             difference = _won_difference(delta) if delta is not None else "-"
         loss = f"{_number(row['loss_percent'])}%" if row["loss_percent"] is not None else "미확인"
-        lines.append(f"| {row['sale_date']} | {row['delay_days']}일 | {quote} | "
-                     f"{loss} | {amount} | {difference} |")
+        cells = [row["sale_date"], f"{row['delay_days']}일", quote, loss, amount, difference]
+        if show_storage:
+            cells.insert(4, _whole_won(row["storage_cost_krw"]))
+        lines.append("| " + " | ".join(cells) + " |")
     if any(row["minimum_whole_krw_per_kg"] is not None for row in result["rows"]):
         lines.append("필요 단가는 기준 후보만큼 받기 위한 kg당 최소 금액이며, 원 단위로 올렸습니다.")
     lines += ["", *_warnings(result)]
@@ -400,8 +419,12 @@ def shipment_candidate_quote_reply(day, price, result, *, already_applied=False,
 
 def shipment_candidate_amounts(result):
     """Display dates and amounts in a narrow column before the detailed report."""
-    lines = [f"- **{row['sale_date']}** · " + (_whole_won(row["proceeds_krw"])
-             if row["proceeds_krw"] is not None else _candidate_required_price(row)) for row in result["rows"]]
+    lines = []
+    for row in result["rows"]:
+        amount = (_whole_won(row["proceeds_krw"]) if row["proceeds_krw"] is not None
+                  else _candidate_required_price(row))
+        storage = f" · 보관비 {_whole_won(row['storage_cost_krw'])}" if result.get("storage_billing") else ""
+        lines.append(f"- **{row['sale_date']}** · {amount}{storage}")
     if any(row["minimum_whole_krw_per_kg"] is not None for row in result["rows"]):
         lines.extend(("", "필요 단가는 기준 후보만큼 받기 위한 원 단위 최소 금액입니다."))
     return "\n".join(lines)

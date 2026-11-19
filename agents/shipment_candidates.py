@@ -7,6 +7,9 @@ from typing import Literal
 from uuid import uuid4
 
 from agents.box_price import BoxPrice, mentions_box_price, standalone_box_price
+from agents.candidate_storage_billing import (
+    StorageBillDraft, stated_storage_bill, storage_bill_days, storage_bill_mode, storage_mode_correction,
+)
 from agents.future_pair_intent import (
     confirmed_total_storage_cost, explicit_shipment_quantity, shipment_availability, shipment_choice_question,
     without_shipment_exclusions,
@@ -76,6 +79,14 @@ _CONDITION_PREFIX = {
 }
 _UNKNOWN_CONDITION = re.compile(r"(?:(?:아직|잘|정확히|그건|지금은)\s*)*(?:몰라(?:요)?|모르(?:겠어요|겠어|겠습니다|는\s*데요)|모릅니다|미확인)")
 _ANSWER_END = re.compile(r"\s*(?:이에요|예요|입니다|이요|이죠|요|들어요|부터)\s*$")
+_TIMING_REQUEST = re.compile(
+    r"(?:과거\s*(?:신고\s*)?출하량|#\s*855)(?:을|를|도)?\s*(?:먼저\s*)?"
+    r"(?:비교|조회|확인|보여|볼|보기|봐)(?!\s*(?:하지|말고))"
+)
+_NO_QUOTE = re.compile(
+    r"(?:아직\s*)?(?:받은\s*)?(?:견적|단가|가격)(?:은|는|이|가|을|를)?\s*"
+    r"(?:(?:아직|잘|하나도)\s*)*(?:없어요|없습니다|몰라요|모르겠어요|못\s*받았어요|안\s*받았어요)[.!。\s]*"
+)
 _CHECK_STORAGE_COST = "저장고 견적서에서 전체 물량의 하루 보관비를 확인해 주세요."
 _RESUME_STORAGE_COST = "이 대화에서 하루 보관비만 알려주시면 이어서 비교할게요."
 _DAILY_COST_PREFIX = re.compile(r"^(?:하루\s*(?:에|당)?|일일|1\s*일\s*(?:에|당)|일당)\s*")
@@ -84,13 +95,39 @@ _OTHER_STORAGE_UNIT = re.compile(
     r"^(?:총(?:액)?|합계|월(?:간|당)?|(?:한\s*)?달(?:에|당)|(?:상자|박스|kg|킬로(?:그램)?)\s*당)"
     r"|\d+\s*(?:일|개월|달)\s*(?:치|에|간|동안)|/\s*(?:달|월|상자|박스|kg)\b", re.I,
 )
+_LOSS_WEIGHT = r"[+-]?(?:\d{1,3}(?:,\d{3})+|\d{1,12})(?:\.\d{1,6})?\s*(?:kg|킬로(?:그램)?|톤|t)"
+_SALEABLE_ANSWER = re.compile(
+    rf"(?:(?P<total>{_LOSS_WEIGHT})\s*(?:중에서|중|가운데)\s*)?"
+    rf"(?:판매\s*가능(?:한)?\s*(?:물량|중량|무게|양)\s*(?:은|는|이|가)?\s*)?"
+    rf"(?P<saleable>{_LOSS_WEIGHT})(?:\s*(?:은|는|이|가|만|을|를))?"
+    r"(?:\s*(?:팔\s*수\s*있(?:어요|습니다)?|(?:판매|출하)\s*(?:가능(?:해요|합니다)?|"
+    r"할\s*수\s*있(?:어요|습니다)?)|남(?:아요|습니다)))?",
+    re.I,
+)
+_LOSS_PERCENT = re.compile(
+    rf"(?:(?:{_CONDITION_PREFIX['loss']})(?:은|는|이|가)?\s*)?({_QUOTE_NUMBER})\s*(?:%|퍼센트)"
+)
+_LOSS_ANSWER_SPLIT = re.compile(r"[;；\n]|(?<!\d),|,\s+|\s+그리고\s+")
+
+
+def _candidate_weight_kg(weight):
+    unit = re.search(r"kg|킬로(?:그램)?|톤|t", weight, re.I)
+    amount = decimal(weight[:unit.start()].strip().replace(",", ""), "판매 물량")
+    return amount * 1000 if unit.group().casefold() in {"톤", "t"} else amount
+
+
+def _keep_unchanged_number(previous, entered):
+    # Number inputs return floats even when a stored Decimal was never edited.
+    if previous is not None and isinstance(entered, float) and float(previous) == entered:
+        return previous
+    return entered
 
 
 @dataclass(frozen=True)
 class CandidateCondition:
     field: str
     day: date | None
-    question: str
+    question: str = field(compare=False)
 
     @property
     def label(self):
@@ -136,6 +173,13 @@ class _PendingCandidateQuote:
 
 def _calendar_text(question):
     return _SLASH_DATE.sub(r"\1월 \2일", question)
+
+
+def _stated_timing_variety(question):
+    from services.shipment_timing import CATEGORIES
+
+    labels = [name for name in CATEGORIES if name in question]
+    return labels[0] if len(labels) == 1 and not re.search(r"말고|아닌|또는|혹은|인지|헷갈|아니에요", question) else None
 
 
 def requested_candidate_dates(question, today):
@@ -185,12 +229,18 @@ class ShipmentCandidateDraft:
     form_key: str = field(default_factory=lambda: uuid4().hex)
     revision: int = 0
     result: dict | None = None
+    reference_date: date | None = None
     pending_quote: _PendingCandidateQuote | None = None
     gross_fee: float | None = None
     initial_inputs_saved: bool = False
     deferred_conditions: set[CandidateCondition] = field(default_factory=set)
     storage_pause: Literal["waiting", "later"] | None = None
+    pending_storage_bill: StorageBillDraft | None = None
+    storage_billing: dict | None = None
     conflicting_quotes: set[date] = field(default_factory=set)
+    timing_variety: str | None = None
+    timing_dates: tuple[date, ...] | None = None
+    absolute_loss_days: set[date] = field(default_factory=set)
 
     @property
     def eligible(self):
@@ -200,6 +250,9 @@ class ShipmentCandidateDraft:
     @property
     def excluded(self):
         return tuple(day for day in self.dates if day not in self.eligible)
+
+    def has_quote(self):
+        return any(self.by_date.get(day, (None, None))[0] is not None for day in self.eligible)
 
     def summary(self):
         def labels(days):
@@ -254,10 +307,13 @@ class ShipmentCandidateDraft:
         return True
 
     def calculate(self, *, by_date=None, reference_date=None):
+        if self.pending_storage_bill:
+            return {"status": "NEEDS_INPUT", "message": self.pending_storage_bill.question}
         return compare_shipment_candidates(
             self.dates, excluded_dates=self.excluded,
-            by_date=self.by_date if by_date is None else by_date, reference_date=reference_date,
+            by_date=self.by_date if by_date is None else by_date, reference_date=reference_date or self.reference_date,
             allow_unknown_losses=self.initial_inputs_saved,
+            storage_billing=self.storage_billing,
             **{field: self.common.get(field) for field in _COMMON_FIELDS},
         )
 
@@ -269,10 +325,12 @@ class ShipmentCandidateDraft:
                 raise ValueError("받은 단가는 0원보다 커야 해요.")
         except ValueError as error:
             return {"status": "INVALID_INPUT", "message": str(error)}
+        previous_quantity = self.common.get("quantity")
         self.common["quantity"] = quantity
         for day, price in quotes_by_date.items():
             if day in self.eligible:
                 self.by_date[day] = price, self.by_date.get(day, (None, None))[1]
+        self._clear_weight_losses_for_quantity(previous_quantity, quantity)
         self.conflicting_quotes.clear()
         self.initial_inputs_saved = True
         self.invalidate()
@@ -280,17 +338,23 @@ class ShipmentCandidateDraft:
 
     def next_condition(self):
         if (not self.initial_inputs_saved or self.pending_quote or self.storage_pause or not 2 <= len(self.eligible) <= 3
-                or not any(self.by_date.get(day, (None, None))[0] is not None for day in self.eligible)):
+                or not self.has_quote()):
             return None
         fields = ["start", "basis"]
         if self.common.get("basis") == "gross":
             fields.append("fee")
-        fields.extend(("daily_storage", "other_cost"))
         steps = [CandidateCondition(name, None, _QUESTIONS[name][1]) for name in fields if self.common.get(name) is None]
+        storage_question = self._storage_billing_question()
+        if storage_question or (self.storage_billing is None and self.common.get("daily_storage") is None):
+            steps.append(CandidateCondition("daily_storage", None, storage_question or _QUESTIONS["daily_storage"][1]))
+        if self.common.get("other_cost") is None:
+            steps.append(CandidateCondition("other_cost", None, _QUESTIONS["other_cost"][1]))
         start = self.common.get("start")
         if start is not None:
             steps.extend(CandidateCondition("loss", day,
-                         f"{day.month}월 {day.day}일에 팔 때까지 판매 가능한 양이 몇 % 줄어드나요?")
+                         ("전체 물량을 바꿔서 다시 확인할게요. " if day in self.absolute_loss_days else "") +
+                         f"{day.month}월 {day.day}일에 팔 때까지 판매 가능한 양이 몇 % 줄어드나요? "
+                         "팔 수 있는 무게를 kg이나 톤으로 알려주셔도 돼요.")
                          for day in self.eligible if day > start and self.by_date.get(day, (None, None))[1] is None)
         for step in steps:
             if step not in self.deferred_conditions:
@@ -302,17 +366,70 @@ class ShipmentCandidateDraft:
     def condition_feedback(self):
         if self.pending_quote:
             return ""
+        if self.storage_pause and (pending := self.pending_storage_bill):
+            field = "총액의 청구 기간" if pending.days is None else "일할인지 정액인지"
+            if self.storage_pause == "waiting":
+                return f"저장고에 {field} 확인해 주세요."
+            return f"이 대화에서 {field} 알려주시면 이어서 비교할게요."
         if self.storage_pause == "waiting":
             return _CHECK_STORAGE_COST
         if self.storage_pause == "later":
             return _RESUME_STORAGE_COST
-        if not any(self.by_date.get(day, (None, None))[0] is not None for day in self.eligible):
+        if not self.has_quote():
             return "필요 단가의 기준을 잡으려면 후보일 한 곳의 받은 단가가 필요해요."
         if self.deferred_conditions:
             labels = sorted(step.label for step in self.deferred_conditions if step.day is None or step.day in self.eligible)
             if labels:
                 return "미확인으로 둔 조건 · " + ", ".join(labels)
         return ""
+
+    def timing_request(self, question):
+        """Keep a #855 date selection separate from the economic candidate list."""
+        from agents.future_pair_state import shipment_variety_reply
+        from services.shipment_timing import CATEGORIES
+
+        explicitly_requests_timing = bool(_TIMING_REQUEST.search(question))
+        wants_timing = explicitly_requests_timing or (
+            not self.has_quote() and any(_NO_QUOTE.fullmatch(clause.strip())
+                                         for clause in re.split(r"[.!。;,，\n]", question))
+        )
+        variety = _stated_timing_variety(question) if wants_timing else shipment_variety_reply(question, CATEGORIES)
+        if variety and not wants_timing and self.timing_dates is None:
+            self.timing_variety = variety
+            if not self.has_quote():
+                return f"{variety}로 확인했어요. 같은 날짜의 과거 출하량을 먼저 볼 수 있어요."
+
+        text = _calendar_text(question)
+        choosing_dates = self.timing_dates == () and bool(
+            re.fullmatch(r"[\s,·와과및랑하고]*(?:두\s*(?:날|날짜))?(?:이요|요|로|먼저|로\s*봐\s*줘)?[.!。\s]*",
+                         _DATE.sub("", text))
+        )
+        if not (wants_timing or choosing_dates or (self.timing_dates is not None and variety)):
+            return None
+        if variety:
+            self.timing_variety = variety
+        eligible = self.eligible
+        if len(eligible) < 2:
+            return "과거 출하량을 비교하려면 출하 가능한 날짜가 두 개 필요해요."
+        mentioned = {self._quote_date(match)[0] for match in _DATE.finditer(text)
+                     if (explicitly_requests_timing or choosing_dates)
+                     and (match["iso"] or match["month"] or match["unit"])
+                     and not _STORAGE_TAIL.match(text[match.end():])
+                     and not _STORAGE_BEFORE.search(text[:match.start()])}
+        if mentioned and not mentioned <= set(eligible):
+            return "현재 출하 가능한 후보일 중에서 두 날짜를 골라 주세요."
+        if len(mentioned) == 2:
+            self.timing_dates = tuple(sorted(mentioned))
+        elif len(eligible) == 2:
+            self.timing_dates = eligible
+        elif not self.timing_dates or not set(self.timing_dates) <= set(eligible):
+            self.timing_dates = ()
+            return "과거 출하량은 두 날짜씩 볼 수 있어요. 먼저 볼 날짜 두 개를 골라 주세요."
+        if not self.timing_variety:
+            return "과거 출하량은 품종별로 볼 수 있어요. 감귤 품종이 무엇인가요?"
+        earlier, later = self.timing_dates
+        return {"shipment_variety": self.timing_variety, "option_a_date": earlier.isoformat(),
+                "option_b_date": later.isoformat()}
 
     def _finish_conditions(self):
         if step := self.next_condition():
@@ -326,16 +443,81 @@ class ShipmentCandidateDraft:
 
     def _condition_to_answer(self):
         if self.storage_pause and self.initial_inputs_saved and not self.pending_quote and 2 <= len(self.eligible) <= 3:
-            return CandidateCondition("daily_storage", None, _QUESTIONS["daily_storage"][1])
+            return CandidateCondition("daily_storage", None,
+                                      self._storage_billing_question() or _QUESTIONS["daily_storage"][1])
         return self.next_condition()
+
+    def _storage_billing_question(self):
+        if pending := self.pending_storage_bill:
+            return pending.question
+        if self.storage_billing and (start := self.common.get("start")) and self.eligible:
+            days = (self.eligible[-1] - start).days
+            billed_days = self.storage_billing["days"]
+            if days > billed_days:
+                return (f"가장 늦은 후보는 {days}일 보관해야 해요. 확인한 {billed_days}일을 넘는 보관비를 "
+                        "‘하루에 얼마’ 또는 ‘며칠에 총 얼마’로 알려주세요.")
+        return None
+
+    def _answer_storage_bill(self, text, *, daily_stated, corrected_mode=None):
+        if daily_stated:
+            return None
+        if bill := stated_storage_bill(text):
+            self.pending_storage_bill = bill
+            self.storage_billing = None
+            self.storage_pause = None
+            self.common["daily_storage"] = None
+            self.invalidate()
+            return self._finish_conditions()
+        if (pending := self.pending_storage_bill) is None:
+            if (self.storage_billing and confirmed_total_storage_cost(text) is not None
+                    and (question := self._storage_billing_question())):
+                return {"status": "NEEDS_INPUT", "message": question}
+            return None
+        if days := storage_bill_days(text):
+            self.pending_storage_bill = replace(pending, days=days)
+            self.storage_pause = None
+            self.invalidate()
+            return self._finish_conditions()
+        mode = corrected_mode or storage_bill_mode(text)
+        if mode in {"fixed", "prorated"}:
+            if pending.days is not None:
+                self._save_storage_mode(pending, mode)
+                return self._finish_conditions()
+            return {"status": "NEEDS_INPUT", "message": pending.question}
+        if confirmed_total_storage_cost(text) is not None or _OTHER_STORAGE_UNIT.search(text):
+            return {"status": "NEEDS_INPUT", "message": pending.question}
+        return None
+
+    def _save_storage_mode(self, bill, mode):
+        self.storage_billing = {"mode": mode, "days": bill.days, "total_krw": bill.total_krw}
+        self.pending_storage_bill = None
+        self.storage_pause = None
+        self.invalidate()
+
+    def _correct_storage_mode(self, question):
+        if self.storage_billing is None or not (mode := storage_mode_correction(question)):
+            return None
+        if self.pending_quote is not None:
+            return {"status": "NEEDS_INPUT", "message": self.pending_quote.question()}
+        if mode == self.storage_billing["mode"]:
+            return self.result if self.result is not None else self._finish_conditions()
+        bill = StorageBillDraft(self.storage_billing["total_krw"], self.storage_billing["days"])
+        if mode == "choose":
+            self.pending_storage_bill = bill
+            self.storage_billing = None
+            self.storage_pause = None
+            self.invalidate()
+        else:
+            self._save_storage_mode(bill, mode)
+        return self._finish_conditions()
 
     def postpone_storage(self):
         if not self.storage_pause:
             return None
         self.storage_pause = "later"
-        return _RESUME_STORAGE_COST
+        return self.condition_feedback()
 
-    def apply_condition(self, step, value):
+    def apply_condition(self, step, value, *, entered_as_weight=False):
         if step is None or step != self._condition_to_answer():
             return {"status": "INVALID_INPUT", "message": "지금 확인 중인 조건을 다시 확인해 주세요."}
         name = step.field
@@ -355,10 +537,17 @@ class ShipmentCandidateDraft:
             return {"status": "INVALID_INPUT", "message": str(error)}
         if name == "daily_storage":
             self.storage_pause = (self.storage_pause or "waiting") if value is None else None
+            if value is not None:
+                self.pending_storage_bill = None
+                self.storage_billing = None
         elif value is None:
             self.deferred_conditions.add(step)
         if name == "loss":
             self.by_date[step.day] = self.by_date.get(step.day, (None, None))[0], value
+            if entered_as_weight:
+                self.absolute_loss_days.add(step.day)
+            else:
+                self.absolute_loss_days.discard(step.day)
         else:
             self.common[name] = value
             if name == "fee":
@@ -367,6 +556,8 @@ class ShipmentCandidateDraft:
         return self._finish_conditions()
 
     def answer_condition(self, question):
+        if correction := self._correct_storage_mode(question):
+            return correction, False
         if self.storage_pause and re.fullmatch(r"나중에\s*계속(?:할게요|할래요|해주세요)?[.!。\s]*", question.strip()):
             return {"status": "NEEDS_INPUT", "message": self.postpone_storage()}, False
         step = self._condition_to_answer()
@@ -379,15 +570,33 @@ class ShipmentCandidateDraft:
         text = re.sub(rf"^(?:{_CONDITION_PREFIX[step.field]})(?:은|는|이|가|를|을)?\s*", "", text)
         if _UNKNOWN_CONDITION.fullmatch(text):
             return self.apply_condition(step, None), True
-        text = _ANSWER_END.sub("", text).strip()
+        if step.field != "loss":
+            text = _ANSWER_END.sub("", text).strip()
         if daily_cost:
             text, inner_daily = _DAILY_COST_PREFIX.subn("", text, count=1)
             text, trailing_daily = _DAILY_COST_SUFFIX.subn("", text, count=1)
-            if not (leading_daily or inner_daily or trailing_daily) and _OTHER_STORAGE_UNIT.search(text):
+            daily_stated = bool(leading_daily or inner_daily or trailing_daily)
+            try:
+                if bill_answer := self._answer_storage_bill(
+                    text, daily_stated=daily_stated, corrected_mode=storage_mode_correction(question),
+                ):
+                    return bill_answer, False
+            except ValueError as error:
+                return {"status": "NEEDS_INPUT", "message": str(error)}, False
+            if not daily_stated and _OTHER_STORAGE_UNIT.search(text):
                 return {"status": "NEEDS_INPUT",
                         "message": "전체 물량을 하루 보관하는 데 드는 금액을 알려주시겠어요?"}, False
             text = re.sub(r"^(만|천)\s*원$", r"1\1원", text)
-        value = self._condition_value(step, text)
+        try:
+            if step.field == "loss":
+                loss = self._loss_answer(step, text)
+                if loss is None:
+                    return None
+                value, entered_as_weight = loss
+                return self.apply_condition(step, value, entered_as_weight=entered_as_weight), False
+            value = self._condition_value(step, text)
+        except ValueError as error:
+            return {"status": "NEEDS_INPUT", "message": str(error)}, False
         return (self.apply_condition(step, value), False) if value is not None else None
 
     def _condition_value(self, step, text):
@@ -407,7 +616,7 @@ class ShipmentCandidateDraft:
                     )
                 except ValueError:
                     return None
-        elif step.field in {"fee", "loss"}:
+        elif step.field == "fee":
             if percent := re.fullmatch(rf"({_QUOTE_NUMBER})\s*(?:%|퍼센트)", text):
                 return decimal(percent[1].replace(",", ""), step.label)
         elif text in {"없", "없어", "없어요", "없습니다", "없음"}:
@@ -416,9 +625,56 @@ class ShipmentCandidateDraft:
             return confirmed_total_storage_cost(text.removeprefix("하루 "))
         return None
 
-    def save_form_inputs(self, common, by_date):
-        """Return True when the chosen basis requires re-entering the quotes."""
+    def _loss_answer(self, step, text):
+        values = []
+        entered_as_weight = False
+        for clause in _LOSS_ANSWER_SPLIT.split(text):
+            clause = _calendar_text(clause.strip())
+            date_match = _DATE.match(clause)
+            has_date = date_match and (date_match["iso"] or date_match["month"] or date_match["unit"])
+            if has_date:
+                clause = re.sub(r"^\s*(?:에는|에|은|는|의)?\s*", "", clause[date_match.end():])
+            amount_clause = _ANSWER_END.sub("", clause).strip()
+            if percent := _LOSS_PERCENT.fullmatch(amount_clause):
+                value = decimal(percent[1].replace(",", ""), step.label)
+            elif weight := _SALEABLE_ANSWER.fullmatch(clause) or _SALEABLE_ANSWER.fullmatch(amount_clause):
+                total = decimal(self.common["quantity"], "전체 물량")
+                if weight["total"] is not None and _candidate_weight_kg(weight["total"]) != total:
+                    raise ValueError("말씀하신 전체 물량이 현재 비교할 물량과 달라요. 어느 쪽이 맞나요?")
+                saleable = _candidate_weight_kg(weight["saleable"])
+                if not 0 < saleable <= total:
+                    raise ValueError("팔 수 있는 양은 0kg보다 크고 전체 물량 이하여야 해요. 무게를 확인해 주세요.")
+                value = (total - saleable) * 100 / total
+                entered_as_weight = True
+            else:
+                return None
+            if has_date and self._quote_date(date_match)[0] != step.day:
+                raise ValueError(f"지금은 {step.day.month}월 {step.day.day}일에 팔 수 있는 양을 확인하고 있어요. "
+                                 "이 날짜의 양이나 감모율을 알려주세요.")
+            values.append(value)
+        if len(set(values)) != 1:
+            raise ValueError("판매 가능한 양과 감모율이 서로 달라요. 어느 값을 적용할까요?")
+        return values[0], entered_as_weight
+
+    def _clear_weight_losses_for_quantity(self, previous, quantity):
+        if not self.absolute_loss_days or previous == quantity:
+            return False
+        if previous is not None and quantity is not None and decimal(previous, "전체 물량") == decimal(quantity, "전체 물량"):
+            return False
+        for day in self.absolute_loss_days:
+            self.by_date[day] = self.by_date.get(day, (None, None))[0], None
+        return bool(self.absolute_loss_days.intersection(self.eligible))
+
+    def save_form_inputs(self, common, by_date, *, storage_mode=None):
+        """Return True when edited conditions need guided confirmation."""
+        if storage_mode is not None and (self.storage_billing is None or common["daily_storage"] is not None
+                                         or storage_mode not in {"prorated", "fixed"}):
+            raise ValueError("청구 방식과 보관비 기준을 다시 확인해 주세요.")
+        common = {name: (_keep_unchanged_number(self.common.get(name), value)
+                         if name in {"quantity", "daily_storage", "other_cost", "fee"} else value)
+                  for name, value in common.items()}
         previous_basis, basis = self.common.get("basis"), common["basis"]
+        previous_quantity = self.common.get("quantity")
         previous_start = self.common.get("start")
         start_changed = previous_start is not None and previous_start != common["start"]
         needs_quotes = basis != previous_basis and (
@@ -430,10 +686,26 @@ class ShipmentCandidateDraft:
         self.common = {**common, "fee": self.gross_fee if basis == "gross" else None}
         if self.common["daily_storage"] is not None:
             self.storage_pause = None
-        self.by_date.update(by_date)
+            self.pending_storage_bill = None
+            self.storage_billing = None
+        elif storage_mode is not None and storage_mode != self.storage_billing["mode"]:
+            bill = StorageBillDraft(self.storage_billing["total_krw"], self.storage_billing["days"])
+            self._save_storage_mode(bill, storage_mode)
+        prior_losses = {day: self.by_date[day][1] for day in self.absolute_loss_days}
+        for day, (price, loss) in by_date.items():
+            old_price, old_loss = self.by_date.get(day, (None, None))
+            self.by_date[day] = (_keep_unchanged_number(old_price, price), _keep_unchanged_number(old_loss, loss))
+        recheck_weight = self._clear_weight_losses_for_quantity(previous_quantity, common["quantity"])
+        if not recheck_weight:
+            for day, old_loss in prior_losses.items():
+                if old_loss != self.by_date[day][1]:
+                    self.absolute_loss_days.discard(day)
         if start_changed:
             self.by_date = {day: (price, None) for day, (price, _) in self.by_date.items()}
+            self.absolute_loss_days.clear()
             self.deferred_conditions = {step for step in self.deferred_conditions if step.field != "loss"}
+            self.invalidate()
+        elif recheck_weight:
             self.invalidate()
         self.deferred_conditions = {step for step in self.deferred_conditions
                                     if (by_date.get(step.day, (None, None))[1] if step.day else
@@ -442,7 +714,7 @@ class ShipmentCandidateDraft:
             self.by_date = {day: (None, loss) for day, (_, loss) in self.by_date.items()}
             self.initial_inputs_saved = False
             self.invalidate()
-        return needs_quotes
+        return needs_quotes or recheck_weight
 
     def cancel_quote(self, question):
         if self.pending_quote is not None and _CANCEL_QUOTE.fullmatch(question.strip()):
@@ -547,6 +819,8 @@ class ShipmentCandidateDraft:
             return "견적을 반영하지 못했어요. " + result["message"]
         self.by_date = proposed
         self.conflicting_quotes.discard(day)
+        if self.timing_dates and self.common.get("quantity") is not None:
+            self.initial_inputs_saved = True
         self.invalidate()
         if step := self.next_condition():
             result = {"status": "NEEDS_INPUT", "message": step.question}
@@ -568,6 +842,8 @@ class ShipmentCandidateDraft:
         return None, "그 날짜는 현재 후보일에 없어요. 견적을 받은 후보일의 날짜와 kg당 단가를 알려주세요."
 
     def invalidate(self):
+        if self.result and self.result.get("reference_date"):
+            self.reference_date = date.fromisoformat(self.result["reference_date"])
         self.result = None
         self.pending_quote = None
         self.revision += 1
@@ -597,6 +873,7 @@ def open_candidate_draft(dates, start, question, today, pair, scenario_version, 
         window = window or pair.availability
         excluded.update(pair.unavailable_dates)
     draft = ShipmentCandidateDraft(dates, window, excluded, pair.version, scenario_version, today, common, by_date)
+    draft.timing_variety = _stated_timing_variety(question)
     # Explicitly dated kg quotes in a separate clause can be reused by the short form.
     stated_quotes: dict[date, set[Decimal]] = {}
     for clause in re.split(r"[;；\n]|,(?!\d)", _calendar_text(question)):
