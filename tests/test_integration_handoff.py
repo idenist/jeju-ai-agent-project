@@ -18,13 +18,16 @@ class 인수증빙검수(unittest.TestCase):
         self.root = Path(temp.name)
         self.evidence = self.root / "artifacts/integration-e2e/전체평가"
         self.evidence.mkdir(parents=True)
-        ids = list(검수.EXPECTED_IDS)
         actual_cases = json.loads((Path(__file__).resolve().parents[1] / "evals/integration_e2e_cases.json").read_text(encoding="utf-8"))
+        ids = [case["id"] for case in actual_cases]
         turn_counts = [len(case["turns"]) for case in actual_cases]
-        self.assertEqual(sum(turn_counts), 검수.EXPECTED_TURNS)
-        cases = [{"id": name, "turns": [{"user": "평가 질문"}] * count}
-                 for name, count in zip(ids, turn_counts)]
-        self._write(self.root / "evals/integration_e2e_cases.json", cases)
+        self._write(self.root / "evals/integration_e2e_cases.json", actual_cases)
+        self.case_totals = len(ids), sum(turn_counts)
+        price_patch = patch("services.data_contract.verify_price_pair_sources", return_value={
+            "status": "OK", "snapshot_id": "shared-baseline", "availability_rows": 4776,
+        })
+        self.price_check = price_patch.start()
+        self.addCleanup(price_patch.stop)
         required = ["app.py", "ui/application.py", "ui/context.py", "ui/chat.py", "ui/panels.py", "agents/agent.py", "agents/tools.py",
                     "ui/workspace.py", "services/price_history_service.py",
                     "data/processed/daily_prices.csv", "data/processed/price_comparison_availability.csv",
@@ -39,7 +42,7 @@ class 인수증빙검수(unittest.TestCase):
         source = {p: hashlib.sha256((self.root / p).read_bytes()).hexdigest() for p in required}
         self.metadata = {"model": "검수모델", "cases": ids, "repeats": 1,
                          "expected_turns_per_repeat": sum(turn_counts), "actual_model_api_called": True,
-                         "preflight": {"status": "OK", "verified_availability_rows": 4776,
+                         "preflight": {"status": "OK", "snapshot_id": "shared-baseline", "verified_availability_rows": 4776,
                                        "activated_scenario_tool": False}, "source_sha256": source}
         self.summary = {"model": "검수모델", "planned_runs": len(ids), "completed_runs": len(ids),
                         "passed_runs": len(ids), "complete": True, "stop_reason": None, "failure_counts": {}}
@@ -65,7 +68,7 @@ class 인수증빙검수(unittest.TestCase):
     def test_정상_전체_평가와_코드_해시는_통과(self):
         result = self.check()
         self.assertEqual(result["status"], "OK", result["issues"])
-        self.assertEqual((result["passed_cases"], result["passed_turns"]), (21, 44))
+        self.assertEqual((result["passed_cases"], result["passed_turns"]), self.case_totals)
         self.assertEqual(검수._test_count("Ran 543 tests in 99.0s\nOK"), 543)
         self.assertIsNone(검수._test_count("진단 결과만 출력"))
 
@@ -103,6 +106,13 @@ class 인수증빙검수(unittest.TestCase):
         self.save()
         self.assertEqual(self.check()["status"], "FAIL")
 
+    def test_선택된_자료와_같은_증빙만_통과(self):
+        self.price_check.return_value = {"status": "OK", "snapshot_id": "extended-demo", "availability_rows": 7960}
+        self.assertEqual(self.check()["status"], "FAIL")
+        self.metadata["preflight"].update(snapshot_id="extended-demo", verified_availability_rows=7960)
+        self.save()
+        self.assertEqual(self.check()["status"], "OK")
+
     def test_범위_밖_소스_경로는_읽지_않음(self):
         self.metadata["source_sha256"]["../키파일"] = "a" * 64
         self.save()
@@ -135,6 +145,20 @@ class 인수실행검수(unittest.TestCase):
                   patch.object(검수, "run_offline_tests") as runner):
                 self.assertEqual(검수.main(), 0)
                 runner.assert_not_called()
+
+    def test_검토_브랜치에서는_무과금_검증만_통과(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with (patch.object(검수, "ROOT", root),
+                  patch.object(검수, "find_latest_full_evidence", return_value=Path("임시")),
+                  patch.object(검수, "verify_live_evidence", return_value={"status": "OK"}),
+                  patch.object(검수, "verify_repository", return_value={"status": "OK", "branch": "dev/juneok"}),
+                  patch.object(검수, "verify_data", return_value={"status": "OK"}),
+                  patch.object(검수, "run_offline_tests", return_value=[{"status": "OK"}])):
+                with patch("sys.argv", ["인수검수", "--offline-only"]):
+                    self.assertEqual(검수.main(), 0)
+                with patch("sys.argv", ["인수검수"]):
+                    self.assertEqual(검수.main(), 1)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,13 @@ from datetime import date
 from pathlib import Path
 import tempfile
 import unittest
-from services.data_refresh import stage_snapshot, activate_snapshot, resolve_market_root, market_status, snapshot_dir
+from unittest.mock import patch
+
+from services.data_contract import verify_cached_price_sources
+from services.data_refresh import (activate_snapshot, market_status, resolve_market_root, rollback_snapshot,
+                                   snapshot_dir, stage_snapshot)
+from services.market_snapshot import MARKET_POINTER_FILE, SNAPSHOT_FILES
+from services.price_history_service import get_integrated_price_history
 from services.evidence import get_market_evidence
 from core.config import PROJECT_ROOT
 
@@ -71,6 +77,55 @@ class RefreshTests(unittest.TestCase):
         for name in ["../outside", "C:/outside", "x/y", "", "x" * 65]:
             with self.subTest(name=name), self.assertRaises(ValueError):
                 snapshot_dir(self.root, name)
+
+    def test_refresh_failure_and_rollback_keep_price_pairs_with_their_daily_source(self):
+        today = date(2026, 11, 19)
+        original = self.root / "combined.csv"
+        with original.open("w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=[*self.headers, "fixture_row"])
+            writer.writeheader()
+            for day in ("2026-11-04", "2026-11-09", "2026-11-14"):
+                for i in range(5):
+                    writer.writerow({**self.row, "trd_clcln_ymd": day, "fixture_row": i,
+                                     "gds_sclsf_cd": "01", "grd_nm": "특", "grd_cd": "11",
+                                     "sz_nm": "소", "sz_cd": "184", "pkg_nm": "상자", "unit_qty": 5,
+                                     "qty": 1, "unit_tot_qty": 5, "scsbd_prc": 12500, "totprc": 12500})
+        manifest = stage_snapshot([original], "a", self.root, today)
+        self.assertEqual(set(manifest["files"]), SNAPSHOT_FILES)
+        stage_snapshot([original, self.source("2026-11-15")], "b", self.root, today)
+        stage_snapshot([original, self.source("2026-11-16")], "c", self.root, today)
+        activate_snapshot("a", self.root, today)
+        activate_snapshot("b", self.root, today)
+
+        pointer = self.root / MARKET_POINTER_FILE
+        before_failure = pointer.read_bytes()
+        replace = Path.replace
+
+        def fail_before_switch(path, target):
+            if target == pointer:
+                raise OSError("simulated failure at activation")
+            return replace(path, target)
+
+        with patch.object(Path, "replace", fail_before_switch), self.assertRaises(OSError):
+            activate_snapshot("c", self.root, today)
+        self.assertEqual(pointer.read_bytes(), before_failure)
+        self.assertEqual(market_status(self.root, today)["snapshot_id"], "b")
+        self.assertEqual(list(pointer.parent.glob("market-active-*.tmp")), [])
+
+        self.assertEqual(rollback_snapshot(self.root, today)["snapshot_id"], "a")
+        checked = verify_cached_price_sources(self.root)
+        self.assertEqual(checked["available_intervals"], [3, 5, 7, 10, 14])
+        self.assertEqual(checked["snapshot_id"], "a")
+        spec = {"market_code": self.row["whsl_mrkt_cd"], "variety": "조생귤", "grade": "특",
+                "size": "소", "package": "상자", "package_kg": 5, "trade_type": "경매"}
+        with patch("services.price_history_service.PROJECT_ROOT", self.root):
+            for days, count in ((5, 2), (10, 1)):
+                result = get_integrated_price_history({**spec, "interval_days": days})
+                self.assertEqual(result["status"], "OK", result)
+                self.assertEqual(result["source_verification"]["snapshot_id"], "a")
+                self.assertEqual(result["clean_pairs"], count)
+                for pair in result["examples"]:
+                    self.assertEqual((date.fromisoformat(pair["target_date"]) - date.fromisoformat(pair["base_date"])).days, days)
 
 
 if __name__ == "__main__":

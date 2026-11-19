@@ -14,8 +14,6 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_IDS = tuple(f"INT-{n:02d}" for n in range(1, 22))
-EXPECTED_TURNS = 44
 
 
 def _json(path: Path):
@@ -27,18 +25,13 @@ def _sha(path: Path) -> str:
 
 
 def _case_definitions(root: Path) -> tuple[tuple[str, ...], int]:
-    cases = _json(root / "evals/integration_e2e_cases.json")
-    if (not isinstance(cases, list) or not all(isinstance(c, dict) for c in cases)):
-        raise ValueError("통합 평가셋이 배열이 아닙니다.")
-    ids = tuple(c.get("id") for c in cases)
-    if ids != EXPECTED_IDS:
+    from scripts.evaluate_integrated_agent import load_cases
+
+    cases = load_cases(root / "evals/integration_e2e_cases.json")
+    ids = tuple(case["id"] for case in cases)
+    if ids != tuple(f"INT-{n:02d}" for n in range(1, len(cases) + 1)):
         raise ValueError("평가 문항 ID 또는 순서가 검수 계약과 다릅니다.")
-    if any(not isinstance(c.get("turns"), list) or not c["turns"] for c in cases):
-        raise ValueError("평가 문항의 사용자 턴이 누락됐습니다.")
-    turns = sum(len(c["turns"]) for c in cases)
-    if turns != EXPECTED_TURNS:
-        raise ValueError("평가 문항의 전체 턴 수가 검수 계약과 다릅니다.")
-    return ids, turns
+    return ids, sum(len(case["turns"]) for case in cases)
 
 
 def find_latest_full_evidence(root: Path) -> Path | None:
@@ -46,17 +39,33 @@ def find_latest_full_evidence(root: Path) -> Path | None:
     base = root / "artifacts/integration-e2e"
     if not base.is_dir():
         return None
+    try:
+        ids, turns = _case_definitions(root)
+    except (OSError, ValueError):
+        return None
     for path in sorted((p for p in base.iterdir() if p.is_dir()), reverse=True):
         try:
             metadata = _json(path / "metadata.json")
             summary = _json(path / "summary.json")
-            if (metadata.get("cases") == list(EXPECTED_IDS)
-                    and summary.get("planned_runs") == len(EXPECTED_IDS)
+            if (metadata.get("cases") == list(ids) and metadata.get("repeats") == 1
+                    and metadata.get("expected_turns_per_repeat") == turns
+                    and summary.get("planned_runs") == len(ids)
                     and (path / "cases.jsonl").is_file()):
                 return path
         except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
             continue
     return None
+
+
+def _price_preflight_matches(preflight, root: Path) -> bool:
+    from services.data_contract import verify_price_pair_sources
+
+    if (not isinstance(preflight, dict) or preflight.get("status") != "OK"
+            or preflight.get("activated_scenario_tool") is not False):
+        return False
+    current = verify_price_pair_sources(root)
+    return (current.get("status") == "OK" and preflight.get("snapshot_id") == current["snapshot_id"]
+            and preflight.get("verified_availability_rows") == current["availability_rows"])
 
 
 def verify_live_evidence(folder: Path, root: Path = ROOT) -> dict:
@@ -89,9 +98,7 @@ def verify_live_evidence(folder: Path, root: Path = ROOT) -> dict:
                 or summary.get("stop_reason") is not None or summary.get("failure_counts")):
             issues.append("전체 평가 요약이 완료·전부 통과 조건을 만족하지 않습니다.")
         preflight = metadata.get("preflight")
-        if (not isinstance(preflight, dict) or preflight.get("status") != "OK"
-                or preflight.get("verified_availability_rows") != 4776
-                or preflight.get("activated_scenario_tool") is not False):
+        if not _price_preflight_matches(preflight, root):
             issues.append("평가 당시 데이터 사전검증 또는 활성 도구 구성이 다릅니다.")
         if not isinstance(cases, list) or [c.get("id") for c in cases if isinstance(c, dict)] != list(ids) or len(cases) != len(ids):
             issues.append("실제 문항 기록이 누락되거나 중복됐습니다.")
@@ -226,7 +233,7 @@ def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--evidence", type=Path, help="21문항 전체 평가의 metadata/summary/cases가 있는 폴더")
+    parser.add_argument("--evidence", type=Path, help="전체 평가의 metadata/summary/cases가 있는 폴더")
     parser.add_argument("--full", action="store_true", help="전체 단위 테스트·평가 테스트·무과금 검증까지 실행")
     parser.add_argument("--offline-only", action="store_true", help="유료 모델 증빙 없이 코드·데이터·회귀 테스트만 검사")
     parser.add_argument("--require-clean", action="store_true", help="인수 확정 시 Git 작업트리 청결 상태도 요구")
@@ -234,15 +241,15 @@ def main() -> int:
     folder = args.evidence or find_latest_full_evidence(ROOT)
     evidence = ({"status": "NOT_CHECKED", "issues": ["유료 모델 평가는 수행하지 않았습니다."]}
                 if args.offline_only else verify_live_evidence(folder, ROOT) if folder
-                else {"status": "FAIL", "issues": ["21문항 전체 평가 기록 없음"]})
+                else {"status": "FAIL", "issues": ["전체 평가 기록 없음"]})
     repository = verify_repository(ROOT)
     data = verify_data(ROOT)
     stamp = datetime.now(timezone(timedelta(hours=9))).strftime("%Y%m%d_%H%M%S_%f")
     output = ROOT / "artifacts/integration-handoff" / stamp
     output.mkdir(parents=True, exist_ok=True)
     tests = run_offline_tests(ROOT, output) if (args.full or args.offline_only) else []
-    checks_ok = ((args.offline_only or evidence["status"] == "OK") and data["status"] == "OK"
-                 and repository["status"] == "OK" and repository.get("branch") in {"refactor/lean-mvp", "main"})
+    ready_for_handoff = (evidence["status"] == "OK" and repository.get("branch") in {"refactor/lean-mvp", "main"})
+    checks_ok = (args.offline_only or ready_for_handoff) and data["status"] == "OK" and repository["status"] == "OK"
     if args.require_clean and not repository.get("working_tree_clean"):
         checks_ok = False
     if (args.full or args.offline_only) and not all(t["status"] == "OK" for t in tests):
@@ -252,8 +259,8 @@ def main() -> int:
                "paid_model_called": False, "tests_executed": args.full or args.offline_only,
                "evidence": evidence, "data": data, "repository": repository, "tests": tests,
                "working_tree_clean_required": args.require_clean,
-               "manual_open_issues": ["INT-04 명시 등급·크기 누락", "INT-11 중량 충돌 안내 부족",
-                                      "실사용자 검증·#855 자료 이용조건·팀 main 병합 승인 미완료"]}
+               "manual_open_issues": ["실제 농가 사용성과 센터 실행 확인",
+                                      "#855 자료 이용조건과 팀 병합 승인 확인"]}
     (output / "summary.json").write_text(json.dumps(verdict, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({**verdict, "report_folder": str(output)}, ensure_ascii=False, indent=2))
     return 0 if checks_ok else 1

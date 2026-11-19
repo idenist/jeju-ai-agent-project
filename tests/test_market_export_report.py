@@ -3,7 +3,7 @@ import json
 import unittest
 
 from presenters.market_export import (
-    export_json, export_market_record, market_markdown, report_entries,
+    export_json, export_market_record, market_markdown, report_entries, season_observation_rows,
 )
 
 PAIR = {"analysis_type": "future_pair", "status": "OK", "price_basis": "gross"}
@@ -46,6 +46,49 @@ class MarketExportReportTests(unittest.TestCase):
     def test_net_basis_is_not_compared_to_gross(self):
         result = export_market_record({**PAIR, "price_basis": "commission_net"}, None)
         self.assertEqual(result["status"], "NOT_COMPARABLE")
+
+    def test_partial_missing_and_actual_zero_share_one_display_contract(self):
+        conditions = {"window_days": 7}
+        evidence = {"conditions": conditions, "seasons": [
+            {"season": "2023-2024", "status": "OK", "days_above": 0, "days_clean": 7, "window_complete": True},
+            {"season": "2024-2025", "status": "OK", "days_above": 1, "days_clean": 2, "window_complete": False},
+            {"season": "2025-2026", "status": "NO_CLEAN_DAYS", "days_above": 0, "days_clean": 0},
+            {"season": "2026-2027", "status": "NO_DATA", "days_above": 0, "days_clean": 0,
+             "source_first_date": "2026-10-01", "source_last_date": "2026-11-13",
+             "window_start": "2026-11-18", "window_end": "2026-12-02"},
+        ]}
+        market = {**MARKET, "market_evidence": evidence}
+        markdown = market_markdown(market)
+        rows = list(season_observation_rows(evidence))
+        self.assertEqual(rows, [
+            ("2023-2024", "0 / 7일", "조회됨"),
+            ("2024-2025", "1 / 2일", "부분 관측기간"),
+            ("2025-2026", "-", "품질 경고로 비교 불가"),
+            ("2026-2027", "-", "해당 기간 관측 없음"),
+        ])
+        for row in rows:
+            self.assertIn(" | ".join(row), markdown)
+        self.assertIn("B안 출하일 전후 7일", markdown)
+        exported = json.loads(export_json(PAIR, market))["market_decision"]["market_evidence"]
+        self.assertEqual(exported, evidence)
+
+    def test_export_rejects_saved_analysis_for_another_product_date_or_price_basis(self):
+        spec = {"market_code": "110001", "variety": "조생귤", "grade": "특",
+                "size": "소", "package": "상자", "package_kg": "5", "trade_type": "경매"}
+        pair = {**PAIR, "minimum_whole_krw_per_kg": "2660",
+                "options_b": [{"id": "past_mid", "sale_date": "2026-11-25"}],
+                "evidence": {"past_mid": {"conditions": spec}}}
+        market = {**MARKET, "market_evidence": {**MARKET["market_evidence"], "conditions": spec}}
+        stored = {"result": market}
+        self.assertEqual(export_market_record(pair, stored), market)
+        for edit in (
+            {"evidence": {"past_mid": {"conditions": {**spec, "variety": "하우스감귤"}}}},
+            {"options_b": [{"id": "past_mid", "sale_date": "2026-12-02"}]},
+            {"minimum_whole_krw_per_kg": "2750"},
+        ):
+            self.assertEqual(export_market_record({**pair, **edit}, stored)["status"], "NEEDS_SPEC")
+        self.assertEqual(export_market_record({**pair, "price_basis": "commission_net"}, stored)["status"],
+                         "NOT_COMPARABLE")
 
 
 if __name__ == "__main__":

@@ -120,6 +120,8 @@ def render_price_history(result: dict) -> str:
     if isinstance(verification, dict) and verification.get("status") == "OK":
         lines.append("- 원천 관측 범위: " + _text(verification.get("observed_first_date"))
                      + " ~ " + _text(verification.get("observed_last_date")))
+        if snapshot_id := verification.get("snapshot_id"):
+            lines.append("- 가격 자료 버전: " + _text(snapshot_id))
     if result.get("source"):
         lines.append("- 조회 자료: " + _text(result["source"]))
     if not gap:

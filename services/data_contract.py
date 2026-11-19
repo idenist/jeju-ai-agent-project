@@ -90,6 +90,17 @@ def _error(reason: str, message: str, **details: object) -> dict:
     return {"status": "DATA_ERROR", "reason": reason, "message": message, **details}
 
 
+def comparison_root(root: Path, selected: Path) -> Path:
+    """Legacy selections may only use the verified frozen comparison files."""
+    if selected != root and (selected / "manifest.json").is_file():
+        from services.market_snapshot import SNAPSHOT_FILES, load_snapshot
+
+        manifest = load_snapshot(selected, selected.name)
+        if set(manifest["files"]) == SNAPSHOT_FILES:
+            return selected
+    return root
+
+
 def verify_price_pair_sources(project_root: Path, market_root: Path | None = None) -> dict:
     """실제 선택된 시장가격 CSV와 과거 가격쌍 생성 원천이 동일한지 확인합니다.
 
@@ -104,8 +115,8 @@ def verify_price_pair_sources(project_root: Path, market_root: Path | None = Non
             selected_root = resolve_market_root(root)
         else:
             selected_root = Path(market_root)
-        report = _read_json(root / REPORT_FILE)
-        manifest = _read_json(root / MANIFEST_FILE)
+        pair_root = comparison_root(root, selected_root)
+        report = _read_json(pair_root / REPORT_FILE)
         if (report.get("input_file") != PRICE_FILE.name
                 or report.get("calendar_basis") != "calendar_days_exact_date"
                 or report.get("pair_orientation") != "target_date = base_date + interval_days"
@@ -124,17 +135,22 @@ def verify_price_pair_sources(project_root: Path, market_root: Path | None = Non
         original_sha = report.get("input_sha256")
         if not isinstance(original_sha, str) or not re.fullmatch(r"[a-f0-9]{64}", original_sha):
             return _error("CONTRACT_MISMATCH", "과거 가격 비교 원천의 SHA-256 명세가 올바르지 않습니다.")
-        entries = manifest.get("files")
-        if not isinstance(entries, list):
-            return _error("CONTRACT_MISMATCH", "공통 데이터 명세에서 파일 정보를 찾을 수 없습니다.")
-        shared_entries = [x for x in entries if isinstance(x, dict) and x.get("file") == PRICE_FILE.as_posix()]
-        if len(shared_entries) != 1 or shared_entries[0].get("sha256") != original_sha:
-            return _error("CONTRACT_MISMATCH", "가격 비교 보고서와 공통 데이터 명세의 원천이 다릅니다.")
-
-        shared_sha = _digest(root / PRICE_FILE)
-        if shared_sha != original_sha:
-            return _error("BASELINE_CHANGED", "공통 시장가격 CSV가 기록된 원천과 다릅니다.",
-                          expected_sha256=original_sha, actual_sha256=shared_sha)
+        if pair_root == root:
+            entries = _read_json(root / MANIFEST_FILE).get("files")
+            if not isinstance(entries, list):
+                return _error("CONTRACT_MISMATCH", "공통 데이터 명세에서 파일 정보를 찾을 수 없습니다.")
+            shared_entries = [x for x in entries if isinstance(x, dict) and x.get("file") == PRICE_FILE.as_posix()]
+            if len(shared_entries) != 1 or shared_entries[0].get("sha256") != original_sha:
+                return _error("CONTRACT_MISMATCH", "가격 비교 보고서와 공통 데이터 명세의 원천이 다릅니다.")
+            shared_sha = _digest(root / PRICE_FILE)
+            if shared_sha != original_sha:
+                return _error("BASELINE_CHANGED", "공통 시장가격 CSV가 기록된 원천과 다릅니다.",
+                              expected_sha256=original_sha, actual_sha256=shared_sha)
+        else:
+            manifest = _read_json(pair_root / "manifest.json")
+            if (manifest["files"].get(PRICE_FILE.as_posix()) != original_sha
+                    or manifest.get("comparison_intervals") != intervals):
+                return _error("CONTRACT_MISMATCH", "스냅샷 명세와 가격쌍의 원천·간격이 다릅니다.")
         selected_sha = _digest(selected_root / PRICE_FILE)
         if selected_sha != original_sha:
             return _error("VERSION_MISMATCH", "선택한 시장가격과 과거 가격 비교 자료의 원천 버전이 다릅니다.",
@@ -143,7 +159,7 @@ def verify_price_pair_sources(project_root: Path, market_root: Path | None = Non
         expected_rows = (report.get("rows"), report.get("availability_rows"))
         if any(type(n) is not int or n < 0 for n in expected_rows):
             return _error("CONTRACT_MISMATCH", "가격 비교 결과 행 수 명세가 올바르지 않습니다.")
-        actual_rows = tuple(_count_csv(root / path, PAIR_FIELDS) for path in PAIR_FILES)
+        actual_rows = tuple(_count_csv(pair_root / path, PAIR_FIELDS) for path in PAIR_FILES)
         if actual_rows != expected_rows:
             return _error("REPORT_COUNT_MISMATCH", "가격 비교 CSV와 보고서의 행 수가 다릅니다.",
                           expected_rows=expected_rows, actual_rows=actual_rows)
@@ -154,6 +170,9 @@ def verify_price_pair_sources(project_root: Path, market_root: Path | None = Non
             "message": "선택한 시장가격과 과거 가격 비교 자료의 원천이 일치합니다.",
             "comparison_source_sha256": original_sha,
             "selected_market_sha256": selected_sha,
+            "comparison_root": str(pair_root),
+            "comparison_sha256": _digest(pair_root / PAIR_FILES[1]),
+            "snapshot_id": pair_root.name if pair_root != root else "shared-baseline",
             "available_intervals": intervals,
             "observed_first_date": report.get("observed_date_min"),
             "observed_last_date": report.get("observed_date_max"),
@@ -173,8 +192,7 @@ def verify_integrated_price_sources(project_root: Path, market_root: Path | None
     실제 Agent에 가격 비교 도구를 연결할 때는 이 함수를 호출해야 합니다.
     CSV를 다시 생성해 디스크에 저장하지 않고, 메모리에서 비교합니다.
     """
-    root = Path(project_root)
-    basic = verify_price_pair_sources(root, market_root)
+    basic = verify_price_pair_sources(project_root, market_root)
     if basic["status"] != "OK":
         return basic
 
@@ -183,6 +201,7 @@ def verify_integrated_price_sources(project_root: Path, market_root: Path | None
         # 동결 원천으로만 비교쌍을 다시 계산합니다.
         from scripts.build_price_comparisons import FIELDS, build_comparisons, load_prices
 
+        root = Path(basic["comparison_root"])
         observations, actual_sha = load_prices(root / PRICE_FILE)
         if actual_sha != basic["comparison_source_sha256"]:
             return _error("BASELINE_CHANGED", "검증 도중 공통 가격 원본이 변경됐습니다.")
@@ -230,8 +249,10 @@ def verify_integrated_price_sources(project_root: Path, market_root: Path | None
 
 
 def _price_source_fingerprint(root, selected):
-    paths = dict.fromkeys([selected / PRICE_FILE, *(root / path for path in
-                                                    (PRICE_FILE, *PAIR_FILES, REPORT_FILE, MANIFEST_FILE))])
+    pair_root = comparison_root(root, selected)
+    manifest = root / MANIFEST_FILE if pair_root == root else pair_root / "manifest.json"
+    paths = dict.fromkeys([selected / PRICE_FILE, *(pair_root / path for path in
+                                                    (PRICE_FILE, *PAIR_FILES, REPORT_FILE)), manifest])
     return tuple(_digest(path) for path in paths)
 
 
@@ -250,13 +271,13 @@ def _verified_price_source_version(root, selected, fingerprint):
     return result
 
 
-def verify_cached_price_sources(project_root: Path) -> dict:
+def verify_cached_price_sources(project_root: Path, *, market_root: Path | None = None) -> dict:
     """Reuse a full verification only while every input has the same content hash."""
     from services.data_refresh import resolve_market_root
 
     root = Path(project_root)
     try:
-        selected = resolve_market_root(root)
+        selected = resolve_market_root(root) if market_root is None else Path(market_root)
         fingerprint = _price_source_fingerprint(root, selected)
         checked = _verified_price_source_version(root, selected, fingerprint)
         return {**checked, "available_intervals": list(checked["available_intervals"]),

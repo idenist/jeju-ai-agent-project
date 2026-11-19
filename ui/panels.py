@@ -393,11 +393,15 @@ def _render_price_history(ws, disabled):
     with st.expander("과거 경락가격 비교 · 직접 조회(키 없이 사용)",
                      expanded=st.session_state.get("show_price_history", False)):
         st.caption("경매시장에서 관측한 같은 거래규격의 과거 가격쌍입니다. 농가 실수취가·미래가격·보관 수익의 예측이 아닙니다.")
+        from core.config import PROJECT_ROOT
+        from services.data_contract import verify_cached_price_sources
         from ui.market_inputs import render_market_spec_controls
         current = st.session_state.get("price_history_submitted_query") or {}
         spec, complete = render_market_spec_controls("price_history_spec", current)
         left, right = st.columns(2)
-        interval = left.selectbox("두 과거 거래일 사이 간격", [3, 7, 14], index=1,
+        intervals = verify_cached_price_sources(PROJECT_ROOT).get("available_intervals") or [3, 7, 14]
+        default_interval = 7 if 7 in intervals else intervals[0]
+        interval = left.selectbox("두 과거 거래일 사이 간격", intervals, index=intervals.index(default_interval),
                                   format_func=lambda days: f"{days}일", key="price_history_interval_days")
         base_date = right.date_input("과거 기준일 · 선택", value=None, key="price_history_base_date_picker")
         limit = st.number_input("표시할 과거 사례 수", key="price_history_limit", min_value=1,

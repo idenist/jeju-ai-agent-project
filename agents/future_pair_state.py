@@ -1,20 +1,21 @@
 """Session conditions and the current result for two future shipments."""
 from copy import deepcopy
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 import re
 
 from services.future_pair import (
     compare_future_pair, compare_future_pair_history_reference,
-    compare_future_pair_threshold_reference,
+    compare_future_pair_storage_range, compare_future_pair_threshold_reference,
     preview_future_pair_history, price_revision, validate_future_pair_inputs,
     HISTORY_FIELDS, INPUT_FIELDS, LABELS, MAX_RATE_PERCENT, OPTION_FIELDS, OPTION_LABELS,
 )
 from services.economics import decimal
 from services.price_data_gap import PRICE_GAP_EVIDENCE, price_gap, render_price_gap
 from agents.future_pair_intent import (
-    explicit_shipment_quantity, shipment_choice_question, shipment_window_limit, shipment_window_start,
+    confirmed_total_storage_cost, explicit_shipment_quantity, later_storage_cost_range, shipment_availability, shipment_choice_question,
+    shipment_date_reply, shipment_window_limit, shipment_window_start,
 )
 
 
@@ -423,6 +424,11 @@ class FuturePairState:
         self.opening_field = None
         self.costs_deferred = False
         self.specs_deferred = False
+        self.quote_deferred = False
+        self.availability = None
+        self.unavailable_dates = set()
+        self.availability_pending = None
+        self.storage_cost_range = None
 
     @staticmethod
     def _empty():
@@ -447,6 +453,14 @@ class FuturePairState:
 
     def replace(self, inputs, *, start_new=False):
         if start_new or inputs != self.inputs:
+            if start_new or (self.storage_cost_range and (
+                inputs["option_b"]["daily_storage_cost"] is not None
+                or (not self.storage_cost_range[2] and (
+                    inputs["start_date"] != self.inputs["start_date"]
+                    or inputs["option_b"]["delay_days"] != self.inputs["option_b"]["delay_days"]
+                ))
+            )):
+                self.storage_cost_range = None
             self.inputs = deepcopy(inputs)
             self.version += 1
             self.clear_result()
@@ -457,6 +471,107 @@ class FuturePairState:
         self.shipment_window = None
         self.costs_deferred = False
         self.specs_deferred = False
+        self.quote_deferred = False
+        self.clear_availability()
+        self.storage_cost_range = None
+
+    def clear_availability(self):
+        self.availability = None
+        self.unavailable_dates.clear()
+        self.availability_pending = None
+
+    def _date_available(self, day):
+        return day not in self.unavailable_dates and (
+            self.availability is None or self.availability[0] <= day <= self.availability[1]
+        )
+
+    def _availability_conflict(self, inputs):
+        if inputs["start_date"] and (self.availability or self.unavailable_dates):
+            try:
+                start = date.fromisoformat(inputs["start_date"])
+            except (ValueError, TypeError):
+                return None
+            for side in ("A", "B"):
+                days = inputs[f"option_{side.lower()}"]["delay_days"]
+                if type(days) is int and 1 <= days <= (date.max - start).days and not self._date_available(day := start + timedelta(days=days)):
+                    label = "먼저" if side == "A" else "나중에"
+                    return side, f"{day.month}월 {day.day}일은 출하 가능한 날에서 뺐어요. {label} 출하할 수 있는 날짜는 언제인가요?"
+        return None
+
+    def follow_up_availability(self, question, today, *, on_progress=None):
+        """Apply explicit availability before interpreting numbers as comparison inputs."""
+        context = self.shipment_window
+        anchor = self.availability[0] if self.availability else context.first if context else today
+        window, excluded = shipment_availability(question, today, anchor=anchor)
+        ongoing = bool(self.inputs["start_date"] or self.availability or self.unavailable_dates or context)
+        if ((window and (excluded or self.unavailable_dates))
+                or (excluded and (ongoing or re.search(r"출하|납품|인수|수거|선과", question)))):
+            if window:
+                self.availability = window
+            elif self.availability is None and context and context.last:
+                self.availability = context.first, context.last
+            self.unavailable_dates.update(excluded)
+            candidate = deepcopy(self.inputs)
+            conflict = self._availability_conflict(candidate)
+            if conflict:
+                blocked_side, message = conflict
+                while conflict is not None:
+                    side = conflict[0].lower()
+                    candidate[f"option_{side}"]["delay_days"] = None
+                    candidate[f"option_{side}"]["loss_percent"] = None
+                    candidate[f"price_{side}"] = None
+                    conflict = self._availability_conflict(candidate)
+                self.replace(candidate)
+                self.availability_pending = blocked_side
+                return message, None
+            if window and not self.inputs["start_date"]:
+                start, end = window
+                anchor = min(today, start - timedelta(days=1))
+                first = start if self._date_available(start) else None
+                patch = {"start_date": anchor.isoformat(), "quantity": explicit_shipment_quantity(question)}
+                if first:
+                    patch["option_a"] = {"delay_days": (first - anchor).days}
+                self.apply("new", self.version, patch)
+                self.availability_pending = "B" if first else "A"
+                days = sorted(day for day in self.unavailable_dates if start <= day <= end)
+                removed = (" " + ", ".join(f"{day.month}월 {day.day}일" for day in days)
+                           + "은 비교에서 뺄게요.") if days else ""
+                if first is None:
+                    return f"출하 가능한 기간을 확인했어요.{removed} 먼저 출하할 수 있는 날은 언제인가요?", None
+                return (f"{first.month}월 {first.day}일을 먼저 출하하는 안으로 둘게요.{removed} "
+                        "나중에 출하할 수 있는 날은 언제인가요?"), None
+            return "출하 가능한 날짜에 반영했어요.", None
+        if not ongoing or not (self.availability or self.unavailable_dates):
+            return None
+        anchor = self.availability[0] if self.availability else today
+        reply = shipment_date_reply(question, anchor, pending_side=self.availability_pending)
+        if reply is None or not self.inputs["start_date"]:
+            return None
+        side, day = reply
+        start = date.fromisoformat(self.inputs["start_date"])
+        result = self.apply("edit", self.version, {f"option_{side.lower()}": {"delay_days": (day - start).days}},
+                            on_progress=on_progress)
+        if result["status"] == "INVALID_INPUT":
+            return result["message"], result
+        other = "B" if side == "A" else "A"
+        self.availability_pending = other if self.inputs[f"option_{other.lower()}"]["delay_days"] is None else None
+        text = future_pair_feedback(result, one_question=True) if result["status"] != "OK" else ""
+        return f"{side}안 출하일을 {day.month}월 {day.day}일로 정했어요.\n\n{text}".strip(), result
+
+    def apply_storage_cost_range(self, question, *, on_progress=None):
+        days = self.inputs["option_b"]["delay_days"]
+        if days is None:
+            return None
+        result = self.current_result() or {}
+        range_pending = result.get("storage_cost_range", {}).get("assessment") == "DEPENDS_ON_STORAGE"
+        parsed = later_storage_cost_range(question, waiting_for_later_storage=(
+            self.waiting_field() == f'B안 {OPTION_LABELS["daily_storage_cost"]}' and not range_pending
+        ))
+        if parsed is None and range_pending and (total := confirmed_total_storage_cost(question)) is not None:
+            parsed = total, total, False, days
+        if parsed is None:
+            return None
+        return self.apply("edit", self.version, {}, storage_range=parsed, on_progress=on_progress)
 
     def _response(self, status, message, **details):
         return {"analysis_type": "future_pair", "status": status, "message": message,
@@ -482,7 +597,24 @@ class FuturePairState:
 
     def calculate(self, *, preview_history=False, allow_reference=True, on_progress=None):
         self.clear_result()
-        historical = self.inputs["history_filters"] is not None
+        if conflict := self._availability_conflict(self.inputs):
+            self.availability_pending = conflict[0]
+            return self._response("INVALID_INPUT", conflict[1])
+        if self.storage_cost_range and self._threshold_reference_ready(self.inputs, allow_quote=True):
+            lower, upper, daily = self.storage_cost_range
+            result = compare_future_pair_storage_range(lower=lower, upper=upper, daily=daily, **{
+                key: self.inputs[key] for key in (
+                    "quantity", "price_basis", "start_date", "option_a", "option_b", "price_a", "price_b",
+                )
+            })
+            if result["status"] == "OK":
+                result["future_pair_version"] = self.version
+                self.result = deepcopy(result)
+                self.opening_field = {"QUOTE_UNKNOWN": LABELS["price_b"],
+                                      "DEPENDS_ON_STORAGE": f'B안 {OPTION_LABELS["daily_storage_cost"]}'}.get(
+                                          result["storage_cost_range"]["assessment"])
+                return result
+        historical = self.inputs["history_filters"] is not None and not self.quote_deferred
         if allow_reference and not historical and self._threshold_reference_ready(self.inputs):
             result = compare_future_pair_threshold_reference(**{
                 key: self.inputs[key] for key in (
@@ -496,6 +628,8 @@ class FuturePairState:
             if result["status"] != "NEEDS_INPUT":
                 return {**result, "analysis_type": "future_pair", "future_pair_version": self.version}
         missing = self._missing(self.inputs)
+        if self.storage_cost_range:
+            missing = [field for field in missing if field != f'B안 {OPTION_LABELS["daily_storage_cost"]}']
         if not allow_reference and not historical and self.inputs["price_b"] is None:
             missing.append(LABELS["price_b"])
         if missing:
@@ -519,6 +653,20 @@ class FuturePairState:
             self.result = deepcopy(result)
             self.source_revision = revision
         return self._agent_result(result)
+
+    def continue_without_later_quote(self):
+        """Use confirmed inputs, leaving the quote and any history selection intact."""
+        self.quote_deferred = True
+        current = self.current_result()
+        if current and current.get("threshold_only") and not current.get("history_scenarios"):
+            return current
+        result = self.calculate(preview_history=True)
+        if result["status"] == "NEEDS_INPUT":
+            self.pending = {**deepcopy(result), "waiting_for_break_even": True}
+            self.opening_field = next_pair_field(result.get("missing_fields", []))
+        elif result["status"] == "OK":
+            self.opening_field = LABELS["price_b"]
+        return result
 
     def _preview_history(self, missing, on_progress):
         start = self.inputs["start_date"]
@@ -606,9 +754,9 @@ class FuturePairState:
         return missing
 
     @staticmethod
-    def _threshold_reference_ready(inputs):
+    def _threshold_reference_ready(inputs, *, allow_quote=False):
         """Minimum confirmed inputs for a useful conditional break-even result."""
-        if inputs["price_b"] is not None:
+        if inputs["price_b"] is not None and not allow_quote:
             return False
         required = ("quantity", "price_basis", "start_date", "price_a")
         if any(inputs[field] is None for field in required):
@@ -622,7 +770,7 @@ class FuturePairState:
         return True
 
     def apply(self, action, expected_version, patch, clear_fields=None, *, on_progress=None,
-              box_price=None, unresolved_box_price=False):
+              box_price=None, unresolved_box_price=False, storage_range=None):
         if type(expected_version) is not int or expected_version != self.version:
             return self._response("INVALID_INPUT", "비교 조건 버전이 바뀌었습니다. 최신 조건을 확인해 주세요.")
         if action not in ("new", "edit") or not isinstance(patch, dict):
@@ -630,18 +778,35 @@ class FuturePairState:
         candidate = self._empty() if action == "new" else deepcopy(self.inputs)
         try:
             self._apply_patch(candidate, patch, clear_fields)
+            if storage_range is not None:
+                lower, upper, daily, stated_days = storage_range
+                days = candidate["option_b"]["delay_days"]
+                if days is not None and stated_days is not None and stated_days != days:
+                    raise ValueError(f"지금 B안은 {days}일 보관이에요. {days}일 전체 보관비 범위를 알려주시겠어요?")
+                if lower > upper:
+                    raise ValueError("보관비 범위에서 적은 금액과 큰 금액을 다시 알려주시겠어요?")
+                candidate["option_b"]["daily_storage_cost"] = None
             validate_future_pair_inputs(candidate)
         except ValueError as exc:
             return self._response("INVALID_INPUT", str(exc))
+        if conflict := self._availability_conflict(candidate):
+            self.availability_pending = conflict[0]
+            return self._response("INVALID_INPUT", conflict[1])
+        version = self.version
         self.replace(candidate, start_new=action == "new")
+        if storage_range is not None:
+            self.storage_cost_range = lower, upper, daily
+            if self.version == version:
+                self.version += 1
+        if action == "new" or candidate["price_b"] is not None or patch.get("price_mode") == "history":
+            self.quote_deferred = False
         if action == "new":
             self.costs_deferred = False
             self.specs_deferred = False
         if box_price is not None or unresolved_box_price:
             self.clear_result()
             self.box_price = box_price
-            message = box_price.question() if box_price else "어느 출하안의 가격인지와 상자당 금액을 알려주세요."
-            result = self._response("NEEDS_INPUT", message, source_status="BOX_PRICE_CONFIRMATION")
+            result = self.box_confirmation()
             self.pending = deepcopy(result)
             return result
         result = self.calculate(preview_history=True, on_progress=on_progress)
@@ -649,6 +814,9 @@ class FuturePairState:
             self.specs_deferred = False
         if result["status"] in {"NEEDS_INPUT", "NO_DATA"} or result.get("manual_price_required"):
             self.pending = deepcopy(result)
+            if self.quote_deferred and result["status"] == "NEEDS_INPUT":
+                self.pending["waiting_for_break_even"] = True
+                self.opening_field = next_pair_field(result.get("missing_fields", []))
         elif result["status"] == "OK":
             self.costs_deferred = False
         return result
@@ -815,6 +983,10 @@ class FuturePairState:
         return bool(re.search(r"[0-9]", question) and
                     re.search(r"(?:원|%|퍼센트|kg|킬로그램|톤|\b[AB]안\b|감모|수수료|보관비)", question, re.I))
 
+    def box_confirmation(self):
+        message = self.box_price.question() if self.box_price else "어느 출하안의 가격인지와 상자당 금액을 알려주세요."
+        return self._response("NEEDS_INPUT", message, source_status="BOX_PRICE_CONFIRMATION")
+
     def follow_up_box_price(self, question, *, on_progress=None):
         if self.box_price is None:
             return None
@@ -835,7 +1007,7 @@ class FuturePairState:
             return deepcopy(self.pending)
         if action == "clarify":
             self.box_price = quote
-            self.pending = self._response("NEEDS_INPUT", quote.question(), source_status="BOX_PRICE_CONFIRMATION")
+            self.pending = self.box_confirmation()
             return deepcopy(self.pending)
         return None
 

@@ -26,6 +26,7 @@ TOOL_LABELS["compare_future_pair"] = "두 미래 출하안 비교"
 TOOL_LABELS["analyze_shipment_timing"] = "제주데이터허브 출하 시기 A/B 분석"
 TOOL_LABELS["market_decision"] = "다년도 시장 근거와 조건부 판단"
 TOOL_LABELS["get_price_overview"] = "기간별 시장가격 요약"
+TOOL_LABELS["compare_shipment_candidates"] = "출하 후보일 비교"
 FIELD_NAMES.update(quoted_price_per_kg="제안 단가 또는 미래 단가 가정(원/kg)", option_id="검토할 보관 대안")
 FIELD_NAMES.update(comparison_reference="변경 검토 기준으로 선택한 저장 JSON")
 
@@ -143,12 +144,47 @@ def manual_price_warning(price_a, price_b):
     return None
 
 
+def _storage_cost_range_summary(result):
+    bounds = result["storage_cost_range"]
+    low, high = (_number(bounds[key], 0) for key in ("minimum_from_krw_per_kg", "minimum_to_krw_per_kg"))
+    lower, upper = (_number(bounds[key]) for key in ("storage_cost_total_from_krw", "storage_cost_total_to_krw"))
+    storage = f"{lower}원" if lower == upper else f"{lower}원에서 {upper}원"
+    minimum = f"{low}원/kg" if low == high else f"{low}~{high}원/kg"
+    threshold = f"B안 보관비 {storage}을 반영하면 손익분기는 {minimum}입니다."
+    assessment = bounds["assessment"]
+    quote = _number(bounds["quote_krw_per_kg"])
+    if assessment == "QUOTE_UNKNOWN":
+        return ("B안 단가 확인 필요", threshold, "나중 출하 때 받을 kg당 단가를 확인해 보세요.")
+    if assessment == "OTHER_COSTS_UNKNOWN":
+        missing = result["unknown_cost_fields"][0]
+        return ("미확인 비용이 남아 있어 비교는 참고값이에요.", threshold, f"{missing}부터 확인해 주세요.")
+    if assessment == "DEPENDS_ON_STORAGE":
+        tie = Decimal(bounds["storage_cost_at_tie_krw"])
+        equal = _whole_won(tie) if tie == tie.to_integral_value() else f"약 {_whole_won(tie)}"
+        days = result["options_b"][0]["delay_days"]
+        return (f"B안 견적 {quote}원/kg에서는 보관비에 따라 유리한 안이 달라집니다.", threshold,
+                f"B안 전체 보관비가 {equal}이면 두 안이 같고, 그보다 적으면 B안이 더 남습니다. "
+                f"{days}일 전체 보관비가 얼마인지 아세요?")
+    outcome = {"A_HIGHER": "범위 전체에서 A안이", "B_HIGHER": "범위 전체에서 B안이", "TIE": "두 안이"}[assessment]
+    ending = "같습니다." if assessment == "TIE" else "더 남습니다."
+    warning = manual_price_warning(result["option_a"]["price_per_kg"], bounds["quote_krw_per_kg"])
+    return f"B안 견적 {quote}원/kg이면 {outcome} {ending}", threshold, warning or ""
+
+
 def future_pair_summary(result: dict) -> tuple[str, str, str]:
+    if result.get("storage_cost_range"):
+        return _storage_cost_range_summary(result)
     a, options = result["option_a"], result["options_b"]
     earlier = _shipment_label("A", a["sale_date"])
     later = _shipment_label("B", options[0]["sale_date"])
     if result.get("threshold_only"):
         minimum = _number(result["minimum_whole_krw_per_kg"], 0)
+        if not result.get("unknown_cost_fields"):
+            return (
+                "B안 단가 확인 필요",
+                f"{later}에 {minimum}원/kg 이상 받아야 {earlier}과 같거나 더 남습니다.",
+                "판매처에 나중 출하 때 받을 단가를 확인해 보세요.",
+            )
         return (
             "B안 가격 미확인 · 실제 유불리 판단 보류",
             f"미확인 비용 차이를 0원으로 둔 참고 손익분기 가격은 {minimum}원/kg입니다.",
@@ -174,10 +210,15 @@ def future_pair_summary(result: dict) -> tuple[str, str, str]:
 
 
 def _price_source_period(source):
-    period = source.get("observed_period") if isinstance(source, dict) else None
+    if not isinstance(source, dict):
+        return []
+    period = source.get("observed_period")
+    lines = []
     if isinstance(period, (list, tuple)) and len(period) == 2 and all(period):
-        return [f"가격 원천 관측기간 {period[0]} ~ {period[1]}"]
-    return []
+        lines.append(f"가격 원천 관측기간 {period[0]} ~ {period[1]}")
+    if source.get("snapshot_id"):
+        lines.append(f"가격 자료 버전 {_text(source['snapshot_id'])}")
+    return lines
 
 
 def _render_future_pair(result: dict) -> str:
@@ -187,6 +228,14 @@ def _render_future_pair(result: dict) -> str:
     conclusion, minimum, favorable = future_pair_summary(result)
     earlier = _shipment_label("A", a["sale_date"])
     later = _shipment_label("B", b["sale_date"])
+    if result.get("storage_cost_range"):
+        return "\n".join([
+            f"**현재 결론 · {conclusion}**", f"**{minimum}**", *([favorable] if favorable else []),
+            "", f"{earlier} {a['sale_date']} · {later} {b['sale_date']} · 물량 {_number(result['quantity_kg'])}kg · 단가 {basis}",
+            f"A안 단가 {_number(a['price_per_kg'])}원/kg · A안 확인 가능 금액 {_whole_won(result['a_reference_amount_krw'])}",
+            f"판매 가능 물량 · A안 {_number(a['remaining_kg'])}kg / B안 {_number(b['remaining_kg'])}kg",
+            *(["보관비 외 미확인 비용 · " + ", ".join(result["unknown_cost_fields"])] if result["unknown_cost_fields"] else []),
+        ])
     if result.get("threshold_only"):
         sensitivity = _number(result["unknown_cost_delta_per_10000_krw_per_kg"])
         missing = ", ".join(result.get("unknown_cost_fields", ())) or "없음"
@@ -220,14 +269,17 @@ def _render_future_pair(result: dict) -> str:
         return "\n".join([
             f"**현재 결론 · {conclusion}**",
             f"**{minimum}**",
-            f"A안의 확인 가능한 금액은 {_whole_won(result['a_reference_amount_krw'])}입니다. A안의 미확인 비용은 빠져 있습니다.",
+            f"A안의 확인 가능한 금액은 {_whole_won(result['a_reference_amount_krw'])}입니다."
+            + (" A안의 미확인 비용은 빠져 있습니다."
+               if any(field.startswith("A안 ") for field in result.get("unknown_cost_fields", ())) else ""),
             f"계산에 반영한 확인 비용 합계: A안 {_whole_won(a['known_cost_krw'])} · B안 {_whole_won(b['known_cost_krw'])}",
             f"A안 {a['sale_date']} 출하 · B안 {b['sale_date']} 출하 · 물량 {_number(result['quantity_kg'])}kg · 단가 {basis}",
             f"판매 가능 물량: A안 {_number(a['remaining_kg'])}kg · B안 {_number(b['remaining_kg'])}kg",
             f"미확인 비용: {missing}",
-            f"B안의 미확인 비용이 A안보다 10,000원 많으면 B안 손익분기 단가는 약 {sensitivity}원/kg 올라갑니다. 비용 차이가 반대면 그만큼 내려갑니다.",
+            *([f"B안의 미확인 비용이 A안보다 10,000원 많으면 B안 손익분기 단가는 약 {sensitivity}원/kg 올라갑니다. 비용 차이가 반대면 그만큼 내려갑니다."]
+              if result.get("unknown_cost_fields") else []),
             "",
-            "B안 판매가격이 없어서 어느 출하안이 실제로 유리한지 판단하지 않았습니다. 이 비교에서는 과거 가격을 조회하지 않았고 미래가격을 예측하지 않았습니다.",
+            "손익분기는 입력한 출하 조건으로 계산했습니다. B안의 실제 제시가격을 확인하면 두 출하안의 금액을 비교할 수 있습니다.",
         ])
     warning = manual_price_warning(a["price_per_kg"], b["price_per_kg"]) if b["id"] == "manual_b" else None
     lines = [
@@ -269,11 +321,99 @@ def _render_future_pair(result: dict) -> str:
     return "\n".join([*lines, *_warnings(result)])
 
 
+def shipment_candidate_summary(result):
+    lead = ", ".join(result["highest_dates"])
+    tied = "공동으로 " if len(result["highest_dates"]) > 1 else ""
+    if result.get("ranking_complete", True):
+        conclusion = f"입력 조건에서 {lead}의 비교금액이 {tied}가장 높습니다."
+    elif sum(row["proceeds_krw"] is not None for row in result["rows"]) == 1:
+        conclusion = f"{lead} 견적을 기준으로 다른 후보일의 필요 단가를 확인했습니다."
+    elif any(row.get("unconfirmed") for row in result["rows"]):
+        conclusion = f"비교금액을 계산할 수 있는 후보 중 {lead}의 금액이 {tied}가장 높습니다."
+    else:
+        conclusion = f"견적이 확인된 후보 중 {lead}의 비교금액이 {tied}가장 높습니다."
+    basis = "수수료 차감 전" if result["price_basis"] == "gross" else "수수료 차감 후"
+    fee = "" if result["fee_percent"] is None else f" · 수수료율 {_number(result['fee_percent'])}%"
+    first = result["rows"][0]
+    reference = result.get("reference_date", first["sale_date"])
+    amount = result.get("reference_proceeds_krw", first["proceeds_krw"])
+    lines = [f"**{conclusion}**",
+             f"기준 후보일 · {reference} · 비교금액 {_whole_won(amount)}",
+             f"공통 조건 · 보관 시작 {result['start_date']} · {_number(result['quantity_kg'])}kg · {basis}{fee}",
+             f"하루 보관비 {_whole_won(result['daily_storage_cost_krw'])} · 별도 비용 {_whole_won(result['other_cost_krw'])}"]
+    if result["excluded_dates"]:
+        lines.append("비교에서 제외한 날짜 · " + ", ".join(result["excluded_dates"]))
+    return "\n\n".join(lines)
+
+
+def _render_shipment_candidates(result):
+    lines = [shipment_candidate_summary(result)]
+    lines += ["", "| 출하일 | 보관일 | 단가·필요 단가 | 기간 전체 감모 | 비교금액 | 기준 후보 대비 |",
+              "| --- | ---: | ---: | ---: | ---: | ---: |"]
+    for row in result["rows"]:
+        if row["price_per_kg"] is None:
+            quote = f"견적 미확인 · {_candidate_required_price(row)}"
+            amount, difference = "미확인", "-"
+        else:
+            quote = f"{_number(row['price_per_kg'])}원/kg"
+            amount = _whole_won(row["proceeds_krw"]) if row["proceeds_krw"] is not None else "미확인"
+            delta = row.get("difference_vs_reference_krw", row["difference_vs_first_krw"])
+            difference = _won_difference(delta) if delta is not None else "-"
+        loss = f"{_number(row['loss_percent'])}%" if row["loss_percent"] is not None else "미확인"
+        lines.append(f"| {row['sale_date']} | {row['delay_days']}일 | {quote} | "
+                     f"{loss} | {amount} | {difference} |")
+    if any(row["minimum_whole_krw_per_kg"] is not None for row in result["rows"]):
+        lines.append("필요 단가는 기준 후보만큼 받기 위한 kg당 최소 금액이며, 원 단위로 올렸습니다.")
+    lines += ["", *_warnings(result)]
+    return "\n".join(lines)
+
+
+def _candidate_required_price(row):
+    price = row["minimum_whole_krw_per_kg"]
+    return f"{_number(price, 0)}원/kg 이상 필요" if price is not None else "기간 전체 감모 미확인"
+
+
+def shipment_candidate_quote_reply(day, price, result, *, already_applied=False, box_terms=None):
+    label = f"{day.month}월 {day.day}일"
+    quote = f"**{_number(price)}원/kg**"
+    saved = f"{label} 견적을 {quote}으로 반영했어요."
+    if already_applied:
+        saved = f"{label} 견적은 이미 {quote}으로 반영돼 있어요."
+    elif box_terms:
+        weight, amount = box_terms
+        saved = f"{label} 견적은 {_number(weight)}kg 상자당 {_number(amount)}원을 {quote}으로 환산해 반영했어요."
+    if result["status"] != "OK":
+        return f"{saved}\n\n{result['message']}"
+    reference = date.fromisoformat(result["reference_date"])
+    label_ref = f"{reference.month}월 {reference.day}일"
+    if day == reference:
+        return f"{saved}\n\n기준 후보일인 {label_ref}의 비교금액은 **{_whole_won(result['reference_proceeds_krw'])}**이에요."
+    row = next(row for row in result["rows"] if row["sale_date"] == day.isoformat())
+    if row["difference_vs_reference_krw"] is None:
+        return f"{saved}\n\n이 날짜의 기간 전체 감모를 알면 비교금액을 확인할 수 있어요."
+    difference = Decimal(row["difference_vs_reference_krw"])
+    if not difference:
+        return f"{saved}\n\n기준 후보일인 {label_ref}과 비교금액이 같아요."
+    direction = "더" if difference > 0 else "덜"
+    return f"{saved}\n\n기준 후보일인 {label_ref}보다 **{_won_difference(abs(difference))} {direction} 남습니다.**"
+
+
+def shipment_candidate_amounts(result):
+    """Display dates and amounts in a narrow column before the detailed report."""
+    lines = [f"- **{row['sale_date']}** · " + (_whole_won(row["proceeds_krw"])
+             if row["proceeds_krw"] is not None else _candidate_required_price(row)) for row in result["rows"]]
+    if any(row["minimum_whole_krw_per_kg"] is not None for row in result["rows"]):
+        lines.extend(("", "필요 단가는 기준 후보만큼 받기 위한 원 단위 최소 금액입니다."))
+    return "\n".join(lines)
+
+
 def _render_result_body(result: dict) -> str:
     """Return canonical Korean Markdown from a Python tool result only."""
     if not isinstance(result, dict):
         return "결과 형식을 확인할 수 없습니다."
     status = result.get("status", "UNKNOWN")
+    if result.get("analysis_type") == "shipment_candidates" and status == "OK":
+        return _render_shipment_candidates(result)
     if result.get("analysis_type") == "shipment_timing":
         from services.shipment_timing import format_timing_report
         return format_timing_report(result)

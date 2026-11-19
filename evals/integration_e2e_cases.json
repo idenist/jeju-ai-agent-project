@@ -7,7 +7,7 @@
     "turns": [
       {
         "user": "조생귤 특등급, 소과, 상자 5kg의 과거 7일 간격 경락가격을 비교해 주세요. 시장과 거래방식은 지정하지 않았습니다.",
-        "expect": [{"tool": "get_price_history", "status": "OK", "fields": {"clean_pairs": 20, "interval_days": 7}}],
+        "expect": [{"tool": "get_price_history", "status": "OK", "count": 1, "fields": {"clean_pairs": 20, "interval_days": 7}}],
         "model_args": {"get_price_history": {"follow_up": false}},
         "history_fields": {"variety": "조생귤", "interval_days": 7, "package_kg": 5},
         "history_absent": ["market_code", "trade_type", "base_date"],
@@ -79,14 +79,14 @@
   },
   {
     "id": "INT-05",
-    "title": "지원하지 않는 10일 과거 비교 간격",
+    "title": "지원하지 않는 9일 과거 비교 간격",
     "category": "자료한계",
     "setup": "empty",
     "turns": [
       {
-        "user": "조생귤 특 소 상자 5kg의 과거 정확히 10일 간격 가격쌍을 조회해 주세요. 없는 비교를 만들어내지 마세요.",
+        "user": "조생귤 특 소 상자 5kg의 과거 정확히 9일 간격 가격쌍을 조회해 주세요. 없는 비교를 만들어내지 마세요.",
         "expect": [{"tool": "get_price_history", "status": "NO_DATA", "fields": {"source_status": "INTERVAL_NOT_AVAILABLE"}, "available_contains": [3, 7, 14]}],
-        "history_fields": {"interval_days": 10},
+        "history_fields": {"interval_days": 9},
         "preserve_scenario": true,
         "forbid_tools": ["update_scenario"]
       }
@@ -153,10 +153,11 @@
     "turns": [
       {
         "user": "아까 본 과거 가격 변동으로 다음 주 실제 판매 단가를 확정하고 가상 손익 카드에도 저장해 줘. 예측이 어렵다면 그 한계를 설명해 줘.",
-        "expect": [{"tool": "explain_term", "status": "OK", "fields": {"topic": "forecast_limits"}}],
+        "forecast_refusal": true,
         "preserve_scenario": true,
         "future_price_must_be_empty": true,
-        "forbid_tools": ["update_scenario", "get_price_scenarios"]
+        "future_pair_has_result": false,
+        "forbid_tools": ["update_scenario", "get_price_scenarios", "compare_future_pair"]
       }
     ]
   },
@@ -218,7 +219,7 @@
   },
   {
     "id": "INT-13",
-    "title": "두 미래 출하일의 가격 근거 조회부터 직접 단가로 재비교까지",
+    "title": "두 미래 출하일의 가격 조회·용어 확인·B안 변경·직접 단가 입력",
     "category": "미래 출하 비교",
     "setup": "empty",
     "turns": [
@@ -243,11 +244,14 @@
         "preserve_scenario": true
       },
       {
-        "user": "나중 출하일만 12월 2일, 보관 시작일에서 17일 뒤로 바꿔 주세요. 새 기간의 감모율은 아직 몰라요.",
-        "expect": [{"tool": "compare_future_pair", "status": "NEEDS_INPUT", "fields": {
-          "source_status": "HISTORY_READY", "history_preview.interval_days": 14, "history_preview.clean_pairs": 15,
-          "missing_fields": ["B안 기간 전체 감모율(%)"]
-        }}],
+        "user": "감모율이 뭐야? B안만 17일로 바꿔줘",
+        "expect": [
+          {"tool": "explain_term", "status": "OK", "model_selected": false, "fields": {"topic": "loss_rate"}},
+          {"tool": "compare_future_pair", "status": "NEEDS_INPUT", "model_selected": false, "fields": {
+            "source_status": "HISTORY_READY", "history_preview.interval_days": 14, "history_preview.clean_pairs": 15,
+            "missing_fields": ["B안 기간 전체 감모율(%)"]
+          }}
+        ],
         "future_pair_has_result": false,
         "preserve_scenario": true
       },
@@ -262,7 +266,7 @@
         "preserve_scenario": true
       },
       {
-        "user": "이번에는 나중 출하일만 11월 23일, 보관 시작일에서 8일 뒤로 바꿔 주세요. 이 8일 동안에는 전체 물량의 4%가 줄고, 나중 단가에는 과거 가격 변동을 적용하고 싶어요.",
+        "user": "이번에는 나중 출하일만 11월 24일, 보관 시작일에서 9일 뒤로 바꿔 주세요. 이 9일 동안에는 전체 물량의 4%가 줄고, 나중 단가에는 과거 가격 변동을 적용하고 싶어요.",
         "expect": [{"tool": "compare_future_pair", "status": "NO_DATA", "fields": {
           "source_status": "INTERVAL_NOT_AVAILABLE", "manual_price_required": true
         }}],
@@ -273,9 +277,9 @@
       {
         "user": "그럼 나중 출하 단가는 kg당 2,750원으로 직접 입력해서 비교해 주세요. 먼저 출하 조건과 나머지 비용은 그대로예요.",
         "expect": [{"tool": "compare_future_pair", "status": "OK", "fields": {
-          "interval_days": 5, "options_b.0.id": "manual_b", "options_b.0.sale_date": "2026-11-23",
-          "options_b.0.price_per_kg": 2750, "options_b.0.proceeds_krw": 7280600,
-          "options_b.0.difference_vs_a_krw": 261850
+          "interval_days": 6, "options_b.0.id": "manual_b", "options_b.0.sale_date": "2026-11-24",
+          "options_b.0.price_per_kg": 2750, "options_b.0.proceeds_krw": 7270600,
+          "options_b.0.difference_vs_a_krw": 251850
         }, "same_fields_as_turn": {"option_a": 2}}],
         "future_pair_has_result": true,
         "preserve_scenario": true
@@ -284,12 +288,12 @@
   },
   {
     "id": "INT-14",
-    "title": "5일 가격 자료 없음 뒤 용어를 확인하고 직접 단가 비교 재개",
+    "title": "6일 가격 자료 없음 뒤 용어를 확인하고 직접 단가 비교 재개",
     "category": "미래 출하 비교",
     "setup": "empty",
     "turns": [
       {
-        "user": "2026년 11월 15일부터 감귤 3톤을 보관해 3일 후와 8일 후의 출하 손익을 비교해 주세요. 먼저 출하 단가는 수수료 차감 전 2,500원/kg, 나중 단가는 조생귤 특 소 5kg 상자 과거 경락가격을 적용하고 싶어요. 전체 감모율은 A안 1%, B안 4%, 하루 보관비는 양쪽 각각 1만 원, 기타 비용은 각각 5천 원, 판매 수수료는 양쪽 각각 5%예요.",
+        "user": "2026년 11월 15일부터 감귤 3톤을 보관해 3일 후와 9일 후의 출하 손익을 비교해 주세요. 먼저 출하 단가는 수수료 차감 전 2,500원/kg, 나중 단가는 조생귤 특 소 5kg 상자 과거 경락가격을 적용하고 싶어요. 전체 감모율은 A안 1%, B안 4%, 하루 보관비는 양쪽 각각 1만 원, 기타 비용은 각각 5천 원, 판매 수수료는 양쪽 각각 5%예요.",
         "expect": [{"tool": "compare_future_pair", "status": "NO_DATA", "fields": {
           "source_status": "INTERVAL_NOT_AVAILABLE", "manual_price_required": true
         }}],
@@ -308,9 +312,9 @@
       {
         "user": "아까 비교에서 나중 출하 단가만 2,750원/kg으로 직접 입력해서 계산해 주세요.",
         "expect": [{"tool": "compare_future_pair", "status": "OK", "fields": {
-          "quantity_kg": 3000, "interval_days": 5, "option_a.price_per_kg": 2500,
+          "quantity_kg": 3000, "interval_days": 6, "option_a.price_per_kg": 2500,
           "option_a.proceeds_krw": 7018750, "options_b.0.price_per_kg": 2750,
-          "options_b.0.difference_vs_a_krw": 420250
+          "options_b.0.difference_vs_a_krw": 410250
         }}],
         "future_pair_manual_pending": false,
         "future_pair_has_result": true,
@@ -494,6 +498,372 @@
         "expect": [{"tool": "compare_future_pair", "status": "OK", "model_selected": false,"fields": {"confirmed_box_price": 4000,"confirmed_box_side": "B", "option_a.price_per_kg": 2500,"options_b.0.price_per_kg": 4000,"options_b.0.difference_vs_a_krw": 3589850}}],
         "future_pair_has_result": true,
         "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-22",
+    "title": "B안 시세를 몰라도 손익분기를 구하고 같은 날짜의 출하량을 조회",
+    "category": "미래 출하 비교",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "2026년 11월 20일부터 감귤 3톤을 보관해 사흘 뒤와 열흘 뒤 출하를 비교해 주세요. A안은 수수료 차감 전 2,500원/kg, A안 감모율은 1%, B안은 4%, 하루 보관비는 각각 10,000원, 별도 비용은 각각 5,000원, 판매 수수료는 A안 5%, B안 7%예요.",
+        "expect": [{"tool": "compare_future_pair", "status": "NEEDS_INPUT"}],
+        "preserve_scenario": true
+      },
+      {
+        "user": "아직 견적 못 받았어요.",
+        "expect": [{"tool": "compare_future_pair", "status": "OK", "model_selected": false, "fields": {
+          "threshold_only": true,
+          "minimum_whole_krw_per_kg": 2660,
+          "option_a.sale_date": "2026-11-23",
+          "option_a.price_per_kg": 2500,
+          "options_b.0.sale_date": "2026-11-30",
+          "options_b.0.price_per_kg": null,
+          "unknown_cost_fields": []
+        }}],
+        "future_pair_has_result": true,
+        "preserve_scenario": true
+      },
+      {
+        "user": "방금 비교한 두 출하일로 제주데이터허브 #855 노지온주 과거 출하량도 보여주세요.",
+        "expect": [{"tool": "analyze_shipment_timing", "status": "OK", "fields": {
+          "input.option_a_date": "2026-11-23", "input.option_b_date": "2026-11-30", "input.shipment_variety": "노지온주",
+          "paired_year_count": 7
+        }}],
+        "forbid_tools": ["compare_future_pair", "update_scenario"],
+        "future_pair_has_result": true,
+        "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-23",
+    "title": "수수료 설명을 사이에 물어도 짧은 5kg은 원래 날짜의 견적만 갱신",
+    "category": "후보일 견적",
+    "setup": "candidate_comparison",
+    "turns": [
+      {
+        "user": "11/28에 상자당 13,000원",
+        "candidate": {"pending_date": "2026-11-28",
+          "pending_kind": "weight",
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": 2800},
+          "report": "same"},
+        "preserve_scenario": true
+      },
+      {
+        "user": "수수료가 뭐예요?",
+        "forbid_tools": ["update_scenario", "compare_future_pair"],
+        "candidate": {"pending_date": "2026-11-28",
+          "pending_kind": "weight",
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": 2800},
+          "report": "same"},
+        "preserve_scenario": true
+      },
+      {
+        "user": "5kg",
+        "candidate": {"pending_date": null,
+          "pending_kind": null,
+          "prices": {"2026-11-23": 2500, "2026-11-28": 2600, "2026-11-30": 2800},
+          "report": "changed",
+          "report_fields": {"price_basis": "gross", "rows.1.sale_date": "2026-11-28", "rows.1.price_per_kg": 2600, "rows.1.proceeds_krw": 7102700, "rows.1.difference_vs_reference_krw": 83950, "is_future_forecast": false}},
+        "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-24",
+    "title": "견적 질문 중 새 후보일을 말하면 그 날짜에만 짧은 가격 적용",
+    "category": "후보일 견적",
+    "setup": "candidate_comparison",
+    "turns": [
+      {
+        "user": "11/28에 수수료 차감 후 kg당 2,700원",
+        "candidate": {"pending_date": "2026-11-28",
+          "pending_kind": "basis",
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": 2800},
+          "report": "same"},
+        "preserve_scenario": true
+      },
+      {
+        "user": "그럼 11/30 견적으로 볼게요",
+        "candidate": {"pending_date": "2026-11-30",
+          "pending_kind": "basis",
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": 2800},
+          "report": "same"},
+        "preserve_scenario": true
+      },
+      {
+        "user": "2,600원",
+        "candidate": {"pending_date": null,
+          "pending_kind": null,
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": 2600},
+          "report": "changed",
+          "report_fields": {"price_basis": "gross", "rows.2.sale_date": "2026-11-30", "rows.2.price_per_kg": 2600, "rows.2.proceeds_krw": 6934500, "rows.2.difference_vs_reference_krw": -84250, "is_future_forecast": false}},
+        "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-25",
+    "title": "견적 확인을 취소한 뒤 단가만 보내도 완료한 비교 유지",
+    "category": "후보일 견적",
+    "setup": "candidate_comparison",
+    "turns": [
+      {
+        "user": "11/28에 수수료 차감 후 kg당 2,700원",
+        "candidate": {"pending_date": "2026-11-28",
+          "pending_kind": "basis",
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": 2800},
+          "report": "same"},
+        "preserve_scenario": true
+      },
+      {
+        "user": "그 견적은 취소할게요",
+        "candidate": {"pending_date": null,
+          "pending_kind": null,
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": 2800},
+          "report": "same"},
+        "preserve_scenario": true
+      },
+      {
+        "user": "2,600원",
+        "candidate": {"pending_date": null,
+          "pending_kind": null,
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": 2800},
+          "report": "same"},
+        "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-26",
+    "title": "새 후보일 목록에는 이전 날짜의 견적과 보고서를 가져오지 않음",
+    "category": "후보일 견적",
+    "setup": "candidate_comparison",
+    "turns": [
+      {
+        "user": "11/28에 수수료 차감 후 kg당 2,700원",
+        "candidate": {"pending_date": "2026-11-28",
+          "pending_kind": "basis",
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": 2800},
+          "report": "same"},
+        "preserve_scenario": true
+      },
+      {
+        "user": "새 후보일 11/24, 11/27, 11/29 출하 비교해줘",
+        "candidate": {"pending_date": null,
+          "dates": ["2026-11-24", "2026-11-27", "2026-11-29"],
+          "prices": {"2026-11-24": null, "2026-11-27": null, "2026-11-29": null},
+          "keep_conditions": false,
+          "report": "none"},
+        "preserve_scenario": true
+      },
+      {
+        "user": "2,600원",
+        "candidate": {"pending_date": null,
+          "dates": ["2026-11-24", "2026-11-27", "2026-11-29"],
+          "prices": {"2026-11-24": null, "2026-11-27": null, "2026-11-29": null},
+          "keep_conditions": true,
+          "report": "none"},
+        "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-27",
+    "title": "다른 수수료 기준은 확인 뒤 같은 기준에만 반영",
+    "category": "후보일 견적",
+    "setup": "candidate_comparison",
+    "turns": [
+      {
+        "user": "11/28에 수수료 차감 후 kg당 2,800원",
+        "candidate": {"pending_date": "2026-11-28",
+          "pending_kind": "basis",
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": 2800},
+          "report": "same"},
+        "preserve_scenario": true
+      },
+      {
+        "user": "11/28에 수수료 차감 전 kg당 2,600원",
+        "candidate": {"pending_date": null,
+          "pending_kind": null,
+          "prices": {"2026-11-23": 2500, "2026-11-28": 2600, "2026-11-30": 2800},
+          "report": "changed",
+          "report_fields": {"price_basis": "gross", "rows.1.sale_date": "2026-11-28", "rows.1.price_per_kg": 2600, "rows.1.proceeds_krw": 7102700, "rows.1.difference_vs_reference_krw": 83950, "is_future_forecast": false}},
+        "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-28",
+    "title": "환산 결과를 저장하고 출하 불가일은 자료와 견적에서 제외",
+    "category": "후보일 견적",
+    "setup": "candidate_comparison",
+    "turns": [
+      {
+        "user": "11/28에 5kg 상자당 13,000원",
+        "candidate": {"pending_date": null,
+          "pending_kind": null,
+          "prices": {"2026-11-23": 2500, "2026-11-28": 2600, "2026-11-30": 2800},
+          "report": "changed",
+          "report_fields": {"price_basis": "gross", "rows.1.sale_date": "2026-11-28", "rows.1.price_per_kg": 2600, "rows.1.proceeds_krw": 7102700, "rows.1.difference_vs_reference_krw": 83950, "is_future_forecast": false}},
+        "preserve_scenario": true
+      },
+      {
+        "user": "11/30은 인수가 안 돼요.",
+        "candidate": {"pending_date": null,
+          "dates": ["2026-11-23", "2026-11-28"],
+          "prices": {"2026-11-23": 2500, "2026-11-28": 2600, "2026-11-30": 2800},
+          "keep_conditions": false,
+          "report": "none"},
+        "preserve_scenario": true
+      },
+      {
+        "user": "11/30에 kg당 3,100원",
+        "candidate": {"pending_date": null,
+          "dates": ["2026-11-23", "2026-11-28"],
+          "prices": {"2026-11-23": 2500, "2026-11-28": 2600, "2026-11-30": 2800},
+          "report": "none"},
+        "preserve_scenario": true
+      }
+    ]
+  },
+  {
+    "id": "INT-29",
+    "title": "처음 받은 견적 하나로 시작하고 조건을 확인한 뒤 필요 단가를 계산",
+    "category": "후보일 첫 사용",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "감귤 3톤을 11/20부터 보관해서 11/23, 11/28, 11/30 출하 후보일을 비교해줘, 11/23에 kg당 2,500원.",
+        "candidate": {"opens": true, "dates": ["2026-11-23", "2026-11-28", "2026-11-30"],
+          "conditions": {"start": "2026-11-20", "quantity": 3000},
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": null}, "report": "none"}
+      },
+      {"candidate_form": {"save_initial": true}, "candidate": {"next_field": "basis", "report": "none"}},
+      {
+        "user": "감모율이 뭐예요?",
+        "require_model": true,
+        "expect": [{"tool": "explain_term", "status": "OK", "fields": {"topic": "loss_rate"}}],
+        "candidate": {"next_field": "basis", "report": "none"}
+      },
+      {"user": "차감 전", "candidate": {"conditions": {"basis": "gross"}, "next_field": "fee", "keep_conditions": false, "report": "none"}},
+      {"user": "5%", "candidate": {"conditions": {"fee": 5}, "next_field": "daily_storage", "keep_conditions": false, "report": "none"}},
+      {"user": "하루 보관비 10,000원", "candidate": {"conditions": {"daily_storage": 10000}, "next_field": "other_cost", "keep_conditions": false, "report": "none"}},
+      {"user": "기타 비용은 5,000원", "candidate": {"conditions": {"other_cost": 5000}, "next_field": "loss", "next_day": "2026-11-23", "keep_conditions": false, "report": "none"}},
+      {"user": "1%", "candidate": {"losses": {"2026-11-23": 1}, "next_day": "2026-11-28", "keep_conditions": false, "report": "none"}},
+      {"user": "3%", "candidate": {"losses": {"2026-11-23": 1, "2026-11-28": 3}, "next_day": "2026-11-30", "keep_conditions": false, "report": "none"}},
+      {
+        "user": "모르겠어요",
+        "candidate": {"next_field": null, "deferred_fields": ["loss"], "report": "changed",
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": null},
+          "losses": {"2026-11-23": 1, "2026-11-28": 3, "2026-11-30": null},
+          "report_fields": {"reference_date": "2026-11-23", "reference_proceeds_krw": 7018750,
+            "rows.1.minimum_whole_krw_per_kg": 2570, "rows.1.proceeds_krw": null,
+            "rows.2.minimum_whole_krw_per_kg": null, "rows.2.loss_percent": null,
+            "ranking_complete": false, "is_future_forecast": false}}
+      }
+    ]
+  },
+  {
+    "id": "INT-30",
+    "title": "하루 보관비를 모르더라도 안내 한 번 뒤 보류하고 짧은 금액 답변으로 재개",
+    "category": "후보일 첫 사용",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "감귤 3톤을 11/20부터 보관해서 11/23, 11/28, 11/30 출하 후보일을 비교해줘, 11/23에 kg당 2,500원.",
+        "candidate": {"opens": true, "dates": ["2026-11-23", "2026-11-28", "2026-11-30"],
+          "conditions": {"start": "2026-11-20", "quantity": 3000},
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": null}, "report": "none"}
+      },
+      {"candidate_form": {"save_initial": true}, "candidate": {"next_field": "basis", "report": "none"}},
+      {"user": "차감 후", "candidate": {"conditions": {"basis": "commission_net"}, "next_field": "daily_storage", "keep_conditions": false, "report": "none"}},
+      {
+        "user": "감모율이 뭐예요?",
+        "require_model": true,
+        "expect": [{"tool": "explain_term", "status": "OK", "fields": {"topic": "loss_rate"}}],
+        "candidate": {"next_field": "daily_storage", "report": "none"}
+      },
+      {
+        "user": "모르겠어요",
+        "text": ["저장고 견적서에서 전체 물량의 하루 보관비를 확인해 주세요."],
+        "candidate": {"storage_pause": "waiting", "next_field": null, "conditions": {"daily_storage": null},
+          "keep_conditions": false, "report": "none"}
+      },
+      {
+        "user": "나중에 계속",
+        "text": ["이 대화에서 하루 보관비만 알려주시면 이어서 비교할게요."],
+        "candidate": {"storage_pause": "later", "next_field": null, "report": "none"}
+      },
+      {
+        "user": "10,000원",
+        "candidate": {"storage_pause": null, "next_field": "other_cost", "keep_conditions": false,
+          "dates": ["2026-11-23", "2026-11-28", "2026-11-30"],
+          "conditions": {"start": "2026-11-20", "quantity": 3000, "basis": "commission_net", "daily_storage": 10000},
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": null}, "report": "none"}
+      },
+      {"user": "기타 비용은 5,000원", "candidate": {"conditions": {"other_cost": 5000}, "next_day": "2026-11-23", "keep_conditions": false, "report": "none"}},
+      {"user": "1%", "candidate": {"losses": {"2026-11-23": 1}, "next_day": "2026-11-28", "keep_conditions": false, "report": "none"}},
+      {"user": "3%", "candidate": {"losses": {"2026-11-28": 3}, "next_day": "2026-11-30", "keep_conditions": false, "report": "none"}},
+      {
+        "user": "5%",
+        "candidate": {"storage_pause": null, "next_field": null, "keep_conditions": false, "report": "changed",
+          "report_fields": {"reference_date": "2026-11-23", "reference_proceeds_krw": 7390000,
+            "daily_storage_cost_krw": 10000, "rows.1.minimum_whole_krw_per_kg": 2569,
+            "rows.1.price_per_kg": null, "rows.2.price_per_kg": null, "is_future_forecast": false}}
+      }
+    ]
+  },
+  {
+    "id": "INT-31",
+    "title": "처음 만든 비교에서 수수료 기준을 바꾸면 원래 조건을 유지하고 견적만 다시 입력",
+    "category": "후보일 첫 사용",
+    "setup": "empty",
+    "turns": [
+      {
+        "user": "감귤 3톤을 11/20부터 보관해서 11/23, 11/28, 11/30 출하 후보일을 비교해줘, 11/23에 kg당 2,500원.",
+        "candidate": {"opens": true, "dates": ["2026-11-23", "2026-11-28", "2026-11-30"],
+          "conditions": {"start": "2026-11-20", "quantity": 3000},
+          "prices": {"2026-11-23": 2500, "2026-11-28": null, "2026-11-30": null}, "report": "none"}
+      },
+      {"candidate_form": {"save_initial": true}, "candidate": {"next_field": "basis", "report": "none"}},
+      {
+        "user": "감모율이 뭐예요?",
+        "require_model": true,
+        "expect": [{"tool": "explain_term", "status": "OK", "fields": {"topic": "loss_rate"}}],
+        "candidate": {"next_field": "basis", "report": "none"}
+      },
+      {"user": "차감 전", "candidate": {"next_field": "fee", "keep_conditions": false, "report": "none"}},
+      {"user": "5%", "candidate": {"next_field": "daily_storage", "keep_conditions": false, "report": "none"}},
+      {"user": "하루 보관비 10,000원", "candidate": {"next_field": "other_cost", "keep_conditions": false, "report": "none"}},
+      {"user": "기타 비용은 5,000원", "candidate": {"next_day": "2026-11-23", "keep_conditions": false, "report": "none"}},
+      {"user": "1%", "candidate": {"next_day": "2026-11-28", "keep_conditions": false, "report": "none"}},
+      {"user": "3%", "candidate": {"next_day": "2026-11-30", "keep_conditions": false, "report": "none"}},
+      {
+        "user": "5%",
+        "candidate": {"next_field": null, "keep_conditions": false, "report": "changed",
+          "report_fields": {"price_basis": "gross", "fee_percent": 5, "reference_proceeds_krw": 7018750,
+            "rows.1.minimum_whole_krw_per_kg": 2570, "is_future_forecast": false}}
+      },
+      {
+        "candidate_form": {"basis": "commission_net"},
+        "candidate": {"next_field": null, "report": "none", "keep_conditions": false,
+          "dates": ["2026-11-23", "2026-11-28", "2026-11-30"],
+          "conditions": {"start": "2026-11-20", "quantity": 3000, "basis": "commission_net",
+            "daily_storage": 10000, "other_cost": 5000, "fee": null},
+          "prices": {"2026-11-23": null, "2026-11-28": null, "2026-11-30": null},
+          "losses": {"2026-11-23": 1, "2026-11-28": 3, "2026-11-30": 5}}
+      },
+      {
+        "candidate_form": {"save_initial": true, "quotes": {"2026-11-23": 2350, "2026-11-28": 2480}},
+        "candidate": {"next_field": null, "report": "changed",
+          "prices": {"2026-11-23": 2350, "2026-11-28": 2480, "2026-11-30": null},
+          "report_fields": {"price_basis": "commission_net", "fee_percent": null, "reference_proceeds_krw": 6944500,
+            "rows.1.proceeds_krw": 7131800, "rows.1.difference_vs_reference_krw": 187300,
+            "rows.2.minimum_whole_krw_per_kg": 2474, "is_future_forecast": false}}
       }
     ]
   }

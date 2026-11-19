@@ -185,6 +185,22 @@ def main():
         .shipment-latest[data-running="true"] .shipment-arrow {
             display: none;
         }
+        @media (max-width: 480px) {
+            .stApp:has(.shipment-latest:not([hidden])) .st-key-shipment_transcript {
+                max-height: max(10rem, calc(100dvh - 23.75rem));
+            }
+            .st-key-shipment_footer [data-testid="stElementContainer"]:has(.shipment-latest) {
+                position: static;
+            }
+            .st-key-shipment_footer [data-testid="stElementContainer"]:has(.shipment-latest[hidden]) {
+                display: none;
+            }
+            .shipment-latest {
+                position: static;
+                margin-inline: auto;
+                transform: none;
+            }
+        }
         .shipment-latest[data-running="true"] .shipment-dots {
             display: flex;
             align-items: center;

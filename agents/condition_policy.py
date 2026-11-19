@@ -2,6 +2,8 @@
 
 import re
 
+from agents.dialogue import explicit_term_topic
+from agents.future_pair_intent import without_historical_price_exclusion
 from agents.future_pair_state import unavailable_cost
 
 
@@ -12,6 +14,12 @@ _ACTION = r"바꾸|바꿔|변경|수정|저장|삭제|초기화|덮어|반영|�
 _FIELD = r"조건|물량|단가|가격|수수료|보관(?:비|료|일|기간)|비용|감모|감량|출하일|[AB]안"
 _QUOTE = re.compile(r"“[^”\n]+”|‘[^’\n]+’|\"[^\"\n]+\"|'[^'\n]+'", re.IGNORECASE)
 _CLAUSE = re.compile(r"[!?。;；\n]+|\.(?!\d)|,\s+|\s+(?:대신|다만|그리고|그런데)\s+")
+_TERM_BOUNDARY = re.compile(
+    r"[!?？。;；\n]+|\.(?!\d)|[,，]\s+|\s+그리고\s+|"
+    r"(?P<term_link>뭐고|(?:알려|설명해)\s*주고|설명하고)\s+|"
+    r"(?P<edit_link>바꾸고|(?:바꿔|변경해|수정해)\s*주고)\s+"
+)
+_AFTER_TERM = re.compile(r"^(?:그리고|그럼|그러면|이어서)\s+")
 _DECLINED = re.compile(
     rf"(?:{_ACTION})\w*\s*(?:지\s*(?:말|마|않)|하지\s*(?:말|마|않)|려다가)"
     r"|(?:변경|수정|입력|저장|적용)\s*(?:을\s*)?취소"
@@ -47,6 +55,33 @@ _FORCED_ZERO = re.compile(
 _DECLARED_ASSUMPTION = re.compile(r"(?:별도\s*)?(?:가정|예시|참고|시나리오)(?:값)?(?:으?로만|만|으로\s*표시)")
 
 
+def split_term_question(question: str) -> tuple[str, str | None]:
+    """Extract an independent glossary clause outside quoted instructions."""
+    quotations = tuple(_QUOTE.finditer(question))
+    for boundary in _TERM_BOUNDARY.finditer(question):
+        if any(quote.start() <= boundary.start() < quote.end() for quote in quotations):
+            continue
+        left = question[:boundary.start()].strip()
+        right = _AFTER_TERM.sub("", question[boundary.end():].lstrip(" ,，\t")).strip()
+        if not left or not right:
+            continue
+        if link := boundary["term_link"]:
+            ending = " 뭐예요?" if link == "뭐고" else " 알려줘"
+            if topic := explicit_term_topic(left + ending):
+                return right, topic
+        elif boundary["edit_link"]:
+            if topic := explicit_term_topic(right):
+                return left + " 바꿔줘", topic
+        else:
+            if "?" in boundary[0] or "？" in boundary[0]:
+                left += "?"
+            if topic := explicit_term_topic(left):
+                return right, topic
+            if topic := explicit_term_topic(right):
+                return left, topic
+    return question, None
+
+
 def condition_request(question: str) -> tuple[str, bool]:
     """Return a tool-facing request and whether it may save comparison inputs."""
     quoted_directive = False
@@ -60,8 +95,10 @@ def condition_request(question: str) -> tuple[str, bool]:
 
     outside_quotes = _QUOTE.sub(mask_directive, question)
     clauses = [clause.strip() for clause in _CLAUSE.split(outside_quotes) if clause.strip()]
-    checks = (_DECLINED, _QUESTIONED, _REPORTED, _DECLARED_ASSUMPTION)
-    allowed = [clause for clause in clauses if not any(check.search(clause) for check in checks)]
+    checks = (_QUESTIONED, _REPORTED, _DECLARED_ASSUMPTION)
+    allowed = [clause for clause in clauses
+               if not _DECLINED.search(without_historical_price_exclusion(clause))
+               and not any(check.search(clause) for check in checks)]
     protected = quoted_directive or len(allowed) != len(clauses)
     approved = any(_APPROVED.search(clause) for clause in allowed)
     if protected:

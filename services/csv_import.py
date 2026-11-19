@@ -123,4 +123,5 @@ def apply_auction_preview(preview: dict, root: Path = PROJECT_ROOT, today=None) 
         path = (staged / relative).resolve()
         if not path.is_relative_to(staged.resolve()) or digest(path) != expected:
             raise ValueError("검사 후 경매 원본이 변경됐습니다. 다시 검사하세요.")
-    return activate_snapshot(preview["snapshot_id"], root, today)
+    return activate_snapshot(preview["snapshot_id"], root, today,
+                             expected_selection=preview["previous_selection"])

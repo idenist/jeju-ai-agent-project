@@ -1,5 +1,6 @@
 import unittest
 from dataclasses import replace
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -63,6 +64,33 @@ class ConditionPolicyTests(unittest.TestCase):
         self.assertEqual(reply["status"], "OK")
         self.assertEqual(session.future_pair.inputs["quantity"], 3000)
         self.assertEqual(session.future_pair.inputs["option_b"]["daily_storage_cost"], 20000)
+
+    @patch("services.data_refresh.kst_today", return_value=date(2026, 11, 19))
+    def test_declining_past_prices_still_allows_the_requested_pair_threshold(self, _today):
+        from agents.future_pair_intent import forbids_historical_pair_price
+        from test_integration_future_pair import OPTION_A, OPTION_B
+
+        for wording in ("과거 가격은 적용하지 말고", "과거 가격은 반영하지 말고"):
+            with self.subTest(wording=wording):
+                question = ("감귤 3톤을 2026년 11월 20일부터 보관해서 3일 후와 10일 후 출하를 비교해 주세요. "
+                            "A안은 수수료 차감 전 kg당 2,500원입니다. "
+                            f"B안 가격은 아직 몰라요. {wording} B안이 손해 보지 않으려면 kg당 얼마를 받아야 하나요?")
+                self.assertTrue(forbids_historical_pair_price(question))
+                self.assertEqual(condition_request(question), (question, True))
+                client = FakeClient([response(call("compare_future_pair", {
+                    "action": "new", "expected_version": 0,
+                    "patch": {"price_a": 2500, "price_basis": "gross", "price_mode": "history",
+                              "option_a": OPTION_A, "option_b": OPTION_B},
+                }))])
+                agent = AgentSession(client=client)
+                with patch("agents.future_pair_state.preview_future_pair_history", side_effect=AssertionError("no lookup")):
+                    reply = agent.run(question)
+                result = reply["visible_results"][0]["result"]
+                self.assertTrue(result["threshold_only"])
+                self.assertEqual(result["minimum_whole_krw_per_kg"], "2660")
+                self.assertIsNone(agent.future_pair.inputs["price_b"])
+
+        self.assertFalse(condition_request("과거 가격은 적용하지 말고 B안 보관비도 변경하지 말아 주세요.")[1])
 
     def test_read_only_claim_is_neither_shown_nor_replayed(self):
         false_claim = "보관비를 2만원으로 바꿨어요."

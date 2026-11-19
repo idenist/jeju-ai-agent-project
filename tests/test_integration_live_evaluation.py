@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -26,9 +27,15 @@ class 통합모델평가기검수(unittest.TestCase):
 
     def test_고정_평가셋의_개수와_다중턴_검증(self):
         cases = evaluator.load_cases()
-        self.assertEqual(len(cases), 21)
-        self.assertEqual(sum(len(x["turns"]) for x in cases), 44)
-        self.assertEqual(len({x["id"] for x in cases}), 21)
+        self.assertEqual(len(cases), 31)
+        self.assertEqual(sum(len(x["turns"]) for x in cases), 97)
+        self.assertEqual(len({x["id"] for x in cases}), 31)
+        self.assertEqual([x["id"] for x in cases if x["setup"] == "candidate_comparison"],
+                         [f"INT-{n}" for n in range(23, 29)])
+        fresh = [x for x in cases if x["turns"][0].get("candidate", {}).get("opens")]
+        self.assertEqual([x["id"] for x in fresh], ["INT-29", "INT-30", "INT-31"])
+        self.assertTrue(all(x["setup"] == "empty" and sum(t.get("require_model", False) for t in x["turns"]) == 1
+                            for x in fresh))
 
     def test_잘못된_평가셋_중복과_빈질문_차단(self):
         cases = evaluator.load_cases()
@@ -48,7 +55,7 @@ class 통합모델평가기검수(unittest.TestCase):
         with patch.object(evaluator, "preflight") as check, redirect_stdout(output):
             result = evaluator.main(["--list"])
         self.assertEqual(result, 0)
-        self.assertIn("21개 / 자연어 턴: 44개", output.getvalue())
+        self.assertIn("31개 / 자연어 턴: 92개 / 폼: 5단계", output.getvalue())
         check.assert_not_called()
 
     def test_기본_검증은_실제_모델_호출을_하지_않음(self):
@@ -72,10 +79,39 @@ class 통합모델평가기검수(unittest.TestCase):
                 evaluator.main(["--live", "--case", "INT-99"])
         self.assertEqual(stopped.exception.code, 2)
 
+    def test_지정_자료_버전과_활성_자료가_다르면_실행하지_않는다(self):
+        with patch.object(evaluator, "preflight", return_value={"status": "OK", "snapshot_id": "wrong"}), \
+             patch.object(evaluator, "run_case") as run, redirect_stderr(io.StringIO()):
+            result = evaluator.main(["--live", "--case", "INT-23", "--snapshot-id", "expected"])
+        self.assertEqual(result, 2)
+        run.assert_not_called()
+
+    def test_평가_날짜를_한_문항의_모든_턴에_적용한다(self):
+        def observed_dates(*_):
+            from services.data_refresh import kst_today
+            return [kst_today(), kst_today()]
+        with patch.object(evaluator, "_run_case", side_effect=observed_dates):
+            chosen = date(2026, 11, 14)
+            self.assertEqual(evaluator.run_case({}, None, as_of=chosen), [chosen, chosen])
+
     def test_정상_가격쌍과_원천검증_성공을_구별해_검사(self):
         result = evaluator.score_turn(self.normal, self.reply, self.before, deepcopy(self.before),
                                       {"interval_days": 7}, [{"tool": "get_price_history", "args": {}}])
         self.assertTrue(result["passed"], result["failures"])
+
+    def test_재사용_제안과_실제_중복_조회는_다르게_채점한다(self):
+        spec = deepcopy(self.normal)
+        spec["expect"][0]["count"] = 1
+        spec["model_args"] = {"get_price_history": {"follow_up": False}}
+        calls = [{"tool": "get_price_history", "args": {"follow_up": False}, "call_id": "original"},
+                 {"tool": "get_price_history", "args": {"follow_up": True}, "call_id": "reused"}]
+        reply = {**self.reply, "visible_results": self.reply["tool_results"],
+                 "metrics": {"reused_price_history_calls": ["reused"]}}
+        self.assertTrue(evaluator.score_turn(spec, reply, self.before, self.before, None, calls)["passed"])
+        duplicated = {**reply, "tool_results": self.reply["tool_results"] * 2, "metrics": {}}
+        verdict = evaluator.score_turn(spec, duplicated, self.before, self.before, None, calls)
+        self.assertIn("wrong_tool_count:get_price_history", verdict["failures"])
+        self.assertIn("wrong_model_arg:get_price_history:follow_up", verdict["failures"])
 
     def test_앱에서_보충_실행했어도_모델이_직접_도구를_선택해야_통과(self):
         result = evaluator.score_turn(self.normal, self.reply, self.before, deepcopy(self.before),
@@ -139,6 +175,38 @@ class 통합모델평가기검수(unittest.TestCase):
         self.assertIn("unexpected_scenario_mutation", result["failures"])
         self.assertIn("future_price_autofilled", result["failures"])
         self.assertIn("forbidden_tool:update_scenario", result["failures"])
+
+    def test_예측_거절은_도구_이름보다_응답과_저장_결과로_채점한다(self):
+        spec = {"forecast_refusal": True, "preserve_scenario": True, "future_price_must_be_empty": True}
+        answer = {"status": "OK", "text": "과거 가격만으로 다음 주 실제 단가를 확정할 수는 없습니다."}
+        self.assertTrue(evaluator.score_turn(spec, answer, self.before, self.before, None, [])["passed"])
+        answer["text"] += " 그래도 다음 주 단가는 3,000원입니다."
+        self.assertIn("unsupported_forecast_price_claim",
+                      evaluator.score_turn(spec, answer, self.before, self.before, None, [])["failures"])
+
+    def test_후보일_상태와_근거_문서를_독립해_검사한다(self):
+        before = {"dates": ["2026-11-23", "2026-11-28"], "conditions": {"basis": "gross"}, "losses": {},
+                  "prices": {"2026-11-23": 2500, "2026-11-28": None}, "pending_date": None,
+                  "report_id": "CIT-OLD", "revision": 0}
+        after = {**before, "prices": {"2026-11-23": 2500, "2026-11-28": "2600.00"},
+                 "report_id": "CIT-NEW", "revision": 1, "result": {"price_basis": "gross"}}
+        spec = {"report": "changed", "pending_date": None, "prices": {"2026-11-23": 2500, "2026-11-28": 2600},
+                "report_fields": {"price_basis": "gross"}}
+        self.assertEqual(evaluator._candidate_failures(spec, before, after, True), [])
+        after.update(report_id=before["report_id"], prices={"2026-11-23": 2600, "2026-11-28": None})
+        self.assertEqual(set(evaluator._candidate_failures(spec, before, after, False)),
+                         {"unexpected_future_pair_mutation", "wrong_candidate_prices", "candidate_report_not_refreshed"})
+
+    def test_빈_상태_후보일_평가의_실제_모델_단계는_키가_없으면_통과하지_않는다(self):
+        from core.config import Settings
+
+        for case in evaluator.load_cases()[-3:]:
+            with self.subTest(case=case["id"]):
+                result = evaluator.run_case(case, Settings())
+                self.assertEqual(result["completed_turns"], result["expected_turns"])
+                failed = [turn for turn in result["turns"] if not turn["passed"]]
+                self.assertEqual(len(failed), 1)
+                self.assertIn("missing_real_model_request", failed[0]["failures"])
 
     def test_불확실한_중량은_조회_성공_금지를_판정(self):
         spec = {"forbid_success": ["get_price_history"]}

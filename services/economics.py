@@ -32,6 +32,10 @@ def fixed(value: Decimal) -> str:
     return format(value, "f")
 
 
+def minimum_price_for_proceeds(target: Decimal, costs: Decimal, net_weight: Decimal) -> Decimal:
+    return max(Decimal(0), (target + costs) / net_weight)
+
+
 def validate_partial(scenario: dict) -> None:
     if not isinstance(scenario, dict) or set(scenario) - TOP_FIELDS:
         raise ValueError("허용되지 않은 시나리오 필드입니다.")
@@ -168,7 +172,7 @@ def compare_shipment_options(scenario: dict) -> dict:
             storage = decimal(option["daily_storage_cost"], "보관비") * days
             total_cost = storage + costs(option.get("costs"))
             # If immediate net proceeds are negative, zero future price can already break even.
-            threshold = max(Decimal(0), (n0 + total_cost) / (remaining * (1 - fee)))
+            threshold = minimum_price_for_proceeds(n0, total_cost, remaining * (1 - fee))
             future = option.get("future_price_per_kg")
             net = remaining * decimal(future, "가정 단가") * (1 - fee) - total_cost if future is not None else None
             results.append({"id": option["id"], "delay_days": days,

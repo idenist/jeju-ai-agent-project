@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from services.price_history_followup import (
-    MissingPreviousPriceQuery, resolve_price_history_query,
+    MissingPreviousPriceQuery, resolve_price_history_query, resolve_price_history_request,
 )
 from agents.agent import AgentSession
 from core.config import Settings
@@ -22,14 +22,14 @@ from ui.workspace import SharedWorkspace
 }
 
 
-def 도구_요청(인수, 번호=1):
+def 도구_요청(인수, 번호=1, *, 끝=True):
     return SimpleNamespace(type="function_call", name="get_price_history",
-                           arguments=json.dumps({**인수, "finish_turn": True}, ensure_ascii=False),
+                           arguments=json.dumps({**인수, "finish_turn": 끝}, ensure_ascii=False),
                            call_id=f"price_{번호}")
 
 
-def 모의_응답(인수, 번호=1):
-    return SimpleNamespace(output=[도구_요청(인수, 번호)], status="completed",
+def 모의_응답(인수, 번호=1, *, 끝=True):
+    return SimpleNamespace(output=[도구_요청(인수, 번호, 끝=끝)], status="completed",
                            output_text="모델이 임의로 제시한 미래가격 99999999원")
 
 
@@ -135,6 +135,81 @@ class 가격조회후속조건검수(unittest.TestCase):
         self.assertIn('"interval_days": 7', str(client.requests[1]["input"]))
         self.assertNotIn("99999999", b["text"])
 
+    def test_같은_턴에_승계_표기만_다르면_조회와_표시를_재사용한다(self):
+        client = 모의_클라이언트([
+            모의_응답(기준조건, 끝=False),
+            모의_응답({"follow_up": True, "package_kg": "5.0"}, 2),
+        ])
+        session = AgentSession(Settings(model="mock-model"), client)
+        with patch("services.price_history_service.get_integrated_price_history", side_effect=검증용_조회) as fetch:
+            reply = session.run("조생귤 특 소 상자 5kg의 과거 7일 경락가격을 비교해 줘")
+        fetch.assert_called_once_with(기준조건)
+        self.assertEqual(reply["status"], "OK")
+        self.assertEqual(len(reply["tool_results"]), 1)
+        self.assertEqual(len(reply["visible_results"]), 1)
+        self.assertEqual(reply["termination"]["tool_calls_executed"], 1)
+        self.assertEqual(reply["metrics"]["reused_price_history_calls"], ["price_2"])
+        receipt = next(m for m in session.messages if isinstance(m, dict) and m.get("call_id") == "price_2")
+        self.assertTrue(json.loads(receipt["output"])["reused_same_turn"])
+
+    def test_중복_다음에_다른_간격과_기준일은_별도로_조회한다(self):
+        client = 모의_클라이언트([
+            모의_응답(기준조건, 끝=False),
+            모의_응답({"follow_up": True}, 2, 끝=False),
+            모의_응답({"follow_up": True, "interval_days": 14}, 3, 끝=False),
+            모의_응답({"follow_up": True, "base_date": "2026-10-02"}, 4),
+        ])
+        session = AgentSession(Settings(model="mock-model"), client)
+        with patch("services.price_history_service.get_integrated_price_history", side_effect=검증용_조회) as fetch:
+            reply = session.run("같은 규격 7일과 14일 가격을 보고, 14일은 10월 2일 기준도 따로 조회해 줘")
+        actual = [(item.args[0]["interval_days"], item.args[0].get("base_date")) for item in fetch.call_args_list]
+        self.assertEqual(actual, [(7, None), (14, None), (14, "2026-10-02")])
+        self.assertEqual(len(reply["visible_results"]), 3)
+
+    def test_명시한_축약_크기를_복원하고_불확실한_크기는_선택하지_않는다(self):
+        from services.price_history_followup import resolve_price_history_request
+
+        supplied = {**기준조건, "size": None}
+        for question, size in (("조생귤 특 소 상자 5kg의 과거 7일 가격", "소"),
+                               ("조생귤 특 소 상자인지 헷갈려요", None),
+                               ("특 소 상자 말고 중과를 봐줘", None),
+                               ("특 소 상자와 특 중 상자의 가격", None)):
+            with self.subTest(question=question):
+                query, _ = resolve_price_history_request(supplied, None, question=question)
+                self.assertEqual(query.get("size"), size)
+
+    def test_같은_규격의_간격을_여러_개_말하면_각각_한_번_조회한다(self):
+        session, client = self._session(기준조건)
+        with patch("services.price_history_service.get_integrated_price_history", side_effect=검증용_조회) as fetch:
+            session.run("조생귤 특 소 상자 5kg의 7일 가격을 알려줘")
+            fetch.reset_mock()
+            reply = session.run("같은 규격으로 과거 7일 간격과 14일 간격의 경락가격을 둘 다 비교해 줘.")
+        self.assertEqual([item.args[0]["interval_days"] for item in fetch.call_args_list], [7, 14])
+        self.assertEqual([item["result"]["interval_days"] for item in reply["visible_results"]], [7, 14])
+        self.assertEqual(len(client.requests), 1)
+
+    def test_가격_간격과_보관_기간_또는_시장_변경을_섞지_않는다(self):
+        from services.price_history_followup import requested_same_spec_intervals
+
+        self.assertEqual(requested_same_spec_intervals("같은 규격으로 과거 경락가격 7일·14일·7일 비교해 줘"), (7, 14))
+        for question in ("같은 규격으로 과거 가격 7일과 14일, 시장은 부산으로",
+                         "같은 규격으로 과거 가격을 참고해서 보관 7일과 14일 손익을 비교해 줘",
+                         "같은 규격으로 과거 가격을 7일과 14일 중 하나만 보고 싶어요"):
+            with self.subTest(question=question):
+                self.assertEqual(requested_same_spec_intervals(question), ())
+
+    def test_가격_자료_지문이_바뀌면_재사용하지_않는다(self):
+        client = 모의_클라이언트([
+            모의_응답(기준조건, 끝=False),
+            모의_응답({"follow_up": True}, 2),
+        ])
+        session = AgentSession(Settings(model="mock-model"), client)
+        with patch("services.future_pair.price_revision", side_effect=[("old",)] * 2 + [("new",)] * 3), \
+             patch("services.price_history_service.get_integrated_price_history", side_effect=검증용_조회) as fetch:
+            reply = session.run("과거 7일 경락가격을 비교해 줘")
+        self.assertEqual(fetch.call_count, 2)
+        self.assertNotIn("reused_price_history_calls", reply["metrics"])
+
     def test_누락된_조건도_후속_응답으로_채울_수_있음(self):
         session, _ = self._session({"variety": "조생귤"},
                                    {"follow_up": True, "grade": "특", "size": "소", "package": "상자",
@@ -221,6 +296,32 @@ class 가격조회후속조건검수(unittest.TestCase):
         self.assertNotIn("market_code", session.price_history_query)
         self.assertNotIn("trade_type", session.price_history_query)
         self.assertNotIn("base_date", session.price_history_query)
+
+    def test_가격_표현과_모델의_추측을_거래방식으로_보내지_않음(self):
+        for word, guessed in (("경락가격", "경락가격"), ("경매가격", "경매가격"),
+                              ("경매 가격", "경매"), ("시세", "정가수의")):
+            with self.subTest(word=word, guessed=guessed):
+                session, _ = self._session({**기준조건, "trade_type": guessed})
+                with patch("services.price_history_service.get_integrated_price_history",
+                           side_effect=검증용_조회) as lookup:
+                    reply = session.run(f"조생귤 특 소 상자 5kg의 과거 7일 {word}을 조회해 줘.")
+                lookup.assert_called_once_with(기준조건)
+                self.assertEqual(reply["visible_results"][0]["result"]["status"], "OK")
+                self.assertNotIn("trade_type", session.price_history_query)
+
+    def test_명시한_거래방식만_저장하고_후속_간격_변경에_유지함(self):
+        for phrase, expected in (("경매 방식으로", "경매"), ("경매만", "경매"),
+                                 ("거래방식은 경매로", "경매"), ("정가 수의 매매로", "정가수의"),
+                                 ("경매 방식 말고 정가·수의로", "정가수의")):
+            with self.subTest(phrase=phrase, expected=expected):
+                current, _ = resolve_price_history_request(
+                    {**기준조건, "trade_type": "경락가격"}, None, question=f"{phrase} 시세를 확인해 줘.")
+                self.assertEqual(current["trade_type"], expected)
+                follow_up, _ = resolve_price_history_request(
+                    {"follow_up": True, "interval_days": 14, "trade_type": "경매가격"},
+                    current, question="14일 경매가격을 비교해 줘.")
+                self.assertEqual(follow_up["trade_type"], expected)
+                self.assertEqual(follow_up["interval_days"], 14)
 
     def test_철회하면_기존_등급을_다시_사용하지_않음(self):
         session, _ = self._session(기준조건, {"follow_up": True, "clear_fields": ["grade"]})

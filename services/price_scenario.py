@@ -67,7 +67,7 @@ def won(value: Decimal) -> str:
 
 
 def get_price_scenarios(args: dict, data_file: Path = DEFAULT_FILE, prices_file: Path = PRICES_FILE,
-                        report_file: Path = REPORT_FILE) -> dict:
+                        report_file: Path = REPORT_FILE, *, snapshot_id: str | None = None) -> dict:
     if not isinstance(args, dict) or set(args) - ALLOWED:
         raise InputError("도구 입력은 허용된 필드의 객체여야 합니다.")
     common = {"is_future_forecast": False, "cautions": CAUTIONS}
@@ -91,6 +91,8 @@ def get_price_scenarios(args: dict, data_file: Path = DEFAULT_FILE, prices_file:
             raise InputError("A안 단가(원/kg)는 0보다 커야 합니다.")
 
     source = check_source(prices_file, report_file, data_file)
+    if snapshot_id is not None:
+        source["snapshot_id"] = snapshot_id
     interval = (b_day - a_day).days
     history = get_price_history({**{k: args[k] for k in FILTERS if k in args},
                                  "interval_days": interval, "limit": 3}, data_file)

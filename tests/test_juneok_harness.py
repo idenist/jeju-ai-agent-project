@@ -8,6 +8,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import patch
 
 from agents.agent import AgentSession
+from agents.dialogue import model_mentions_money
 from core.config import Settings
 from agents.state import ScenarioStore, demo_scenario
 from agents.tools import TOOLS, execute_tool
@@ -60,6 +61,23 @@ class HarnessTests(unittest.TestCase):
     def test_no_tool_cannot_publish_model_numbers(self):
         result = self.session([response(text="현재 99999999원입니다. 확인해 주세요")]).run("시세를 알려줘")
         self.assertNotIn("99999999", result["text"])
+
+    def test_context_quantity_or_cost_cannot_authorize_a_unit_price(self):
+        for amount in ("**3,000** 원/kg", "삼천 원/kg", "1,000원/kg", "₩3,000/kg", "3,000 KRW/kg"):
+            with self.subTest(amount=amount):
+                session = self.session([response(text=f"다음 주 판매가는 {amount}입니다.")])
+                scenario = demo_scenario()
+                scenario["current_price_per_kg"] = 3200
+                scenario["options"][0]["daily_storage_cost"] = 1000
+                session.store = ScenarioStore(scenario)
+                reply = session.run("가격을 확인해 주세요.")
+                self.assertTrue(reply["metrics"]["model_money_requires_tool"])
+                self.assertNotIn(amount, reply["text"])
+                self.assertIn("금액을 확인하지 못했어요", reply["text"])
+
+    def test_non_monetary_measurements_are_not_currency(self):
+        self.assertFalse(model_mentions_money("3,000kg을 보관하면 감모율이 4%일 때 줄어드는 무게를 알 수 있어요."))
+        self.assertFalse(model_mentions_money("3원칙을 지키고 조직의 일원으로 역할을 나눕니다."))
 
     def test_malformed_arguments_are_tool_error_not_crash(self):
         item = call("compare_shipment_options", {})

@@ -1,5 +1,7 @@
 """Cross-entry acceptance checks, sharing the real store with a fake model transport."""
 from copy import deepcopy
+from datetime import date
+import json
 import unittest
 from unittest.mock import patch
 
@@ -165,6 +167,49 @@ class WorkspaceTests(unittest.TestCase):
         self.assertIn("출하량", _REPORT_REQUEST.fullmatch("과거 출하량을 인쇄할 수 있게 주세요")["target"])
         self.assertIn("출하량", _REPORT_REQUEST.fullmatch("과거 출하량 PDF로 줘")["target"])
         self.assertIsNone(_REPORT_REQUEST.fullmatch("11월 23일 과거 출하량 PDF로 줘"))
+
+    @patch("services.data_refresh.kst_today", return_value=date(2026, 11, 19))
+    def test_paused_candidates_keep_current_shipment_evidence_without_old_economics(self, _today):
+        from services.shipment_timing import analyze_shipment_timing
+        from ui.chat import _active_chat_report, _chat_report, _requested_chat_report
+
+        ws = self.workspace()
+        pair = ws.session.future_pair
+        result = pair.apply("new", pair.version, {
+            "start_date": "2026-11-20", "quantity": 3000, "price_basis": "gross",
+            "price_a": 2500, "price_b": 2750,
+            "option_a": {"delay_days": 3, "loss_percent": 1, "daily_storage_cost": 10000,
+                         "other_cost_krw": 5000, "fee_percent": 5},
+            "option_b": {"delay_days": 10, "loss_percent": 4, "daily_storage_cost": 10000,
+                         "other_cost_krw": 5000, "fee_percent": 7},
+        })
+        timing = analyze_shipment_timing({"shipment_variety": "노지온주", "option_a_date": "2026-11-23",
+                                          "option_b_date": "2026-11-30"})
+        report = _chat_report(ws, {"visible_results": [{"tool": "analyze_shipment_timing", "result": timing}]})
+        messages = [{"reply": {"chat_report": report}}]
+        self.assertEqual(json.loads(report["json"])["economic_comparison"], result)
+
+        ws.run("감귤 3톤을 11/20부터 보관해서 11/23, 11/30 출하 후보일을 비교해줘.")
+        draft = ws.session.current_shipment_candidates()
+        draft.common["basis"] = "commission_net"
+        draft.save_initial_inputs(3000, {date(2026, 11, 23): 2500})
+        ws.run("보관비는 모르겠어요")
+        draft.postpone_storage()
+        self.assertEqual(draft.storage_pause, "later")
+
+        shipment = _requested_chat_report(ws, messages, target="timing")
+        self.assertEqual(shipment["entries"], [{"tool": "analyze_shipment_timing", "result": timing}])
+        payload = json.loads(shipment["json"])
+        self.assertEqual(payload["status"], "SHIPMENT_ONLY")
+        self.assertIsNone(payload["economic_comparison"])
+        self.assertFalse(payload["same_date_economic_result_included"])
+        self.assertEqual(_active_chat_report(ws, messages, pair.current_result()), (0, shipment))
+        self.assertIsNone(_requested_chat_report(ws, messages, target="comparison"))
+        self.assertIsNone(_requested_chat_report(ws, messages))
+        with patch("services.shipment_timing_bundle.source_fingerprint", return_value=("changed", "same")):
+            self.assertIsNone(_requested_chat_report(ws, messages, target="timing"))
+        draft.update_availability("11/30은 출하 못 해요.", date(2026, 11, 19))
+        self.assertIsNone(_requested_chat_report(ws, messages, target="timing"))
 
     def test_pending_future_pair_report_does_not_fall_back_to_an_earlier_ordinary_report(self):
         from ui.chat import _chat_report, _current_comparison_report, _requested_chat_report

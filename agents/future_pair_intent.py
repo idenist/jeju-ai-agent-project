@@ -52,25 +52,64 @@ _CONTINUE_COMPARISON = re.compile(
 )
 _LATER_DATE_ONLY = re.compile(r"(?:나중\s*출하일|B\s*안\s*(?:출하일|날짜))만", re.I)
 _LATER_STORAGE_EDIT = re.compile(
-    r"\s*(?:나중\s*출하일|B\s*안\s*(?:출하일|날짜))만\s*(\d{1,3})\s*일\s*보관"
-    r"\s*(?:하는\s*날(?:짜)?)?\s*(?:으?로)\s*(?:바꿔|변경해|수정해)\s*(?:줘(?:요)?|주세요)?[.!\s]*",
+    r"\s*(?:(?P<calendar>나중\s*출하일|B\s*안\s*(?:출하일|날짜))|"
+    r"B\s*안(?:\s*보관\s*(?:일|기간))?)\s*(?:만|은|을)?\s*(?P<days>\d{1,3})\s*일"
+    r"(?P<storage>\s*보관\s*(?:하는\s*날(?:짜)?)?)?\s*으?로\s*(?:바꿔|변경해|수정해)"
+    r"\s*(?:줘(?:요)?|주세요)?[.!\s]*",
     re.I,
 )
-_HISTORICAL_PRICE = re.compile(r"(?:과거\s*(?:경락\s*)?(?:가격|시세|자료|변동)|경락\s*가격|시장\s*(?:시세|자료)|도매\s*시세|과거가격|자료)")
-_EXCLUDE_HISTORICAL_PRICE = re.compile(
+_HISTORICAL_PRICE_EXCLUSION = re.compile(
+    r"(?:과거\s*(?:경락\s*)?(?:가격|시세|자료|변동)|경락\s*가격|시장\s*(?:시세|자료)|도매\s*시세|과거가격|자료)\s*"
     r"(?:을|를|은|는|도|와|과)?\s*(?:조회\s*(?:하지\s*말|안\s*(?:해|봐|하고)|하지\s*않)|"
     r"안\s*(?:보고|보|쓰고|쓰|사용하고|사용|참고하고|참고|조회하고|조회)|"
-    r"(?:보지|쓰지|사용하지|참고하지|비교하지|조회하지|활용하지)\s*(?:말|마|않)|"
+    r"(?:보지|쓰지|사용하지|참고하지|비교하지|조회하지|활용하지|적용하지|반영하지)\s*(?:말고|말|마|않)|"
     r"필요\s*없|없이|빼고|제외)"
 )
+_LATER_PRICE_UNKNOWN = re.compile(
+    r"\s*(?:(?:B\s*안|나중(?:\s*출하)?)\s*(?:의\s*)?(?:단가|가격|견적)(?:은|는|을|를|이|가)?\s*)?"
+    r"(?:아직\s*|잘\s*)?(?:모르겠어요|모릅니다|몰라요|(?:견적(?:을)?\s*)?못\s*받았어요|"
+    r"(?:견적(?:이)?\s*)?안\s*나왔어요)[.!?\s]*", re.I,
+)
+_BREAK_EVEN_REQUEST = re.compile(
+    r"\s*(?:(?:그럼|그러면|과거\s*자료\s*없이)\s*)?"
+    r"(?:(?:기다리려면|늦게\s*팔려면|나중에\s*팔려면|B\s*안은)\s*얼마(?:\s*이상)?\s*받아야\s*"
+    r"(?:해(?:요)?|돼(?:요)?|하나요|되나요)|(?:B\s*안\s*)?손익분기(?:\s*(?:단가|가격))?"
+    r"(?:를|만|부터)?\s*(?:계산해|알려|보여|봐)(?:\s*(?:줘(?:요)?|주세요))?|"
+    r"손익분기(?:\s*(?:단가|가격))?(?:이|가|는)?\s*얼마(?:예요|인가요|죠)|"
+    r"얼마(?:나\s*받아야|면)\s*손해(?:가)?\s*(?:없나요|없어요|안\s*나나요|안\s*나요))"
+    r"[.!?\s]*", re.I,
+)
+_MARKET_THRESHOLD_REQUEST = re.compile(
+    r"\s*(?:과거\s*시장\s*근거(?:도|를)?\s*(?:보여\s*줘(?:요)?|보여\s*주세요|보기)|"
+    r"(?:과거에도|예전에도)\s*(?:그\s*(?:가격|단가)|손익분기\s*(?:가격|단가))(?:을|를|이|가)?\s*"
+    r"(?:넘었(?:어요|나요)|넘은\s*(?:날|사례)(?:이|가)?\s*있(?:어요|나요)))[.!?\s]*", re.I,
+)
+
+
+def requests_market_threshold_observation(question: str) -> bool:
+    return _MARKET_THRESHOLD_REQUEST.fullmatch(question) is not None
+
+
+def requests_break_even_without_later_quote(question: str, *, waiting_for_quote: bool) -> bool:
+    """Recognize a price deferral or a standalone threshold request for a saved pair."""
+    if _BREAK_EVEN_REQUEST.fullmatch(question):
+        return True
+    clauses = re.split(r"[.!?]\s*", question.strip().rstrip(".!?"))
+    if len(clauses) == 2 and _BREAK_EVEN_REQUEST.fullmatch(clauses[1]):
+        question = clauses[0]
+    return bool(_LATER_PRICE_UNKNOWN.fullmatch(question) and (
+        waiting_for_quote or re.search(r"B\s*안|나중|견적|못\s*받", question, re.I)
+    ))
 
 
 def forbids_historical_pair_price(question: str) -> bool:
     """True only when the user explicitly excludes historical price evidence."""
-    if not isinstance(question, str):
-        return False
-    return any(_EXCLUDE_HISTORICAL_PRICE.match(question[match.end():].lstrip())
-               for match in _HISTORICAL_PRICE.finditer(question.casefold()))
+    return isinstance(question, str) and bool(_HISTORICAL_PRICE_EXCLUSION.search(question))
+
+
+def without_historical_price_exclusion(question: str) -> str:
+    """Omit the source restriction when checking for declined condition writes."""
+    return _HISTORICAL_PRICE_EXCLUSION.sub("", question)
 
 
 def requests_historical_pair_price(question: str) -> bool:
@@ -108,7 +147,124 @@ def changes_later_date_only(question: str) -> bool:
 
 def explicit_later_storage_period(question: str) -> int | None:
     match = _LATER_STORAGE_EDIT.fullmatch(question)
-    return int(match[1]) if match else None
+    if match and (not match["calendar"] or match["storage"]):
+        return int(match["days"])
+    return None
+
+
+_SHIPMENT_AVAILABILITY = re.compile(
+    r"(?<!\d)(?:(?P<year>\d{4})\s*년\s*)?(?P<month>\d{1,2})\s*(?:월|/)\s*"
+    r"(?P<first>\d{1,2})\s*일?\s*(?:부터|[~～–])\s*"
+    r"(?:(?P<end_month>\d{1,2})\s*(?:월|/)\s*)?(?P<last>\d{1,2})\s*일?\s*(?:까지|에)?\s*"
+    r"(?:는\s*)?(?:출하|납품|인수|팔|낼|보낼)\s*(?:할\s*)?(?:수\s*있|가능)"
+)
+_SHIPMENT_UNAVAILABLE = re.compile(
+    r"(?<![\d/])(?:(?P<year>\d{4})\s*년\s*)?(?:(?P<month>\d{1,2})\s*(?:월|/)\s*)?"
+    r"(?P<day>\d{1,2})\s*일\s*(?:에는|은|이|에|을|만)?\s*"
+    r"(?:(?:(?:출하|납품|인수|선과|수거)(?:가|는|를)?\s*)?"
+    r"(?:못\s*(?:해|하|받|내|팔)|불가|안\s*(?:돼|되|받|해|하))|(?:빼|제외해)\s*(?:줘|주|주세요))"
+    r"(?:[가-힣]*)(?=\s*(?:[,.!;。]|$))"
+)
+_SHIPMENT_DATE_REPLY = re.compile(
+    r"\s*(?:(?P<side>[AB])\s*안\s*(?:날짜|출하일)?\s*(?:만|은|을)?\s*)?"
+    r"(?:(?P<year>\d{4})\s*년\s*)?(?:(?P<month>\d{1,2})\s*(?:월|/)\s*)?(?P<day>\d{1,2})\s*(?P<day_unit>일)?\s*"
+    r"(?:이요|입니다|(?:로|으로)?\s*(?:바꿔|변경해|해|가능해|가능합니다)(?:\s*(?:줘|주세요|요))?)?[.!\s]*",
+    re.I,
+)
+
+
+def shipment_availability(question, today, *, anchor=None):
+    """Read affirmative availability and explicit exceptions for calendar days."""
+    window = None
+    if match := _SHIPMENT_AVAILABILITY.search(question):
+        year, month = int(match["year"] or today.year), int(match["month"])
+        last_month = int(match["end_month"] or month)
+        try:
+            start = date(year, month, int(match["first"]))
+            end = date(year + (last_month < month), last_month, int(match["last"]))
+            if today <= start <= end and (end - today).days <= 365:
+                window = start, end
+        except ValueError:
+            pass
+    anchor = window[0] if window else anchor or today
+    excluded = set()
+    for match in _SHIPMENT_UNAVAILABLE.finditer(question):
+        month = int(match["month"] or anchor.month)
+        year = int(match["year"] or (anchor.year + (anchor.month == 12 and month == 1)))
+        try:
+            excluded.add(date(year, month, int(match["day"])))
+        except ValueError:
+            continue
+    return window, excluded
+
+
+def without_shipment_exclusions(question):
+    return _SHIPMENT_UNAVAILABLE.sub("", question)
+
+
+def shipment_date_reply(question, anchor, *, pending_side=None):
+    match = _SHIPMENT_DATE_REPLY.fullmatch(question)
+    if not match or not (match["month"] or match["day_unit"]) or not (side := (match["side"] or pending_side)):
+        return None
+    month = int(match["month"] or anchor.month)
+    year = int(match["year"] or (anchor.year + (anchor.month == 12 and month == 1)))
+    try:
+        return side.upper(), date(year, month, int(match["day"]))
+    except ValueError:
+        return None
+
+
+_COST_AMOUNT = r"\d+(?:,\d{3})*(?:\.\d+)?\s*(?:만|천)?\s*(?:원)?"
+_STORAGE_COST_RANGE = re.compile(
+    rf"\s*(?:(?P<side>B\s*안|나중(?:\s*출하)?)\s*(?:의\s*)?)?"
+    rf"(?:(?P<period>하루|일일|\d{{1,3}}\s*일(?:치)?|{'|'.join(_DAY_NAMES)}(?:치)?|전체|총)\s*)?"
+    rf"(?:보관(?:비|료|\s*비용)(?:는|가|은|이|를)?\s*)?(?:총\s*)?"
+    rf"(?:최소\s*)?(?P<lower>{_COST_AMOUNT})\s*(?:[~～–-]|(?:부터|에서))\s*(?:최대\s*)?(?P<upper>{_COST_AMOUNT})"
+    r"\s*(?:사이|정도|까지|선)?\s*(?:예요|이에요|입니다|이요|이고|이며|으로\s*봐\s*줘|으로\s*봐\s*주세요|들어요)?[.!\s]*",
+    re.I,
+)
+
+
+def _cost_amount(raw):
+    number, suffix = re.fullmatch(r"([\d,.]+)\s*([만천]?)\s*원?", raw.strip()).groups()
+    return Decimal(number.replace(",", "")), suffix
+
+
+_COST_SCALE = {"": 1, "만": 10000, "천": 1000}
+
+
+def later_storage_cost_range(question, *, waiting_for_later_storage=False):
+    """Keep the user's unit and both endpoints. A range is never a fixed cost."""
+    match = _STORAGE_COST_RANGE.fullmatch(question)
+    if not match or "원" not in question:
+        return None
+    period = (match["period"] or "").replace(" ", "").removesuffix("치")
+    days = _DAY_NAMES.get(period)
+    if re.fullmatch(r"\d{1,3}일", period):
+        days = int(period[:-1])
+    if not waiting_for_later_storage and not ((match["side"] or days) and "보관" in question):
+        return None
+    lower, scale_a = _cost_amount(match["lower"])
+    upper, scale_b = _cost_amount(match["upper"])
+    if not scale_a and scale_b and "원" not in match["lower"] and lower <= upper:
+        scale_a = scale_b
+    daily = period in {"하루", "일일"} or (not period and not match["side"] and waiting_for_later_storage)
+    return lower * _COST_SCALE[scale_a], upper * _COST_SCALE[scale_b], daily, None if daily else days
+
+
+def stated_storage_range(question):
+    for clause in re.split(r"[;\n]|,(?!\d)|(?<=\.)\s+", question):
+        if result := later_storage_cost_range(clause):
+            return result
+    return None
+
+
+def confirmed_total_storage_cost(question):
+    match = re.fullmatch(rf"\s*(?:총\s*)?({_COST_AMOUNT})\s*(?:입니다|이에요|예요|들어요)?[.!\s]*", question)
+    if not match or "원" not in question:
+        return None
+    amount, scale = _cost_amount(match[1])
+    return amount * _COST_SCALE[scale]
 
 
 def shipment_choice_question(question: str) -> bool:

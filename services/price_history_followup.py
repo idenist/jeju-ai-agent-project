@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from decimal import Decimal, InvalidOperation
+import re
 
 
 QUERY_FIELDS = (
@@ -14,6 +15,32 @@ QUERY_FIELDS = (
 )
 CLEARABLE_FIELDS = frozenset(QUERY_FIELDS) - {"limit"}
 TEXT_FIELDS = frozenset({"market_code", "variety", "grade", "size", "package", "trade_type", "base_date"})
+_COMPACT_SIZE = re.compile(r"(?<![가-힣])(?:특|상|등외)(?:등급)?\s+([소중대])(?:과)?\s+(?:상자|박스)(?![가-힣])")
+_UNCERTAIN_SIZE = re.compile(r"말고|아닌|아니고|인지|헷갈|또는|혹은|둘\s*중")
+_TRADE_MODES = {
+    "경매": re.compile(r"(?<![가-힣])경매(?=\s*(?:방식|거래|만|로|[,.!?]|$))"
+                     r"|거래\s*(?:방식|구분)\s*(?:은|는|[:=])?\s*경매(?!\s*(?:가격|시세))"),
+    "정가수의": re.compile(r"(?<![가-힣])정가\s*[·/]?\s*수의(?:\s*매매)?"),
+    "전자거래": re.compile(r"(?<![가-힣])전자\s*거래"),
+    "직거래": re.compile(r"(?<![가-힣])직거래"),
+}
+_TRADE_EXCLUSION = re.compile(r"\s*(?:(?:방식|거래|만|은|는|을|를)\s*)*(?:말고|빼고|제외|아니)")
+_SAME_SPEC = re.compile(r"^\s*(?:(?:그럼|이번에도)\s+)?(?:같은|동일(?:한)?)\s*(?:거래\s*)?규격(?:으로|로)")
+_INTERVAL = r"\d{1,3}\s*일(?:\s*간격)?"
+_INTERVAL_LIST = re.compile(rf"(?<![\d./-]){_INTERVAL}(?:\s*(?:과|와|,|·|및|랑|하고)\s*{_INTERVAL}){{1,3}}")
+
+
+def requested_same_spec_intervals(question: str) -> tuple[int, ...]:
+    """Recognize a list of requested intervals for an explicitly reused market spec."""
+    if (not _SAME_SPEC.search(question) or not re.search(r"과거|경락", question)
+            or re.search(r"수수료|손익|보관|출하량|\b[AB]안|말고|대신|또는|중\s*하나|하나만|월\s*\d|"
+                         r"(?:시장|품종|등급|크기|포장|기준일)(?:은|는|을|를|만)", question, re.I)):
+        return ()
+    match = _INTERVAL_LIST.search(question)
+    if match is None:
+        return ()
+    intervals = tuple(dict.fromkeys(int(value) for value in re.findall(r"\d+", match.group())))
+    return intervals if len(intervals) >= 2 and all(1 <= days <= 366 for days in intervals) else ()
 
 
 class MissingPreviousPriceQuery(ValueError):
@@ -32,11 +59,30 @@ def _package_weight(value) -> Decimal:
     return number
 
 
-def resolve_price_history_request(arguments: dict, previous: dict | None) -> tuple[dict, dict | None]:
+def price_history_query_key(query: dict) -> tuple:
+    """Use resolved input fields, independent of how the model encoded carryover."""
+    weight = query.get("package_kg")
+    return tuple(_package_weight(weight) if field == "package_kg" and weight is not None else query.get(field)
+                 for field in QUERY_FIELDS)
+
+
+def resolve_price_history_request(arguments: dict, previous: dict | None, *, question: str = "") -> tuple[dict, dict | None]:
     """모델이 전달한 중량 충돌을 조회 전에 확인 질문으로 바꿉니다."""
     if not isinstance(arguments, dict):
         raise ValueError("과거 가격 조회 인수는 객체여야 합니다.")
     query_arguments = dict(arguments)
+    cleared = query_arguments.get("clear_fields", [])
+    if question and isinstance(cleared, list):
+        # 경락가격·경매가격은 조회 지표입니다. 거래방식은 사용자 원문에 명시된 경우만 반영합니다.
+        modes = {mode for mode, pattern in _TRADE_MODES.items() for match in pattern.finditer(question)
+                 if not _TRADE_EXCLUSION.match(question, match.end())}
+        query_arguments.pop("trade_type", None)
+        if len(modes) == 1 and "trade_type" not in cleared:
+            query_arguments["trade_type"] = modes.pop()
+    if query_arguments.get("size") is None and isinstance(cleared, list) and "size" not in cleared:
+        sizes = set(_COMPACT_SIZE.findall(question))
+        if len(sizes) == 1 and not _UNCERTAIN_SIZE.search(question):
+            query_arguments["size"] = sizes.pop()
     conflicts = query_arguments.pop("conflicting_package_kg", None)
     # 모델이 충돌 목록을 빠뜨려도 포장 문구의 중량과 별도 입력이 다르면 조회하지 않습니다.
     from services.price_history import WEIGHT

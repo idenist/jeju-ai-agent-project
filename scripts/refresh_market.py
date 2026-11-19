@@ -10,25 +10,31 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import sys
 from core.config import PROJECT_ROOT
-from services.data_refresh import market_status, stage_snapshot, activate_snapshot, snapshot_dir, resolve_market_root
+from services.data_refresh import (activate_snapshot, market_status, resolve_market_root, rollback_snapshot,
+                                   snapshot_dir, stage_baseline_extension, stage_snapshot)
 
 
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, nargs="+")
-    parser.add_argument("--collect", action="store_true")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--input", type=Path, nargs="+")
+    action.add_argument("--collect", action="store_true")
+    action.add_argument("--extend-baseline", action="store_true", help="Prepare 5/10-day comparisons from the shared price file")
+    action.add_argument("--activate", help="Choose a previously validated snapshot ID")
+    action.add_argument("--rollback", action="store_true", help="Restore the previous verified selection")
     parser.add_argument("--start")
     parser.add_argument("--end")
     parser.add_argument("--name", default=datetime.now(timezone(timedelta(hours=9))).strftime("market-%Y%m%dT%H%M%S"))
-    parser.add_argument("--activate", help="Choose a previously validated, newer snapshot ID")
     args = parser.parse_args()
     try:
         if args.activate:
-            if args.collect or args.input:
-                parser.error("활성화는 별도 명령으로 실행하세요.")
             output = activate_snapshot(args.activate)
+        elif args.rollback:
+            output = rollback_snapshot()
+        elif args.extend_baseline:
+            output = stage_baseline_extension(args.name)
         elif args.collect:
             if args.input or not args.start or not args.end:
                 parser.error("수집에는 --start와 --end만 지정하세요.")

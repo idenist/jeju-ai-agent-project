@@ -138,12 +138,14 @@ def _sync_inputs(state):
     st.session_state.future_pair_start = date.fromisoformat(values["start_date"]) if values["start_date"] else None
     st.session_state.future_pair_basis = {"gross": "수수료 차감 전", "commission_net": "수수료 차감 후"}.get(values["price_basis"])
     result = state.current_result()
-    if result and result.get("threshold_only") and values["history_filters"] is None:
+    reference = (result and result.get("threshold_only") and values["history_filters"] is None
+                 and values["price_b"] is None)
+    if reference:
         st.session_state.future_pair_goal = "참고 손익분기"
     elif values["history_filters"] is not None or values["price_b"] is not None:
         st.session_state.future_pair_goal = "금액 비교"
     st.session_state.future_pair_price_mode = "과거 변동으로 가정" if values["history_filters"] is not None else "직접 입력"
-    if not (result and result.get("threshold_only") and values["history_filters"] is None):
+    if not reference:
         st.session_state.future_pair_amount_mode = st.session_state.future_pair_price_mode
     for field in ("quantity", "price_a"):
         value = values[field]
@@ -158,7 +160,7 @@ def _sync_inputs(state):
     drafts["future_pair_price_a"] = st.session_state.future_pair_price_a
     if values["history_filters"] is None:
         value = values["price_b"]
-        if value is not None or not (result and result.get("threshold_only")):
+        if value is not None or not reference:
             drafts["future_pair_price_b"] = float(value) if value is not None else None
         st.session_state.future_pair_price_b = drafts.get("future_pair_price_b")
     else:
@@ -381,7 +383,7 @@ def render_future_pair(state):
         return result
 
 
-def render_future_pair_result(result, location):
+def render_future_pair_result(result, location, *, market_requested=False, market_draft_spec=None):
     # Build the market record before creating download payloads. The market panel
     # refreshes its local cache when A/B inputs, trade specs, or season files change.
     from presenters.market_export import export_market_record, report_entries
@@ -391,7 +393,8 @@ def render_future_pair_result(result, location):
     if location == "chat":
         with st.container(border=True):
             st.markdown("**감귤 출하 비교 보고서**")
-            render_threshold_evidence(result, location)
+            render_threshold_evidence(result, location, requested=market_requested,
+                                      draft_spec=market_draft_spec)
             market = export_market_record(result, st.session_state.get(f"market_decision_latest_{location}"))
             entries = report_entries(result, market)
             _render_future_pair_pdf(entries, location)

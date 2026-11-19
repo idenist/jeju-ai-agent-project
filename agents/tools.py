@@ -154,7 +154,7 @@ def explain_term(topic: str) -> dict:
     return {"status": "OK", "topic": topic, "explanation": HELP[topic]}
 
 
-def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=None, task_context=None, input_context=None, shipment=None, future_pair=None, *, on_progress=None, box_price=None, unresolved_box_price=False, start_new_comparison=False) -> dict:
+def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=None, task_context=None, input_context=None, shipment=None, future_pair=None, *, on_progress=None, box_price=None, unresolved_box_price=False, start_new_comparison=False, storage_range=None) -> dict:
     if not isinstance(args, dict):
         return {"status": "INVALID_INPUT", "message": "도구 입력은 객체여야 합니다."}
     schemas = {t["name"]: t["parameters"] for t in (*TOOLS, TIMING_TOOL)}
@@ -172,7 +172,7 @@ def execute_tool(name: str, args: dict, store: ScenarioStore, reference_case=Non
                 return {"status": "INVALID_INPUT", "message": "미래 출하 비교 조건을 확인할 수 없습니다."}
             return future_pair.apply(args.get("action"), args.get("expected_version"), args.get("patch"),
                                      args.get("clear_fields"), on_progress=on_progress, box_price=box_price,
-                                     unresolved_box_price=unresolved_box_price)
+                                     unresolved_box_price=unresolved_box_price, storage_range=storage_range)
         if name == "reconcile_settlement":
             from services.settlement import reconcile
             if shipment is not None and args.get("expected_record_revision") is not None and (type(args["expected_record_revision"]) is not int or args["expected_record_revision"] != shipment.revision):

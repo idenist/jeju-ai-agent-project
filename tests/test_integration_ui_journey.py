@@ -73,6 +73,48 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         return [button for button in app.get("download_button") if button.label in
                 {"PDF 보고서 내려받기", "출하 비교 PDF 저장"}]
 
+    def test_candidate_guided_intake_keeps_skipped_loss_unknown_in_the_report(self):
+        app = AppTest.from_string('''
+from datetime import date
+from streamlit import session_state
+from agents.shipment_candidates import ShipmentCandidateDraft
+from ui.shipment_candidates import render_shipment_candidates
+if "draft" not in session_state:
+    session_state.draft = ShipmentCandidateDraft(
+        tuple(date(2026, 11, day) for day in (23, 28, 30)), None, set(), 0, 0, date(2026, 11, 19),
+        common={"start": date(2026, 11, 20), "quantity": 3000},
+    )
+render_shipment_candidates(session_state.draft)
+''').run()
+        labels = [widget.label for widget in app.number_input]
+        self.assertEqual(labels, ["전체 비교 물량(kg)", *(f"11월 {day}일 단가(원/kg)" for day in (23, 28, 30))])
+        self.assertFalse(list(app.selectbox) or list(app.date_input))
+        self._run(app, "후보일 비교 시작")
+        self.assertTrue(any("한 곳" in item.value for item in app.info))
+        self._run(app, "견적 다시 입력")
+        self.assertEqual(app.number_input[0].value, 3000)
+        app.number_input[1].set_value(2500)
+        app.number_input[3].set_value(2800)
+        self._run(app, "후보일 비교 시작")
+        self.assertEqual([widget.label for widget in app.selectbox], ["단가의 수수료 기준"])
+        self.assertFalse(list(app.number_input))
+        app.selectbox[0].select("수수료 차감 후")
+        self._run(app, "확인하고 계속")
+        for label, value in (("공통 하루 보관비(원)", 10000), ("공통 별도 비용(원)", 5000),
+                             ("11월 23일 기간 전체 감모율(%)", 1), ("11월 28일 기간 전체 감모율(%)", 3)):
+            self.assertEqual([widget.label for widget in app.number_input], [label])
+            app.number_input[0].set_value(value)
+            self._run(app, "확인하고 계속")
+        self.assertEqual(app.number_input[0].label, "11월 30일 기간 전체 감모율(%)")
+        self._run(app, "모르겠어요")
+        result = app.session_state.draft.result
+        self.assertEqual(Decimal(result["reference_proceeds_krw"]), 7390000)
+        self.assertEqual(result["rows"][1]["minimum_whole_krw_per_kg"], "2569")
+        self.assertIsNone(result["rows"][2]["loss_percent"])
+        self.assertIsNone(result["rows"][2]["proceeds_krw"])
+        self.assertEqual([widget.label for widget in app.get("download_button")],
+                         ["후보일 비교 PDF 저장", "후보일 비교 JSON 저장"])
+
     def test_hub_855_chat_shows_the_integrated_card_without_a_second_pdf(self):
         app = self._app(key=True)
         client = 모의_대화_클라이언트("analyze_shipment_timing", {
@@ -96,7 +138,7 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         ws = app.session_state.workspace
         client = 모의_대화_클라이언트("compare_future_pair", {
             "action": "new", "expected_version": 0,
-            "patch": {**COMMON, "start_date": "2026-11-15", "option_b": {**OPTION_B, "delay_days": 8},
+            "patch": {**COMMON, "start_date": "2026-11-15", "option_b": {**OPTION_B, "delay_days": 9},
                       "price_mode": "history", "history_filters": FILTERS},
         })
         ws.session.client = client
@@ -118,7 +160,7 @@ class 통합화면사용자흐름검수(unittest.TestCase):
 
         pair = ws.session.future_pair
         economic = pair.current_result()
-        self.assertEqual(economic["options_b"][0]["sale_date"], "2026-11-23")
+        self.assertEqual(economic["options_b"][0]["sale_date"], "2026-11-24")
         self.assertIn("같은 날짜의 과거 출하량 보기", [x.label for x in app.expander])
         variety_box = app.selectbox(key=f"chat_timing_variety_{pair.version}")
         self.assertIsNone(variety_box.value)
@@ -130,7 +172,7 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         report = json.loads(messages[-1]["reply"]["chat_report"]["json"])
         self.assertEqual(report["status"], "INTEGRATED")
         self.assertEqual(report["shipment_analysis"]["input"]["option_a_date"], "2026-11-18")
-        self.assertEqual(report["shipment_analysis"]["input"]["option_b_date"], "2026-11-23")
+        self.assertEqual(report["shipment_analysis"]["input"]["option_b_date"], "2026-11-24")
         self.assertIn("출하 시기·경제성 통합 PDF 저장", [x.label for x in app.get("download_button")])
 
     def test_chat_box_price_actions_requote_before_applying(self):
@@ -154,11 +196,13 @@ class 통합화면사용자흐름검수(unittest.TestCase):
         self._run(app, "이 무게로 다시 환산", key=True)
         self.assertIsNone(pair.inputs["price_a"])
         self.assertTrue(any("1,250원/kg" in item.value for item in app.markdown))
-        self._run(app, "이 단가로 적용", key=True)
+        self.assertTrue(any("1,250원/kg 적용 여부" in item.value for item in app.caption))
+        self._run(app, "A안에 1,250원/kg 적용", key=True)
         self.assertEqual(Decimal(pair.inputs["price_a"]), 1250)
         self.assertEqual(pair.inputs["history_filters"]["package_kg"], "5")
         self.assertEqual(len(client.requests), 1)
-        self.assertFalse(any(x.label == "이 단가로 적용" for x in app.button))
+        self.assertFalse(any(x.label == "A안에 1,250원/kg 적용" for x in app.button))
+        self.assertFalse(any("1,250원/kg 적용 여부" in item.value for item in app.caption))
 
     def test_키가_없어도_경락가격과_손익계산_진입점이_있음(self):
         app = self._app()

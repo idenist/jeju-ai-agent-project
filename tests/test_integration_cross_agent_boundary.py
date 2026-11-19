@@ -70,7 +70,7 @@ class 통합경계검수(unittest.TestCase):
         expected = report["output_sha256"]["price_comparison_availability.csv"]
         observed = content_sha256((PROJECT_ROOT / "data/processed/price_comparison_availability.csv").read_bytes())
         self.assertEqual(observed, expected)
-        status = verify_integrated_price_sources(PROJECT_ROOT)
+        status = verify_integrated_price_sources(PROJECT_ROOT, market_root=PROJECT_ROOT)
         self.assertEqual(status["status"], "OK", status.get("reason"))
         self.assertTrue(status["full_content_verified"])
         self.assertEqual(status["verified_availability_rows"], 4776)

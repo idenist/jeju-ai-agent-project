@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from services.market_decision import evaluate_market_decision
 from services.seasonal_prices import compare_break_even_to_history
 
 QUERY = {
@@ -75,6 +76,29 @@ class SeasonalThresholdTests(unittest.TestCase):
     def test_invalid_threshold_does_not_crash(self):
         result = compare_break_even_to_history(QUERY, "NaN", price_basis="gross")
         self.assertEqual(result["status"], "INVALID_INPUT")
+
+    def test_reference_preserves_window_when_all_seasons_lack_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_season(root, "2026-2027", [("2026-11-01", 2500, 100, "OK")])
+            selection = {key: value for key, value in QUERY.items() if key != "month_day"}
+            pair = {
+                "status": "OK", "analysis_type": "future_pair", "price_basis": "gross",
+                "minimum_whole_krw_per_kg": "2660",
+                "option_a": {"sale_date": "2026-11-22"},
+                "options_b": [{"id": "past_mid", "sale_date": "2026-11-25"}],
+                "evidence": {"past_mid": {"conditions": selection}},
+            }
+            result = evaluate_market_decision(pair, selection, root=root)
+            self.assertEqual(result["status"], "NO_DATA")
+            recent = result["market_evidence"]["seasons"][-1]
+            self.assertEqual((recent["days_above"], recent["days_clean"]), (0, 0))
+            self.assertEqual((recent["window_start"], recent["window_end"]), ("2026-11-18", "2026-12-02"))
+            self.assertEqual(recent["source_last_date"], "2026-11-01")
+            self.assertEqual(evaluate_market_decision(pair, {**selection, "variety": "다른 품종"}, root=root)["status"],
+                             "NEEDS_SPEC")
+            self.assertEqual(evaluate_market_decision({**pair, "threshold_only": True}, selection, root=root)["status"],
+                             "NOT_APPLICABLE")
 
 
 if __name__ == "__main__":

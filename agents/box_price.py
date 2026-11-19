@@ -51,6 +51,10 @@ _WEIGHT_REPLY = re.compile(
     rf"^(?:아니요[, ]*)?\s*(?:(?:실제\s*)?(?:(?:판매|출하)(?:용|할)?\s*)?{_PACK}"
     rf"|{_NUMBER}\s*{_WEIGHT_UNIT})", re.I,
 )
+_WEIGHT_CHECKED = re.compile(
+    r"^(?:다시\s*)?(?:확인해\s*봤어요|확인해\s*보니|확인했어요|확인했습니다|"
+    r"재(?:어)?\s*봤어요|재(?:어)?\s*보니)[.,，。\s]+"
+)
 _ALTERNATE_WEIGHT = re.compile(rf"(?:kg|킬로그램)\s*(?:인지|이나|또는|아니면|혹은|[~/～–-])\s*({_NUMBER})\s*(?:kg|킬로그램)", re.I)
 _WEIGHT_RANGE = re.compile(rf"{_NUMBER}\s*[-~～–]\s*{_NUMBER}\s*(?:kg|킬로그램)", re.I)
 _UNCERTAIN = re.compile(r"모르|몰라|인지|일지|애매|헷갈|정도|가량|쯤|아마|듯|[~～–]")
@@ -191,12 +195,13 @@ class BoxPrice:
         if self.side is None and re.fullmatch(r"(?:a안|b안|먼저(?:\s*출하)?|나중(?:\s*출하)?)(?:이에요|예요|입니다)?", clean.casefold()):
             side = "B" if clean.casefold().startswith(("b", "나중")) else "A"
             return "clarify", replace(self, side=side)
-        sale_text = _sale_weight_text(clean)
+        # A checked measurement answers the weight question, never the separate price approval.
+        sale_text = _sale_weight_text(_WEIGHT_CHECKED.sub("", clean, count=1))
         if (_WEIGHT_REPLY.match(sale_text) and _MASS.search(sale_text) and len(clean) <= 55
                 and not _AMOUNT.search(clean) and not re.search(r"[?？]", text)):
             weight = _weight(sale_text, reply=True)
             return "clarify", replace(self, weight=weight)
-        if _YES.fullmatch(clean):
+        if _YES.fullmatch(clean) and not re.search(r"[?？]", text):
             return ("confirm" if self.side and self.weight and self.unit_price > 0 else "clarify"), self
         return None, self
 

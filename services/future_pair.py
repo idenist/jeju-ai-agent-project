@@ -1,10 +1,11 @@
 """Compare two future shipments using the existing option calculator."""
 from datetime import date, timedelta
 from decimal import Decimal, ROUND_CEILING
+from pathlib import Path
 from time import monotonic
 
 from services.calculation_service import compare_shipment_options
-from services.data_contract import PAIR_FILES, PRICE_FILE, REPORT_FILE, verify_cached_price_sources
+from services.data_contract import PAIR_FILES, PRICE_FILE, REPORT_FILE, comparison_root, verify_cached_price_sources
 from services.data_refresh import digest, resolve_market_root
 from services.task_context import data_revision
 from services.economics import decimal, fixed
@@ -27,8 +28,9 @@ HISTORY_FIELDS = {"variety": "품종", "grade": "등급", "size": "크기", "pac
 
 def price_revision():
     try:
-        active_price = resolve_market_root(PROJECT_ROOT) / PRICE_FILE
-        paths = dict.fromkeys([active_price, *(PROJECT_ROOT / path for path in (PRICE_FILE, *PAIR_FILES, REPORT_FILE))])
+        selected = resolve_market_root(PROJECT_ROOT)
+        pair_root = comparison_root(PROJECT_ROOT, selected)
+        paths = dict.fromkeys([selected / PRICE_FILE, *(pair_root / path for path in (PRICE_FILE, *PAIR_FILES, REPORT_FILE))])
         return (*data_revision(), *(digest(path) for path in paths))
     except (OSError, ValueError, KeyError, TypeError):
         return None
@@ -87,6 +89,10 @@ def _verified_history(lookup, args, **kwargs):
     log_latency("csv_verify_before", started)
     if before["status"] != "OK" or before.get("full_content_verified") is not True:
         return file_gap
+    if before.get("comparison_root"):
+        root = Path(before["comparison_root"])
+        kwargs.update(data_file=root / PAIR_FILES[1], prices_file=root / PRICE_FILE,
+                      report_file=root / REPORT_FILE, snapshot_id=before["snapshot_id"])
     started = monotonic()
     result = lookup(args, **kwargs)
     log_latency("csv_lookup", started)
@@ -117,7 +123,7 @@ def preview_future_pair_history(start_date, days_a, days_b, price_a, filters):
 
 
 def compare_future_pair_threshold_reference(*, quantity, price_basis, start_date,
-                                            option_a, option_b, price_a):
+                                            option_a, option_b, price_a, b_storage_total=None):
     """Return a conditional break-even reference without inventing unknown costs.
 
     The displayed threshold sets the *net difference* between unconfirmed costs
@@ -145,13 +151,16 @@ def compare_future_pair_threshold_reference(*, quantity, price_basis, start_date
     except (ValueError, TypeError, ArithmeticError) as exc:
         return {"status": "NEEDS_INPUT", "message": str(exc)}
 
-    def known_cost(option, days):
+    def known_cost(option, days, storage_total=None):
         total = Decimal(0)
         missing = []
         for field, label, multiplier in (
             ("daily_storage_cost", "하루 보관비", days),
             ("other_cost_krw", "별도 비용", 1),
         ):
+            if field == "daily_storage_cost" and storage_total is not None:
+                total += storage_total
+                continue
             value = option.get(field)
             if value is None:
                 missing.append(label)
@@ -160,7 +169,7 @@ def compare_future_pair_threshold_reference(*, quantity, price_basis, start_date
         return total, missing
 
     cost_a, missing_a = known_cost(option_a, days_a)
-    cost_b, missing_b = known_cost(option_b, days_b)
+    cost_b, missing_b = known_cost(option_b, days_b, b_storage_total)
     sale_a = (start + timedelta(days=days_a)).isoformat()
     sale_b = (start + timedelta(days=days_b)).isoformat()
     remaining_a = q * (1 - loss_a)
@@ -207,7 +216,8 @@ def compare_future_pair_threshold_reference(*, quantity, price_basis, start_date
         "unknown_cost_fields": missing_fields,
         "unknown_cost_difference_definition": "B안 미확인 비용 합계 - A안 미확인 비용 합계",
         "unknown_cost_delta_per_10000_krw_per_kg": number(Decimal(10000) / denominator),
-        "threshold_assumption": "미확인 비용 차이를 0원으로 놓은 참고 손익분기 가격",
+        "threshold_assumption": ("미확인 비용 차이를 0원으로 놓은 참고 손익분기 가격" if missing_fields else
+                                 "입력한 비용을 반영한 손익분기 가격"),
         "evidence": {"option_a": {"summary": "A안 단가 · 사용자 입력 가정", "sale_date": sale_a},
                      "manual_b": {"summary": "B안 단가 미확인 · 과거 가격 자료 미조회", "sale_date": sale_b}},
         "historical_price_lookup": "not_used",
@@ -215,10 +225,60 @@ def compare_future_pair_threshold_reference(*, quantity, price_basis, start_date
         "is_future_forecast": False,
         "warnings": [
             "B안 단가가 없어 실제 수취액과 어느 안이 유리한지 판단하지 않았습니다.",
-            "표시한 손익분기 가격은 미확인 비용 차이를 0원으로 둔 참고값입니다.",
+            *(["표시한 손익분기 가격은 미확인 비용 차이를 0원으로 둔 참고값입니다."] if missing_fields else []),
             "미래가격 전망이나 실행 권고가 아닙니다.",
         ],
     }
+
+
+def compare_future_pair_storage_range(*, lower, upper, daily, price_b, **inputs):
+    """Calculate the two ends on the same terms, keeping the B quote optional."""
+    days = inputs["option_b"]["delay_days"]
+    if type(days) is not int:
+        return {"status": "NEEDS_INPUT", "message": "B안 보관일을 확인해 주세요."}
+    low_cost, high_cost = (lower * days, upper * days) if daily else (lower, upper)
+    low = compare_future_pair_threshold_reference(**inputs, b_storage_total=low_cost)
+    if low["status"] != "OK":
+        return low
+    high = compare_future_pair_threshold_reference(**inputs, b_storage_total=high_cost)
+    assumptions = {
+        "storage_cost_total_from_krw": fixed(low_cost), "storage_cost_total_to_krw": fixed(high_cost),
+        "storage_cost_input_basis": "daily" if daily else "total",
+        "storage_cost_input_from_krw": fixed(lower), "storage_cost_input_to_krw": fixed(upper),
+        "minimum_from_krw_per_kg": low["minimum_whole_krw_per_kg"],
+        "minimum_to_krw_per_kg": high["minimum_whole_krw_per_kg"],
+        "quote_krw_per_kg": None, "storage_cost_at_tie_krw": None, "assessment": "QUOTE_UNKNOWN",
+    }
+    b = low["options_b"][0]
+    fixed_b_cost = Decimal(b["known_cost_krw"]) - low_cost
+    b["known_cost_krw"] = fixed(fixed_b_cost)
+    if price_b is not None:
+        quote = decimal(price_b, LABELS["price_b"])
+        assumptions["quote_krw_per_kg"] = fixed(quote)
+        if low["unknown_cost_fields"]:
+            assumptions["assessment"] = "OTHER_COSTS_UNKNOWN"
+        else:
+            effective_kg = Decimal(b["remaining_kg"]) * (1 - Decimal(b["fee_percent"] or 0) / 100)
+            tie = quote * effective_kg - Decimal(low["a_reference_amount_krw"]) - fixed_b_cost
+            assumptions["storage_cost_at_tie_krw"] = fixed(tie)
+            if low_cost <= tie <= high_cost:
+                assumptions["assessment"] = "TIE" if low_cost == high_cost else "DEPENDS_ON_STORAGE"
+            else:
+                assumptions["assessment"] = "B_HIGHER" if tie > high_cost else "A_HIGHER"
+        b["price_per_kg"] = fixed(quote)
+    if low_cost != high_cost:
+        low["break_even_vs_a_krw_per_kg"] = low["minimum_whole_krw_per_kg"] = None
+    low["storage_cost_range"] = assumptions
+    low["threshold_assumption"] = "사용자가 알려준 B안 보관비에 따른 손익분기"
+    low["evidence"]["manual_b"]["summary"] = (
+        "B안 견적과 보관비 범위 · 사용자 입력" if price_b is not None else "B안 보관비 범위 · 사용자 입력"
+    )
+    low["warnings"] = [
+        "손익분기 범위는 알려주신 보관비 범위를 적용한 조건부 결과입니다.",
+        *(["보관비 외 미확인 비용의 차이는 0원으로 놓았습니다."] if low["unknown_cost_fields"] else []),
+        "미래가격 전망이나 실행 권고가 아닙니다.",
+    ]
+    return low
 
 
 def compare_future_pair_history_reference(*, quantity, price_basis, start_date,

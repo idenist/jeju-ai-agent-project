@@ -36,10 +36,12 @@ def _load_csv(path: str, stat_size: int, stat_mtime_ns: int):
     del stat_size, stat_mtime_ns
     rows = []
     with Path(path).open(encoding="utf-8-sig", newline="") as stream:
-        reader = csv.DictReader(stream)
+        reader = csv.DictReader(stream, strict=True)
         if not reader.fieldnames or not REQUIRED.issubset(reader.fieldnames):
             raise ValueError("시즌 가격 CSV의 열 구성이 다릅니다.")
         for row in reader:
+            if any(row[key] is None for key in REQUIRED):
+                raise ValueError("시즌 가격 CSV의 일부 항목이 누락되었습니다.")
             observed = date.fromisoformat(row["date"])
             weight = _number(row["total_kg"])
             amount = _number(row["total_amount_krw"])
@@ -68,6 +70,8 @@ def seasonal_price_revision(root: Path = PROJECT_ROOT):
             signature.append((season, stat.st_size, stat.st_mtime_ns))
         except FileNotFoundError:
             signature.append((season, None, None))
+        except OSError:
+            signature.append((season, "DATA_ERROR", None))
     return signature
 
 
@@ -127,9 +131,13 @@ def _seasonal_evidence(query: dict, root: Path):
                 "transaction_count": 0, "total_kg": None, "price_per_kg": None,
                 "source_first_date": None, "source_last_date": None,
                 "quality_warnings": [], "window_complete": False}
-        if not path.is_file():
-            output.append(item)
-            continue
+        try:
+            center = _season_day(season, month_day)
+        except ValueError:
+            center = None
+        if center is not None:
+            begin, end = center - timedelta(days=window), center + timedelta(days=window)
+            item.update(window_start=begin.isoformat(), window_end=end.isoformat())
         try:
             rows = _snapshot(path)
             if not rows:
@@ -139,15 +147,11 @@ def _seasonal_evidence(query: dict, root: Path):
             dates = [x[0] for x in rows]
             first, last = min(dates), max(dates)
             item.update(source_first_date=first.isoformat(), source_last_date=last.isoformat())
-            try:
-                center = _season_day(season, month_day)
-            except ValueError:
+            if center is None:
                 item.update(status="INVALID_CALENDAR_DATE")
                 output.append(item)
                 continue
-            begin, end = center - timedelta(days=window), center + timedelta(days=window)
-            item.update(window_start=begin.isoformat(), window_end=end.isoformat(),
-                        window_complete=(first <= begin and end <= last))
+            item.update(window_complete=(first <= begin and end <= last))
             matched = [(observed, row, weight, amount, count)
                        for observed, row, weight, amount, count in rows
                        if begin <= observed <= end
@@ -176,23 +180,32 @@ def _seasonal_evidence(query: dict, root: Path):
                         quality_warnings=warnings,
                          classification_codes=list(next(iter(codes))))
             matched_by_season[season] = matched
-        except (OSError, ValueError, UnicodeError, OverflowError):
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, OverflowError, csv.Error):
             item.update(status="DATA_ERROR")
         output.append(item)
     if len(matching_codes) > 1:
         return {"status": "AMBIGUOUS_CODES", "message": "시즌마다 같은 표시명의 원천 품종·등급·크기 코드가 다릅니다. 자동 합산하지 않습니다.",
                 "seasons": output}, {}
     observed = [x for x in output if x["status"] == "OK"]
+    source_errors = any(x["status"] == "DATA_ERROR" for x in output)
+    inspected = any(x["status"] in {"OK", "NO_DATA", "AMBIGUOUS_CODES"} for x in output)
     status = "NO_DATA" if not observed else ("OK" if len(observed) == len(SEASONS) else "PARTIAL_DATA")
+    if source_errors and not inspected:
+        status = "DATA_ERROR"
     summary = {"status": status, "analysis_type": "seasonal_prices",
             "conditions": {**filters, "package_kg": str(package_kg), "month_day": month_day, "window_days": window},
             "seasons": output,
             "observed_seasons": len(observed),
+            "source_partial": source_errors and inspected,
             "source": {"dataset": "전국 공영도매시장 경매원천정보 · 제주산 감귤 시즌별 집계",
                        "url": "https://www.data.go.kr/data/15141810/openapi.do", "unit": "원/kg",
                        "basis": "동일 등록 규격 · 거래중량 가중 경락가격"},
             "warnings": ["시즌별 과거 거래가격입니다. 미래가격·농가 실수취액·보관 효과를 예측하지 않습니다.",
                          "창의 양 끝이 원천 관측기간 밖이면 부분 구간으로 표시합니다."]}
+    if status == "DATA_ERROR":
+        summary["message"] = "시즌 가격자료를 읽지 못했습니다. 자료 상태를 확인한 뒤 다시 조회해 주세요."
     return summary, matched_by_season
 
 
@@ -215,15 +228,14 @@ def compare_break_even_to_history(query: dict, threshold, *, price_basis: str,
     basis, matched = _seasonal_evidence(query, root)
     if basis["status"] in {"INVALID_INPUT", "NEEDS_INPUT", "AMBIGUOUS_CODES"}:
         return basis
-    if basis["status"] == "NO_DATA":
-        return {**basis, "threshold_krw_per_kg": str(t)}
-
     output = []
     for item in basis["seasons"]:
         season = item["season"]
         new = {"season": season, "source_status": item["status"],
                "source_first_date": item.get("source_first_date"),
                "source_last_date": item.get("source_last_date"),
+               "window_start": item.get("window_start"),
+               "window_end": item.get("window_end"),
                "window_complete": item.get("window_complete", False),
                "days_matching": 0, "days_clean": 0, "days_above": 0,
                "clean_kg": None, "kg_on_days_above": None,
@@ -253,10 +265,15 @@ def compare_break_even_to_history(query: dict, threshold, *, price_basis: str,
                    clean_kg=str(clean_kg), kg_on_days_above=str(above_kg),
                    daily_share_percent=_pct(Decimal(len(above)), Decimal(len(usable))),
                    kg_share_percent=_pct(above_kg, clean_kg))
-    return {"status": "OK" if any(s["status"] == "OK" for s in output) else "NO_CLEAN_DAYS",
+    status = basis["status"]
+    if status in ("OK", "PARTIAL_DATA"):
+        status = "OK" if any(s["status"] == "OK" for s in output) else "NO_CLEAN_DAYS"
+    return {"status": status,
             "analysis_type": "seasonal_threshold",
             "threshold_krw_per_kg": str(t), "price_basis": "gross",
-            "conditions": basis["conditions"], "seasons": output,
+            "conditions": basis["conditions"], "seasons": output, "source": basis["source"],
+            "source_partial": basis["source_partial"],
+            **({"message": basis["message"]} if "message" in basis else {}),
             "warnings": [
                 "기준가격 이상 비율은 해당 규격의 과거 *일별 평균 경락가격*으로 계산했습니다. 개별 거래가격의 비율이 아닙니다.",
                 "과거 관측 비율은 미래 가격 도달 확률이나 특정 농가의 실수취 가능성이 아닙니다.",

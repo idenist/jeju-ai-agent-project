@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 
-from services.data_contract import verify_integrated_price_sources
+from services.data_contract import PAIR_FILES, verify_integrated_price_sources
 from services.price_data_gap import classify_price_gap, price_gap
 from services.result_contract import normalize_tool_result
 from core.config import PROJECT_ROOT
@@ -57,11 +58,15 @@ def get_integrated_price_history(arguments: dict) -> dict:
     if before.get("status") != "OK" or before.get("full_content_verified") is not True:
         return _unavailable(before, arguments)
 
-    original = execute_legacy_tool("get_price_history", deepcopy(arguments), DEFAULT_FILE)
+    pair_root = before.get("comparison_root")
+    pair_file = Path(pair_root) / PAIR_FILES[1] if pair_root else DEFAULT_FILE
+    original = execute_legacy_tool("get_price_history", deepcopy(arguments), pair_file)
 
     after = verify_integrated_price_sources(PROJECT_ROOT)
     if (after.get("status") != "OK" or after.get("full_content_verified") is not True
             or before.get("comparison_source_sha256") != after.get("comparison_source_sha256")
+            or before.get("comparison_sha256") != after.get("comparison_sha256")
+            or before.get("snapshot_id") != after.get("snapshot_id")
             or before.get("selected_market_sha256") != after.get("selected_market_sha256")):
         return _unavailable(after if after.get("status") != "OK" else
                             {"reason": "SOURCE_CHANGED_DURING_QUERY"}, arguments)
@@ -82,6 +87,7 @@ def get_integrated_price_history(arguments: dict) -> dict:
         "source_verification": {
             "status": "OK",
             "source_sha256": after["comparison_source_sha256"],
+            "snapshot_id": after.get("snapshot_id"),
             "observed_first_date": after["observed_first_date"],
             "observed_last_date": after["observed_last_date"],
             "verified_comparison_rows": after["verified_comparison_rows"],

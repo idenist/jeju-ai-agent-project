@@ -1,37 +1,50 @@
-"""Conversation presentation and a narrow monetary provenance check.
-
-This is not an intent classifier: ordinary dates, kg examples and explanations
-are unrestricted. State writes and computations still require application tools.
-This guard detects novel written amounts, not every possible false claim.
-"""
-import json
+"""Conversation presentation and monetary claim detection for model prose."""
 import re
-from decimal import Decimal
 
-_NUMBER = re.compile(r"(?<![\d.])\d[\d,]*(?:\.\d+)?")
-_AMOUNT = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*(천|만|억)?\s*원")
-_SCALE = {None: 1, "천": 1000, "만": 10000, "억": 100000000}
+_MONEY = re.compile(
+    r"(?:₩|￦|\bKRW)\s*\d|(?<![\d,.])\d[\d,.]*\s*(?:(?:[십백천만억]\s*){0,4}원(?!칙|산지|래|본)|KRW\b)"
+    r"|(?<![가-힣])(?:[일이삼사오육칠팔구십백천만억]\s*){0,12}[십백천만억]"
+    r"(?:\s*[일이삼사오육칠팔구십백천만억]){0,12}\s*원(?!칙|산지|래|본)",
+    re.I,
+)
+_INLINE_MARKUP = str.maketrans("", "", "*_`\u200b")
 _TERM_TOPICS = {
     "감모율": "loss_rate", "감모": "loss_rate", "수수료 차감 후": "price_basis",
     "차감 후 단가": "price_basis", "거래규격": "data_scope",
 }
 _TERM_QUESTION = re.compile(r"뜻|무슨\s*말|무엇|뭐예요|의미|설명")
+_EXPLICIT_TERM_QUESTION = re.compile(
+    r"\s*(?:(?:잠깐|참|아)[,，\s]+)?[‘“'\"]?"
+    r"(?:(?P<loss_rate>감모율|감모|감량률)|"
+    r"(?P<price_basis>수수료(?:\s*기준)?|(?:수수료\s*)?차감\s*(?:전|후|뒤)(?:\s*단가)?)|"
+    r"(?P<data_scope>거래\s*규격))[’”'\"]?"
+    r"(?:\s*(?:이|가|은|는|을|를|의|이란|란))?"
+    r"(?:(?:\s*(?:뭐(?:야|죠|예요|에요|지)?|뭔가요|뭔지|무엇(?:인가요|이죠)?|"
+    r"무슨\s*(?:뜻|말)(?:이야|이에요|인가요|인지)?|뜻(?:을|이\s*(?:뭐야|뭐예요|뭔가요|뭐죠))?|의미)"
+    r"(?:\s*(?:알려|설명\s*해)\s*(?:줘|주세요))?"
+    r"|\s*(?:쉽게\s*)?(?:설명해|알려)\s*(?:줘|주세요))[.!?？。\s]*"
+    r"|\s*[?？])"
+)
+
+
+def explicit_term_topic(text: str) -> str | None:
+    """Match a standalone glossary clause before separating it from an edit."""
+    match = _EXPLICIT_TERM_QUESTION.fullmatch(text) if len(text) <= 80 else None
+    return match.lastgroup if match else None
 
 
 def simple_term_topic(text):
+    if topic := explicit_term_topic(text):
+        return topic
     if (len(text) > 80 or not _TERM_QUESTION.search(text)
             or re.search(r"\d|계산|적용|변경|바꿔|조회", text)):
         return None
     return next((topic for term, topic in _TERM_TOPICS.items() if term in text), None)
 
 
-def has_unsupported_amount(text, context):
-    """Allow amounts already present in supplied state, user input or tool evidence."""
-    raw = json.dumps(context, ensure_ascii=False, default=lambda item:
-                     item.model_dump(mode="json") if hasattr(item, "model_dump") else vars(item))
-    known = {Decimal(m.group().replace(",", "")) for m in _NUMBER.finditer(raw)}
-    known.update(Decimal(m[1].replace(",", "")) * _SCALE[m[2]] for m in _AMOUNT.finditer(raw))
-    return any(Decimal(m[1].replace(",", "")) * _SCALE[m[2]] not in known for m in _AMOUNT.finditer(text))
+def model_mentions_money(text):
+    """Leave exact prices and receipts to the application's verified result presenters."""
+    return bool(_MONEY.search(text.translate(_INLINE_MARKUP)))
 
 
 def remember_visible_reply(messages, question, reply):

@@ -1,7 +1,6 @@
 """A/B economics + multi-season market reference, in the existing result flow.
 
-Never chooses a farm's variety automatically. Reuse a specifically submitted
-market lookup or ask for the actual comparison specification inline once.
+Reuse the current P2 evidence or ask for an explicit comparison specification.
 """
 from __future__ import annotations
 
@@ -10,18 +9,15 @@ import json
 from datetime import date
 from decimal import Decimal
 import streamlit as st
+from presenters.market_export import observation_window_text, season_observation_rows
 from services.market_decision import (
     evaluate_market_decision, market_query_from_explicit_selection,
+    market_query_from_pair_result, market_spec_identity, threshold_observation_eligible,
 )
 from services.seasonal_prices import seasonal_price_revision
 
 FIELDS = ("market_code", "variety", "grade", "size", "package", "package_kg", "trade_type")
 LABELS = ("시장", "품종", "등급", "크기", "포장", "상자중량(kg)", "거래방식")
-STATUSES = {
-    "NOT_PREPARED": "시즌 가공본 없음", "NO_DATA": "해당 규격 거래 없음",
-    "NO_CLEAN_DAYS": "품질 경고로 비교 불가", "AMBIGUOUS_CODES": "분류 코드 모호",
-    "DATA_ERROR": "가격 자료 오류", "INVALID_CALENDAR_DATE": "존재하지 않는 날짜",
-}
 
 
 def _fmt(value, digits=1):
@@ -37,12 +33,15 @@ def _fmt_spec(spec):
     return " · ".join(f"{label} {value}" for value, label in zip(values, LABELS))
 
 
-def _spec_form(location, current):
-    """Only displayed for missing specs or when the user explicitly asks to edit."""
+def _spec_form(location, current, pair_spec):
+    """Only the window is editable when P2 already established the trade specification."""
     old = current or {}
     from ui.market_inputs import render_market_spec_controls
 
-    selection, complete = render_market_spec_controls(f"market_decision_spec_{location}", old)
+    if pair_spec:
+        selection, complete = dict(pair_spec), True
+    else:
+        selection, complete = render_market_spec_controls(f"market_decision_spec_{location}", old)
     window_key = f"market_decision_spec_{location}_window"
     window_values = [0, 3, 7, 14]
     old_window = old.get("window_days", 7)
@@ -71,7 +70,7 @@ def _spec_form(location, current):
 
 
 def _display(result):
-    if result["status"] not in ("OK", "NO_CLEAN_DAYS"):
+    if result["status"] not in ("OK", "NO_CLEAN_DAYS", "NO_DATA") or not result.get("market_evidence"):
         st.warning(result.get("message", "조회에 실패했습니다."))
         return
     comparison = result["comparison"]
@@ -93,19 +92,15 @@ def _display(result):
         st.markdown("**입력한 가정만으로는 두 출하 날짜의 유불리를 정할 수 없습니다.**")
     st.markdown(f"{later}가 {earlier}보다 손해 보지 않으려면 최소 **{_fmt(comparison['minimum_whole_krw_per_kg'],0)}원/kg**이 필요합니다.")
     evidence = result["market_evidence"]
-    labels = []
-    for item in evidence.get("seasons", []):
-        if item["status"] == "OK":
-            status = "부분 관측기간" if not item.get("window_complete") else "조회됨"
-        else:
-            status = STATUSES.get(item["status"], item["status"])
-        clean_days = item.get("days_clean")
-        above_days = item.get("days_above")
-        labels.append({"시즌": item["season"],
-                       "손익분기 가격 이상이었던 날": f"{above_days} / {clean_days}일"
-                       if above_days is not None and clean_days is not None else "-",
-                       "자료 상태": status})
+    if window := observation_window_text(evidence):
+        st.caption(window)
+    labels = [{"시즌": season, "손익분기 가격 이상 / 유효 관측일": count, "자료 상태": status}
+              for season, count, status in season_observation_rows(evidence)]
     st.dataframe(labels, hide_index=True, use_container_width=True)
+    if evidence.get("source_partial"):
+        st.caption("읽을 수 없는 시즌은 자료 오류로 표시했습니다.")
+    if url := (evidence.get("source") or {}).get("url"):
+        st.caption(f"출처 · [aT 전국 공영도매시장 경매원천정보]({url})")
     st.caption("같은 규격의 과거 일별 평균 경락가격을 센 결과입니다. 앞으로 그 가격을 받을 확률은 아닙니다.")
     with st.expander("거래량 기준 상세 보기"):
         detail_rows = [{"시즌": item["season"],
@@ -116,13 +111,14 @@ def _display(result):
     st.markdown("**출하 전에 확인할 것:** B안 실제 제시가격, 감모율·보관비, 수수료·공제 항목, 저장 및 출하일 변경 가능 여부")
 
 
-def render_threshold_evidence(pair_result: dict, location: str):
-    """Retains the previous call signature used by the installed 2nd-stage patch."""
+def render_threshold_evidence(pair_result: dict, location: str, *, requested=False, draft_spec=None):
+    """An incomplete quote is compared to history only after explicit selection."""
     storage_key = f"market_decision_latest_{location}"
     if not isinstance(pair_result, dict) or pair_result.get("status") != "OK":
         st.session_state.pop(storage_key, None)
         return
-    if pair_result.get("suppress_market_evidence"):
+    threshold = threshold_observation_eligible(pair_result)
+    if not threshold and (pair_result.get("suppress_market_evidence") or pair_result.get("threshold_only")):
         st.session_state.pop(storage_key, None)
         with st.container(border=True):
             st.markdown("**다년도 시장 근거**")
@@ -137,26 +133,45 @@ def render_threshold_evidence(pair_result: dict, location: str):
             st.markdown("**시장 참고가격과 손익분기 가격 연결**")
             st.info("손익분기 가격이 수수료 차감 후 단가입니다. 차감 전 경락가격과 직접 비교하지 않습니다.")
         return
-    last = market_query_from_explicit_selection(st.session_state.get("seasonal_prices_result"))
+    last = (draft_spec if threshold and draft_spec else
+            market_query_from_explicit_selection(st.session_state.get("seasonal_prices_result")))
+    pair_spec = market_query_from_pair_result(pair_result)
+    spec_id = market_spec_identity(pair_spec)
+    serialized_pair = json.dumps(pair_result, sort_keys=True, ensure_ascii=False, default=str)
+    scope = spec_id or ("result", hashlib.sha256(serialized_pair.encode("utf-8")).hexdigest())
     own_key = "market_decision_custom_spec"
-    # A newly submitted lookup replaces a previously overridden inline spec.
-    lookup_key = (json.dumps(last, sort_keys=True, default=str) if last else None)
-    stamp_key = "market_decision_last_lookup_key"
-    if lookup_key != st.session_state.get(stamp_key):
-        st.session_state.pop(own_key, None)
-        st.session_state[stamp_key] = lookup_key
-    spec = st.session_state.get(own_key) or last
+    own = st.session_state.get(own_key) if st.session_state.get("market_decision_custom_scope") == scope else None
+    spec = own
+    if pair_spec:
+        previous = own or (last if market_spec_identity(last) == spec_id else None) or {}
+        spec = {**pair_spec, "window_days": previous.get("window_days", 7)}
+    form_prefix = f"market_decision_spec_{location}_"
+    form_scope_key = f"market_decision_form_scope_{location}"
+    initial_window = (last or {}).get("window_days", 7) if threshold else (spec or last or {}).get("window_days")
+    form_scope = (scope, initial_window, pair_result.get("future_pair_version"))
+    if st.session_state.get(form_scope_key) != form_scope:
+        for key in list(st.session_state):
+            if key.startswith(form_prefix):
+                del st.session_state[key]
+        st.session_state[form_scope_key] = form_scope
     with st.container(border=True):
         st.markdown("**출하 손익과 다년도 시장 근거**")
-        if spec:
+        if pair_spec:
+            st.caption("현재 B안에 적용한 거래규격 · " + _fmt_spec(pair_spec))
+        elif spec and not threshold:
             st.caption("시장 참고 규격 (실제 출하 상품과 일치 여부를 확인하세요): " + _fmt_spec(spec))
-        else:
+        elif not threshold:
             st.info("다년도 시장 비교에 사용할 거래규격을 아래에서 선택하세요.")
-        with st.expander("시장 규격 설정·수정", expanded=spec is None):
-            changed, draft_changed = _spec_form(location, spec)
+        summary = st.container()
+        form_title = "과거 시장 근거 보기" if threshold else "시장 규격 설정·수정"
+        with st.expander(form_title, expanded=(requested if threshold else spec is None)):
+            if threshold:
+                st.caption("같은 규격의 과거 경락가격이 손익분기 이상이었던 날을 확인합니다.")
+            changed, draft_changed = _spec_form(location, spec or last, pair_spec)
             if changed is not None:
                 st.session_state[own_key] = spec = changed
-        if draft_changed:
+                st.session_state["market_decision_custom_scope"] = scope
+        if draft_changed and (spec or not threshold):
             st.session_state.pop(storage_key, None)
             st.session_state.pop(f"market_decision_result_{location}", None)
             st.info("거래규격 선택이 바뀌었습니다. 새 규격으로 시장 근거를 다시 연결해 주세요.")
@@ -173,7 +188,8 @@ def render_threshold_evidence(pair_result: dict, location: str):
         cached = st.session_state.get(cache_key)
         if not isinstance(cached, dict) or cached.get("key") != key:
             with st.spinner("각 시즌의 동일 규격 경매가격을 비교합니다"):
-                result = evaluate_market_decision(pair_result, spec)
+                result = (evaluate_market_decision(pair_result, spec, allow_threshold_observation=True)
+                          if threshold else evaluate_market_decision(pair_result, spec))
             conditions = (result.get("market_evidence") or {}).get("conditions") or result.get("query")
             if isinstance(conditions, dict):
                 from ui.market_inputs import market_name_map
@@ -187,5 +203,9 @@ def render_threshold_evidence(pair_result: dict, location: str):
             result = cached["result"]
         # Keep the pure joined record available to later PDF/JSON integration,
         # but do not mutate FuturePairState's authoritative economic result.
-        st.session_state[storage_key] = {"pair_fingerprint": key, "result": result}
-        _display(result)
+        st.session_state[storage_key] = {"pair_fingerprint": key, "result": result,
+                                         "pair_version": pair_result.get("future_pair_version")}
+        with summary:
+            if threshold:
+                st.caption("조회한 거래규격 · " + _fmt_spec(spec))
+            _display(result)

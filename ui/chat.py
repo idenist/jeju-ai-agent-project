@@ -7,7 +7,7 @@ from datetime import date, timedelta
 import streamlit as st
 
 from core.latency import latency_logging_enabled, log_latency
-from presenters.reporting import manual_price_warning
+from presenters.reporting import _number, manual_price_warning
 from presenters.presentation import render_dialogue
 from services.task_context import data_revision
 
@@ -194,7 +194,7 @@ def _submit_shipment_question(example=None, *, timing_lookup=None, pair_edit=Non
         if latency_logging_enabled():
             messages[-1]["submitted_ms"] = int(time() * 1000)
 
-def _render_shipment_composer(disabled, show_examples, *, busy=False):
+def _render_shipment_composer(disabled, show_examples, *, busy=False, quote_context=None):
     if show_examples:
         examples = (
             ("지금 팔지 더 보관할지 비교", "감귤을 지금 팔 때와 더 보관하고 팔 때를 비교해 주세요."),
@@ -205,6 +205,10 @@ def _render_shipment_composer(disabled, show_examples, *, busy=False):
                 st.button(label, disabled=disabled, on_click=_submit_shipment_question, args=(example,))
     suffix = "_busy" if busy else ""
     with st.container(key=f"shipment_composer{suffix}"):
+        # Keep the form at the same position when the busy composer becomes editable.
+        status = st.empty()
+        if quote_context:
+            status.caption(quote_context)
         with st.form(f"shipment_chat{suffix}", clear_on_submit=True, border=False):
             field, action = st.columns([5, 1], vertical_alignment="bottom")
             field.text_input(
@@ -355,11 +359,47 @@ def _render_pending_pair_price(ws, messages):
         if st.session_state.pop(f"{key}_missing", False) and price is None:
             st.warning("나중 출하의 가정 단가를 입력해 주세요.")
 
+def _pending_quote_context(ws):
+    from services.shipment_timing import resolve_pair_dates
+
+    def date_label(day):
+        return f"{day.month}월 {day.day}일"
+
+    if candidate := ws.session.current_shipment_candidates():
+        pending = candidate.pending_quote
+        if pending is None or pending.day not in candidate.eligible:
+            return None
+        field = {"gross": "수수료 차감 전 단가(원/kg)", "commission_net": "수수료 차감 후 단가(원/kg)"}.get(
+            pending.required_basis, "상자 한 개 무게(kg)" if pending.box else "단가(원/kg)"
+        )
+        return f"확인 중 · {date_label(pending.day)} 견적 · {field}"
+
+    pair = ws.session.future_pair
+    quote = pair.box_price
+    if quote is None:
+        return None
+    if quote.side is None:
+        return "확인 중 · 상자 견적 · 먼저 또는 나중 출하"
+    earlier, later = resolve_pair_dates(pair.inputs)
+    shipment_day = earlier if quote.side == "A" else later
+    label = f"{quote.side}안"
+    if shipment_day:
+        label += f"({date_label(date.fromisoformat(shipment_day))})"
+    if quote.weight is None:
+        field = "상자 한 개 무게(kg)"
+    elif quote.unit_price <= 0:
+        field = "상자 가격과 무게"
+    else:
+        field = f"{_number(quote.unit_price)}원/kg 적용 여부"
+    return f"확인 중 · {label} · {field}"
+
+
 def _render_box_price_actions(pair):
     quote = pair.box_price
     if quote is None or quote.side is None or quote.weight is None or quote.unit_price <= 0:
         return
-    st.button("이 단가로 적용", type="primary", key=f"chat_confirm_box_price_{pair.version}",
+    st.button(f"{quote.side}안에 {_number(quote.unit_price)}원/kg 적용", type="primary",
+              key=f"chat_confirm_box_price_{pair.version}",
               on_click=_submit_shipment_question, args=("네, 맞아요.",))
     with st.expander("무게 수정"):
         with st.form(f"chat_box_weight_{pair.version}", border=False):
@@ -406,6 +446,8 @@ def _chat_report(ws, reply):
         return {
             "kind": "future_pair", "version": pair["future_pair_version"],
             "entries": [{"tool": "compare_future_pair", "result": result}],
+            "market_requested": reply.get("market_observation_requested", False),
+            "market_draft_spec": state.inputs.get("history_filters"),
         }
     if not any(item["tool"] == "compare_shipment_options" and item["result"]["status"] == "OK"
                for item in reply.get("visible_results", [])):
@@ -460,7 +502,41 @@ def _latest_chat_report(messages, version, current_pair, pair_version=None, *, t
             break
     return None, None
 
+
+def _candidate_timing_report(messages, eligible_dates):
+    """Reuse the newest #855 lookup for the current dates without its economic attachment."""
+    from services.shipment_timing_bundle import json_from_entries, report_entries, source_fingerprint
+
+    eligible = {day.isoformat() for day in eligible_dates}
+    if len(eligible) < 2:
+        return None, None
+    for index in range(len(messages) - 1, -1, -1):
+        report = messages[index].get("reply", {}).get("chat_report")
+        if not report or report["kind"] != "shipment_timing":
+            continue
+        timing = next(entry["result"] for entry in report["entries"] if entry["tool"] == "analyze_shipment_timing")
+        query = timing["input"]
+        observed = {query["option_a_date"], query["option_b_date"]}
+        if len(observed) != 2 or not observed <= eligible or tuple(report["source_fingerprint"]) != source_fingerprint():
+            return None, None
+        if len(report["entries"]) == 1:
+            return index, report
+        entries = report_entries(timing)
+        return index, {**report, "entries": entries, "json": json_from_entries(entries)}
+    return None, None
+
+
+def _active_chat_report(ws, messages, current_pair):
+    if draft := ws.session.current_shipment_candidates():
+        return _candidate_timing_report(messages, draft.eligible)
+    return _latest_chat_report(messages, ws.store.version, current_pair, ws.session.future_pair.version)
+
+
 def _requested_chat_report(ws, messages, target=None):
+    if draft := ws.session.current_shipment_candidates():
+        if target == "timing":
+            return _candidate_timing_report(messages, draft.eligible)[1]
+        return {"kind": "shipment_candidates"} if draft.result is not None else None
     pair = ws.session.future_pair
     economic = pair.current_result()
     _, report = _latest_chat_report(messages, ws.store.version, economic, pair.version, target=target)
@@ -491,7 +567,9 @@ def _render_chat_report(report):
         render_integrated_chat_report(report)
     elif report["kind"] == "future_pair":
         from ui.future_pair_ui import render_future_pair_result
-        render_future_pair_result(report["entries"][0]["result"], "chat")
+        render_future_pair_result(report["entries"][0]["result"], "chat",
+                                  market_requested=report.get("market_requested", False),
+                                  market_draft_spec=report.get("market_draft_spec"))
     else:
         _render_report(report["entries"], chat_json=report["json"])
 
@@ -512,12 +590,13 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
         st.caption("예: 감귤 4톤을 11월 23일부터 말일까지 출하할 수 있어요. 언제 파는 게 좋을까요?")
 
     pair_state = ws.session.future_pair
+    candidate = ws.session.current_shipment_candidates()
     latest_pair_message = next((index for index in reversed(range(len(messages)))
                                 if any(entry["tool"] == "compare_future_pair"
                                        for entry in messages[index].get("reply", {}).get("visible_results", []))), None)
     previous_pair_actions = None
     previous_report_slot = None
-    report_index, previous_report = _latest_chat_report(messages, ws.store.version, current_pair, ws.session.future_pair.version)
+    report_index, previous_report = _active_chat_report(ws, messages, current_pair)
     transcript = st.container(key="shipment_transcript", height=640, border=False, autoscroll=False) if messages else None
     for index, message in enumerate(messages):
         with transcript.chat_message(message["role"]):
@@ -541,7 +620,7 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                     _render_chat_report(previous_report)
                 else:
                     previous_report_slot = st.empty()
-            if (pair is None or pair["status"] != "OK" or past_pair or index != latest_pair_message
+            if (candidate is not None or pair is None or pair["status"] != "OK" or past_pair or index != latest_pair_message
                     or draft_pending or settlement_dirty):
                 continue
             if pending is not None:
@@ -567,7 +646,8 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
             composer = st.empty()
     if pending is not None:
         with composer.container():
-            _render_shipment_composer(disabled=True, show_examples=False, busy=True)
+            _render_shipment_composer(disabled=True, show_examples=False, busy=True,
+                                      quote_context=_pending_quote_context(ws))
         with transcript.chat_message("assistant"):
             pending.pop("pending")
             started = pending.pop("started", None)
@@ -604,6 +684,9 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                 else:
                     message = ("방금 비교한 결과의 보고서입니다." if report else
                                "내려받을 최근 출하 비교 결과가 없습니다. 출하 조건을 비교한 뒤 다시 요청해 주세요.")
+                if report and report["kind"] == "shipment_candidates":
+                    message = "아래 후보일 비교 결과에서 PDF와 JSON을 받을 수 있어요."
+                    report = None
                 reply = {"status": "OK", "text": message, "state": ws.store.snapshot(), "chat_report": report}
                 steps, elapsed = [], None
             else:
@@ -615,6 +698,9 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                     st.session_state.last_agent_reply = {"status": reply["status"], "metrics": metrics}
             if "chat_report" not in reply:
                 reply["chat_report"] = _chat_report(ws, reply)
+            if reply.get("market_observation_excluded"):
+                st.session_state.pop("market_decision_custom_spec", None)
+                st.session_state.pop("market_decision_custom_scope", None)
             ready = monotonic()
             messages.append({"role": "assistant", "reply": {**reply, "progress_steps": steps,
                                                             "progress_elapsed": elapsed}})
@@ -632,16 +718,15 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                         }}
                     }}));
                     </script>""", unsafe_allow_javascript=True)
-            if report := reply.get("chat_report"):
-                _render_chat_report(report)
             pair = _chat_pair(reply)
             new_current_pair = pair_state.current_result()
-            if pair is not None and pair["status"] == "OK" and new_current_pair is not None:
+            active_report_index, active_report = _active_chat_report(ws, messages, new_current_pair)
+            if active_report_index == len(messages) - 1:
+                _render_chat_report(active_report)
+            candidate_now = ws.session.current_shipment_candidates()
+            if candidate_now is None and pair is not None and pair["status"] == "OK" and new_current_pair is not None:
                 _render_chat_pair_actions(ws, new_current_pair)
-        active_report_index, active_report = _latest_chat_report(
-            messages, ws.store.version, new_current_pair, pair_state.version
-        )
-        if pair is None and previous_pair_actions is not None:
+        if candidate_now is None and pair is None and previous_pair_actions is not None:
             slot, previous_pair = previous_pair_actions
             if previous_pair["future_pair_version"] == pair_state.version and new_current_pair is not None:
                 with slot.container():
@@ -649,11 +734,18 @@ def _render_shipment_chat(ws, key_present, draft_pending, settlement_dirty, curr
                                               timing_already_shown=bool(active_report and active_report["kind"] == "shipment_timing"))
         if previous_report_slot is not None and active_report_index == report_index:
             with previous_report_slot.container():
-                _render_chat_report(previous_report)
+                _render_chat_report(active_report)
     if transcript is not None and not (draft_pending or settlement_dirty):
         with transcript:
-            _render_chat_basis(ws, messages)
-            _render_pending_pair_price(ws, messages)
-            _render_box_price_actions(pair_state)
+            if candidate := ws.session.current_shipment_candidates():
+                from ui.shipment_candidates import render_shipment_candidates
+                last_reply = messages[-1].get("reply", {}) if messages else {}
+                render_shipment_candidates(candidate, last_reply_text=last_reply.get("text"))
+            else:
+                _render_chat_basis(ws, messages)
+                _render_pending_pair_price(ws, messages)
+                _render_box_price_actions(pair_state)
     with composer.container():
-        _render_shipment_composer(draft_pending or settlement_dirty, show_examples=not messages)
+        locked = draft_pending or settlement_dirty
+        _render_shipment_composer(locked, show_examples=not messages,
+                                  quote_context=None if locked else _pending_quote_context(ws))

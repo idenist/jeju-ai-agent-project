@@ -44,9 +44,17 @@ def render_dialogue(results: list[dict], *, question: str = "", pair_costs_defer
             sections.append(f"{result['confirmed_box_side']}안에 **{_number(result['confirmed_box_price'])}원/kg**을 적용했어요.")
         if result.get("analysis_type") == "future_pair" and result.get("status") == "OK":
             conclusion, minimum, favorable = future_pair_summary(result)
-            if result.get("threshold_only"):
-                from presenters.reporting import _render_future_pair
-                sections.insert(0, _render_future_pair(result))
+            if result.get("storage_cost_range"):
+                sections.insert(0, "\n\n".join(part for part in (f"**{conclusion}**", minimum, favorable) if part))
+            elif result.get("threshold_only"):
+                if result.get("history_scenarios"):
+                    from presenters.reporting import _render_future_pair
+                    sections.insert(0, _render_future_pair(result))
+                else:
+                    missing = result.get("unknown_cost_fields", ())
+                    next_step = (f"먼저 {missing[0]}부터 확인해 주세요." if missing else
+                                 "판매처에 나중 출하 때 받을 kg당 단가를 확인해 보세요.")
+                    sections.insert(0, f"**{minimum}**\n\n{next_step}")
             else:
                 a, b = result["option_a"], result["options_b"][0]
                 warning = manual_price_warning(a["price_per_kg"], b["price_per_kg"]) if b["id"] == "manual_b" else None
