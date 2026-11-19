@@ -27,13 +27,13 @@ class 통합모델평가기검수(unittest.TestCase):
 
     def test_고정_평가셋의_개수와_다중턴_검증(self):
         cases = evaluator.load_cases()
-        self.assertEqual(len(cases), 31)
-        self.assertEqual(sum(len(x["turns"]) for x in cases), 97)
-        self.assertEqual(len({x["id"] for x in cases}), 31)
+        self.assertEqual(len(cases), 36)
+        self.assertEqual(sum(len(x["turns"]) for x in cases), 148)
+        self.assertEqual(len({x["id"] for x in cases}), 36)
         self.assertEqual([x["id"] for x in cases if x["setup"] == "candidate_comparison"],
                          [f"INT-{n}" for n in range(23, 29)])
         fresh = [x for x in cases if x["turns"][0].get("candidate", {}).get("opens")]
-        self.assertEqual([x["id"] for x in fresh], ["INT-29", "INT-30", "INT-31"])
+        self.assertEqual([x["id"] for x in fresh], [f"INT-{n}" for n in range(29, 37)])
         self.assertTrue(all(x["setup"] == "empty" and sum(t.get("require_model", False) for t in x["turns"]) == 1
                             for x in fresh))
 
@@ -55,7 +55,7 @@ class 통합모델평가기검수(unittest.TestCase):
         with patch.object(evaluator, "preflight") as check, redirect_stdout(output):
             result = evaluator.main(["--list"])
         self.assertEqual(result, 0)
-        self.assertIn("31개 / 자연어 턴: 92개 / 폼: 5단계", output.getvalue())
+        self.assertIn("36개 / 자연어 턴: 138개 / 폼: 10단계", output.getvalue())
         check.assert_not_called()
 
     def test_기본_검증은_실제_모델_호출을_하지_않음(self):
@@ -200,13 +200,96 @@ class 통합모델평가기검수(unittest.TestCase):
     def test_빈_상태_후보일_평가의_실제_모델_단계는_키가_없으면_통과하지_않는다(self):
         from core.config import Settings
 
-        for case in evaluator.load_cases()[-3:]:
+        for case in (case for case in evaluator.load_cases() if case["turns"][0].get("candidate", {}).get("opens")):
             with self.subTest(case=case["id"]):
                 result = evaluator.run_case(case, Settings())
                 self.assertEqual(result["completed_turns"], result["expected_turns"])
                 failed = [turn for turn in result["turns"] if not turn["passed"]]
-                self.assertEqual(len(failed), 1)
+                self.assertEqual(len(failed), 1, [(turn["turn_index"], turn["failures"]) for turn in failed])
                 self.assertIn("missing_real_model_request", failed[0]["failures"])
+
+    def test_출하량_원천_파일이_없어도_후보일을_유지하고_견적을_등록한다(self):
+        from core.config import Settings
+
+        case = deepcopy(next(case for case in evaluator.load_cases() if case["id"] == "INT-32"))
+        case["turns"] = case["turns"][:5]
+        lookup = case["turns"][3]["expect"][0]
+        lookup.update(status="DATA_ERROR", fields={"is_future_forecast": False, "error_kind": "FileNotFoundError"})
+        with patch("services.shipment_timing._load", side_effect=FileNotFoundError):
+            result = evaluator.run_case(case, Settings())
+        self.assertTrue(result["passed"], [turn["failures"] for turn in result["turns"]])
+
+    def test_같은_후보일_출하량_재조회에_실패하면_이전_다운로드를_숨긴다(self):
+        from core.config import Settings
+        from ui.chat import _chat_report, _requested_chat_report
+
+        case = next(case for case in evaluator.load_cases() if case["id"] == "INT-32")
+        turns = case["turns"]
+        workspace = evaluator.create_workspace(Settings(), "empty")
+        with patch("services.data_refresh.kst_today", return_value=date(2026, 11, 14)):
+            workspace.run(turns[0]["user"])
+            self.assertTrue(evaluator._submit_candidate_form(workspace, turns[1]["candidate_form"]))
+            workspace.run(turns[2]["user"])
+            first = workspace.run(turns[3]["user"])
+            first["chat_report"] = _chat_report(workspace, first)
+            messages = [{"reply": first}]
+            self.assertEqual(_requested_chat_report(workspace, messages, "timing")["kind"], "shipment_timing")
+            with patch("services.shipment_timing._load", side_effect=FileNotFoundError):
+                failed_lookup = workspace.run(turns[2]["user"])
+            self.assertEqual(failed_lookup["visible_results"][0]["result"]["status"], "DATA_ERROR")
+            failed_lookup["chat_report"] = _chat_report(workspace, failed_lookup)
+            messages.append({"reply": failed_lookup})
+        self.assertIsNone(_requested_chat_report(workspace, messages, "timing"))
+        self.assertIsNone(_requested_chat_report(workspace, messages, "comparison"))
+
+    def test_보관비_정정_확인_중에도_같은_날짜의_출하량_보고서는_받을_수_있다(self):
+        from core.config import Settings
+        from ui.chat import _chat_report, _requested_chat_report
+
+        case = next(case for case in evaluator.load_cases() if case["id"] == "INT-36")
+        turns = case["turns"]
+        workspace = evaluator.create_workspace(Settings(), "empty")
+        with patch("services.data_refresh.kst_today", return_value=date(2026, 11, 14)):
+            workspace.run(turns[0]["user"])
+            self.assertTrue(evaluator._submit_candidate_form(workspace, turns[1]["candidate_form"]))
+            for turn in turns[2:8]:
+                workspace.run(turn["user"])
+            timing = workspace.run("같은 두 날짜의 과거 출하량도 보여 주세요.")
+            timing["chat_report"] = _chat_report(workspace, timing)
+            messages = [{"reply": timing}]
+            timing_report = _requested_chat_report(workspace, messages, "timing")
+            self.assertEqual(timing_report["kind"], "shipment_timing")
+            self.assertEqual(_requested_chat_report(workspace, messages, "comparison")["kind"], "shipment_candidates")
+
+            example = deepcopy(timing)
+            example["metrics"]["dialogue_route"] = "read_only_conditions"
+            example["chat_report"]["entries"][0]["result"]["input"]["shipment_variety"] = "레드향"
+            messages.append({"reply": example})
+            self.assertEqual(_requested_chat_report(workspace, messages, "timing")["json"], timing_report["json"])
+
+            pending = workspace.run("보관비 청구 방식을 바꿔 주세요")
+            messages.append({"reply": pending})
+            self.assertIsNone(_requested_chat_report(workspace, messages, "comparison"))
+            self.assertEqual(_requested_chat_report(workspace, messages, "timing")["json"], timing_report["json"])
+
+            updated = workspace.run("정액 말고 일할로 해주세요")
+            messages.append({"reply": updated})
+            self.assertEqual(workspace.session.current_shipment_candidates().result["storage_billing"]["mode"], "prorated")
+            self.assertEqual(_requested_chat_report(workspace, messages, "comparison")["kind"], "shipment_candidates")
+            self.assertEqual(_requested_chat_report(workspace, messages, "timing")["json"], timing_report["json"])
+
+            draft = workspace.session.current_shipment_candidates()
+            revision, result = draft.revision, deepcopy(draft.result)
+            workspace.run(turns[-1]["user"])
+            self.assertEqual(draft.revision, revision)
+            self.assertEqual(draft.result, result)
+
+            for text in ("정액 말고 일할로 해주세요", "정액이 아니라 일할이래요"):
+                with self.subTest(correction=text):
+                    workspace.run("보관비는 정액으로 바꿔 주세요")
+                    self.assertEqual(draft.result["storage_billing"]["mode"], "fixed")
+                    workspace.run(text)
+                    self.assertEqual(draft.result, result)
 
     def test_불확실한_중량은_조회_성공_금지를_판정(self):
         spec = {"forbid_success": ["get_price_history"]}
