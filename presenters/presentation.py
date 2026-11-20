@@ -1,0 +1,134 @@
+"""One verified result set for the conversation, export, and acceptance checks."""
+from __future__ import annotations
+
+from copy import deepcopy
+from presenters.reporting import future_pair_summary, manual_price_warning, render_report, render_result, FIELD_NAMES, _field, _number
+
+
+def select_results(results: list[dict], version: int) -> list[dict]:
+    expanded = []
+    for entry in results:
+        if entry["tool"] == "build_review_brief" and entry["result"].get("analysis_type") == "review_brief":
+            if entry["result"].get("scenario_version") != version:
+                continue
+            summary = {k: v for k, v in entry["result"].items() if k != "components"}
+            expanded.append({"tool": "build_review_brief", "result": summary})
+            for component in entry["result"]["components"]:
+                item = deepcopy(component)
+                item["result"]["scenario_version"] = version
+                expanded.append(item)
+        else:
+            expanded.append(entry)
+    results = expanded
+    visible = [x for x in results if x["tool"] != "update_scenario" and
+               (x["tool"] not in {"compare_shipment_options", "compare_sensitivity", "explain_decision_conditions", "build_review_brief", "solve_offer_limits", "review_case_changes"} or x["result"].get("scenario_version") == version)]
+    sensitivities = [x for x in visible if x["tool"] == "compare_sensitivity"]
+    if sensitivities:
+        visible = [x for x in visible if x["tool"] != "compare_sensitivity"] + [sensitivities[-1]]
+    comparisons = [x for x in visible if x["tool"] == "compare_shipment_options"]
+    if comparisons:
+        visible = [x for x in visible if x["tool"] != "compare_shipment_options"] + [comparisons[-1]]
+    future_pairs = [x for x in visible if x["tool"] == "compare_future_pair"]
+    if future_pairs:
+        visible = [x for x in visible if x["tool"] != "compare_future_pair"] + [future_pairs[-1]]
+    return deepcopy(visible or [x for x in results if x["result"].get("status") != "OK"])
+
+
+def render_dialogue(results: list[dict], *, question: str = "", pair_costs_deferred=False,
+                    pair_specs_deferred=False, pair_one_question=False) -> str:
+    """Concise questions; canonical Python numbers and evidence remain unchanged."""
+    sections = []
+    for entry in results:
+        result = entry["result"]
+        if "confirmed_box_price" in result:
+            sections.append(f"{result['confirmed_box_side']}안에 **{_number(result['confirmed_box_price'])}원/kg**을 적용했어요.")
+        if result.get("analysis_type") == "future_pair" and result.get("status") == "OK":
+            conclusion, minimum, favorable = future_pair_summary(result)
+            if result.get("threshold_only"):
+                from presenters.reporting import _render_future_pair
+                sections.insert(0, _render_future_pair(result))
+            else:
+                a, b = result["option_a"], result["options_b"][0]
+                warning = manual_price_warning(a["price_per_kg"], b["price_per_kg"]) if b["id"] == "manual_b" else None
+                sections.insert(0, "\n\n".join(part for part in
+                                                (f"**{conclusion}**", minimum, favorable, warning) if part))
+        elif result.get("analysis_type") == "future_pair":
+            from agents.future_pair_state import future_pair_feedback, history_clarification, unavailable_cost
+            sections.append(history_clarification(result, question, pause_specs=pair_specs_deferred,
+                                                   one_question=pair_one_question) or
+                            future_pair_feedback(result, pause_costs=pair_costs_deferred or unavailable_cost(question),
+                                                 one_question=pair_one_question))
+        elif result.get("analysis_type") in {"price_history", "price_overview"}:
+            sections.append(render_result(result))
+        elif result.get("analysis_type") == "shipment_timing":
+            from services.shipment_timing import format_timing_report
+            sections.append(format_timing_report(result, details=False))
+        elif entry["tool"] == "get_historical_shipment_context" and result.get("status") == "NO_DATA":
+            sections.append(render_result(result))
+            query = result.get("input", {})
+            variety = query.get("shipment_variety")
+            month = query.get("target_month")
+            if variety in result.get("available_varieties", ()) and month:
+                sections.append(f"같은 품종의 다른 해 {month}월 자료를 찾아볼 수 있어요. "
+                                f"‘{variety}의 다른 해 {month}월 출하량을 보여줘’라고 말해 주세요.")
+        elif entry["tool"] == "get_market_evidence" and result.get("status") == "NEEDS_INPUT":
+            sections.append("이 조회는 특정 상품 규격의 가격을 확인하는 기능입니다. "
+                            "대략적인 가격은 등급·포장을 몰라도 기간별 시장가격 요약으로 볼 수 있습니다. "
+                            "시장코드 대신 시장 이름으로 말씀하시면 됩니다.")
+        elif result.get("status") == "NEEDS_INPUT" and result.get("missing_fields"):
+            fields = result["missing_fields"]
+            from agents.future_pair_state import asks_where_to_check, unavailable_cost
+            if entry["tool"] == "compare_shipment_options" and unavailable_cost(question):
+                text = "과거 출하량부터 볼까요? 품종과 비교하고 싶은 날짜를 알려주세요."
+                if asks_where_to_check(question):
+                    text += ("\n\n보관료는 저장고 청구서나 견적서에서 확인할 수 있어요. "
+                             "줄어드는 양은 보관 전후에 팔 수 있는 감귤 무게를 재서 확인해 보세요.")
+                sections.append(text)
+                continue
+            first, rest = fields[:3], fields[3:]
+            prompts = {
+                "quantity_kg": "비교할 감귤은 몇 kg인가요? 톤으로 알려주셔도 됩니다.",
+                "current_price_per_kg": "지금 실제로 제시받은 가격은 kg당 얼마인가요?",
+                "price_basis": "그 가격은 판매수수료를 뺀 금액인가요, 빼기 전인가요?",
+                "included_costs": "그 단가에서 이미 차감한 비용은 무엇인가요? 예: 수수료만 / 수수료·포장비 / 없음.",
+                "cost_policy": "보관비 외 선별·포장·운송비는 두 출하 시점에서 같나요? 다르면 각각 알려주세요.",
+                "options": "며칠 보관하는 대안과 비교할까요?",
+                "loss_values": "민감도 표에 사용할 기간 전체 감모율 가정은 각각 몇 %인가요? 알고 있는 값만 직접 정해 주세요.",
+            }
+            def prompt(field):
+                if field in prompts:
+                    return prompts[field]
+                if field.endswith(".loss_percent"):
+                    return f"{_field(field)}을 알려주세요. 하루 비율이 아니라 해당 보관기간 전체 비율입니다."
+                if field.endswith(".daily_storage_cost"):
+                    return f"{_field(field)}은 얼마인가요? 전체 물량의 하루 비용이며, 없으면 0원이라고 확인해 주세요."
+                return f"{_field(field)}을 알려주세요."
+            text = "계산하려면 아래 조건을 먼저 확인해야 합니다.\n\n" + "\n".join(f"- {prompt(f)}" for f in first)
+            if rest:
+                text += "\n\n이후 확인할 조건: " + ", ".join(_field(f) for f in rest) + ". 알고 계시면 함께 알려주세요."
+            text += "\n\n모르는 값은 ‘미확인’으로 두겠습니다. 가정으로 비교하려면 사용할 값을 직접 정해 주세요."
+            sections.append(text)
+        else:
+            sections.append(render_result(result))
+    return "\n\n".join(sections)
+
+
+def connection_label(key_present: bool, last_reply: dict | None) -> str:
+    if not key_present:
+        return "API 키 미설정 · 직접 도구 사용 가능"
+    if not last_reply:
+        return "API 키 설정됨 · 실제 호출 전"
+    metrics = last_reply.get("metrics", {})
+    if last_reply.get("status") in {"API_ERROR", "CONNECTION_ERROR", "API_TIMEOUT", "AUTH_ERROR", "RATE_LIMITED"}:
+        return "마지막 모델 호출 실패 · 설정·연결 확인 필요"
+    if last_reply.get("status") == "INTERNAL_ERROR":
+        return "실행 처리 오류 · 직접 비교 가능, 운영자 점검 필요"
+    if last_reply.get("status") in {"TIME_LIMIT", "TOOL_LIMIT", "REPEATED_TOOL_CALL", "CONTEXT_LIMIT", "LIMIT_REACHED"}:
+        return "실행 한도 도달 · 조건 유지, 직접 비교 가능"
+    if metrics.get("model_requests", 0) and last_reply.get("status") == "OK":
+        return "실제 모델 호출 성공 · 마지막 실행 기준"
+    return "모델 실행 미완료 · 실행 상태 확인 필요"
+
+
+def report_for(results: list[dict]) -> str:
+    return render_report(results) if results else "확인된 조회·계산 결과가 없습니다."

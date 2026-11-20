@@ -1,0 +1,108 @@
+{
+  "purpose": "제주 감귤 경매 수집 원본을 data/seasons/<season>/raw/에 배치",
+  "source": "사용자가 제공한 CSV 및 경매_원본_데이터.zip",
+  "seasons": {
+    "2023-2024": {
+      "files": 1,
+      "bytes": 57240332
+    },
+    "2024-2025": {
+      "files": 5,
+      "bytes": 56162083
+    },
+    "2025-2026": {
+      "files": 5,
+      "bytes": 65442228
+    },
+    "2026-2027": {
+      "files": 2,
+      "bytes": 14678373
+    }
+  },
+  "files": [
+    {
+      "path": "data/seasons/2023-2024/raw/auction_trades.csv",
+      "bytes": 57240332,
+      "sha256": "a2ee32ce421c2410ba916924d7a6d16462d594f9f7740e2d672d73e4b66452bb",
+      "source": "source_01.csv (사용자가 업로드한 2023~2024 경매 원본)"
+    },
+    {
+      "path": "data/seasons/2024-2025/raw/2024-10-01_2024-10-21.csv",
+      "bytes": 5328050,
+      "sha256": "4247e10284aef114bde6fa357d223c44acebf3a8b0b0e6df216fc33df5319d8e",
+      "source": "경매_원본_데이터.zip/경매_raw/2024-2025/2024-10-01_2024-10-21.csv"
+    },
+    {
+      "path": "data/seasons/2024-2025/raw/2024-10-22_2024-11-30.csv",
+      "bytes": 15692524,
+      "sha256": "e405cd9c844c71f86364d5144574fd61145861e65ccfa347ecc730ae43167e5a",
+      "source": "경매_원본_데이터.zip/경매_raw/2024-2025/2024-10-22_2024-11-30.csv"
+    },
+    {
+      "path": "data/seasons/2024-2025/raw/2024-12-01_2024-12-31.csv",
+      "bytes": 16296062,
+      "sha256": "b2709e0e93571259ccb05ad9127d6ed273c12a8e5db278fe324834d633cedd8a",
+      "source": "경매_원본_데이터.zip/경매_raw/2024-2025/2024-12-01_2024-12-31.csv"
+    },
+    {
+      "path": "data/seasons/2024-2025/raw/2025-01-01_2025-01-31.csv",
+      "bytes": 13232073,
+      "sha256": "e934dda1d95243b66ef972074aaa7709ed2b865c0cbef6bcaa38f6fd7e970bef",
+      "source": "경매_원본_데이터.zip/경매_raw/2024-2025/2025-01-01_2025-01-31.csv"
+    },
+    {
+      "path": "data/seasons/2024-2025/raw/2025-02-01_2025-02-28.csv",
+      "bytes": 5613374,
+      "sha256": "4316b40aa0c6fd5f56f27d4c5a4ef6ca9cc493c0fe03b11d0e1b71e015b895c3",
+      "source": "경매_원본_데이터.zip/경매_raw/2024-2025/2025-02-01_2025-02-28.csv"
+    },
+    {
+      "path": "data/seasons/2025-2026/raw/2025-10-01_2025-11-03.csv",
+      "bytes": 8867966,
+      "sha256": "b12aef7557ef664d7782fb7bcb44f267a2a718f34be5898b058cab34d55c18b8",
+      "source": "경매_원본_데이터.zip/경매_raw/2025-2026/2025-10-01_2025-11-03.csv"
+    },
+    {
+      "path": "data/seasons/2025-2026/raw/2025-11-04_2025-11-30.csv",
+      "bytes": 12773342,
+      "sha256": "40f2d845fd8e3113123d539a737f2892b28f57aa5f5b75273fa13a3ed7060cf5",
+      "source": "경매_원본_데이터.zip/경매_raw/2025-2026/2025-11-04_2025-11-30.csv"
+    },
+    {
+      "path": "data/seasons/2025-2026/raw/2025-12-01_2025-12-31.csv",
+      "bytes": 18090764,
+      "sha256": "03cec0d28db7bac5d8b8bcad5cea797ff2f75922ee9f856d76ab1313fcd9cd18",
+      "source": "경매_원본_데이터.zip/경매_raw/2025-2026/2025-12-01_2025-12-31.csv"
+    },
+    {
+      "path": "data/seasons/2025-2026/raw/2026-01-01_2026-01-31.csv",
+      "bytes": 16591508,
+      "sha256": "64116e50cc5c32bcf0735831d06030dffe6af53333fc291021b847ec611bab2a",
+      "source": "경매_원본_데이터.zip/경매_raw/2025-2026/2026-01-01_2026-01-31.csv"
+    },
+    {
+      "path": "data/seasons/2025-2026/raw/2026-02-01_2026-02-28.csv",
+      "bytes": 9118648,
+      "sha256": "06c9ed450be9d17a444fa143f11d8ba7da00572aa32c31c2a70f95fe98bcb8e0",
+      "source": "경매_원본_데이터.zip/경매_raw/2025-2026/2026-02-01_2026-02-28.csv"
+    },
+    {
+      "path": "data/seasons/2026-2027/raw/2026-10-01_2026-11-03.csv",
+      "bytes": 10409421,
+      "sha256": "e3f704e3d91f5d9d3ce6eca6220940727225d02aa745093b43066518a2b77de6",
+      "source": "경매_원본_데이터.zip/경매_raw/2026-2027/2026-10-01_2026-11-03.csv"
+    },
+    {
+      "path": "data/seasons/2026-2027/raw/2026-11-04_2026-11-13.csv",
+      "bytes": 4268952,
+      "sha256": "6861a1698c98e6a21e203e87212122e80d9428821101b60e595de6dddb559c78",
+      "source": "경매_원본_데이터.zip/경매_raw/2026-2027/2026-11-04_2026-11-13.csv"
+    }
+  ],
+  "agent_activated": false,
+  "extraction_root": "project root (app.py directory)",
+  "notes": [
+    "Existing processed data files are not included or overwritten.",
+    "2026-2027 is partial through 2026-11-13."
+  ]
+}

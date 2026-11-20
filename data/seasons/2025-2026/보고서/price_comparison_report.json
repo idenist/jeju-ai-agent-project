@@ -1,0 +1,713 @@
+{
+  "calendar_basis": "calendar_days_exact_date",
+  "interval_days": [
+    3,
+    7,
+    14
+  ],
+  "key_fields": [
+    "market_code",
+    "variety_code",
+    "grade_code",
+    "size_code",
+    "package",
+    "package_kg",
+    "trade_type"
+  ],
+  "input_rows": 6023,
+  "distinct_condition_keys": 458,
+  "observed_date_min": "2025-10-01",
+  "observed_date_max": "2026-02-28",
+  "observed_dates_by_market": {
+    "110001": [
+      "2025-10-01",
+      "2025-10-02",
+      "2025-10-03",
+      "2025-10-04",
+      "2025-10-09",
+      "2025-10-10",
+      "2025-10-11",
+      "2025-10-13",
+      "2025-10-14",
+      "2025-10-15",
+      "2025-10-16",
+      "2025-10-17",
+      "2025-10-18",
+      "2025-10-20",
+      "2025-10-21",
+      "2025-10-22",
+      "2025-10-23",
+      "2025-10-24",
+      "2025-10-25",
+      "2025-10-27",
+      "2025-10-28",
+      "2025-10-29",
+      "2025-10-30",
+      "2025-10-31",
+      "2025-11-03",
+      "2025-11-04",
+      "2025-11-05",
+      "2025-11-06",
+      "2025-11-07",
+      "2025-11-08",
+      "2025-11-10",
+      "2025-11-11",
+      "2025-11-12",
+      "2025-11-13",
+      "2025-11-14",
+      "2025-11-15",
+      "2025-11-17",
+      "2025-11-18",
+      "2025-11-19",
+      "2025-11-20",
+      "2025-11-21",
+      "2025-11-22",
+      "2025-11-24",
+      "2025-11-25",
+      "2025-11-26",
+      "2025-11-27",
+      "2025-11-28",
+      "2025-11-29",
+      "2025-12-01",
+      "2025-12-02",
+      "2025-12-03",
+      "2025-12-04",
+      "2025-12-05",
+      "2025-12-06",
+      "2025-12-08",
+      "2025-12-09",
+      "2025-12-10",
+      "2025-12-11",
+      "2025-12-12",
+      "2025-12-15",
+      "2025-12-16",
+      "2025-12-17",
+      "2025-12-18",
+      "2025-12-19",
+      "2025-12-20",
+      "2025-12-22",
+      "2025-12-23",
+      "2025-12-24",
+      "2025-12-25",
+      "2025-12-26",
+      "2025-12-27",
+      "2025-12-29",
+      "2025-12-30",
+      "2025-12-31",
+      "2026-01-03",
+      "2026-01-05",
+      "2026-01-06",
+      "2026-01-07",
+      "2026-01-08",
+      "2026-01-09",
+      "2026-01-10",
+      "2026-01-12",
+      "2026-01-13",
+      "2026-01-14",
+      "2026-01-15",
+      "2026-01-16",
+      "2026-01-17",
+      "2026-01-19",
+      "2026-01-20",
+      "2026-01-21",
+      "2026-01-22",
+      "2026-01-23",
+      "2026-01-24",
+      "2026-01-26",
+      "2026-01-27",
+      "2026-01-28",
+      "2026-01-29",
+      "2026-01-30",
+      "2026-01-31",
+      "2026-02-02",
+      "2026-02-03",
+      "2026-02-04",
+      "2026-02-05",
+      "2026-02-06",
+      "2026-02-07",
+      "2026-02-09",
+      "2026-02-10",
+      "2026-02-11",
+      "2026-02-12",
+      "2026-02-13",
+      "2026-02-14",
+      "2026-02-16",
+      "2026-02-20",
+      "2026-02-21",
+      "2026-02-23",
+      "2026-02-24",
+      "2026-02-25",
+      "2026-02-26",
+      "2026-02-27",
+      "2026-02-28"
+    ]
+  },
+  "by_interval": {
+    "3": {
+      "attempts": 6023,
+      "matched_pairs": 3048,
+      "both_source_ok_pairs": 1047,
+      "comparable_without_warnings": 1047,
+      "matched_with_warnings": 2001,
+      "unavailable": 2975,
+      "unavailable_by_reason": {
+        "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 1414,
+        "NO_MATCHING_CONDITION": 1468,
+        "OUTSIDE_OBSERVED_RANGE": 93
+      }
+    },
+    "7": {
+      "attempts": 6023,
+      "matched_pairs": 3443,
+      "both_source_ok_pairs": 1180,
+      "comparable_without_warnings": 1180,
+      "matched_with_warnings": 2263,
+      "unavailable": 2580,
+      "unavailable_by_reason": {
+        "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 398,
+        "NO_MATCHING_CONDITION": 2004,
+        "OUTSIDE_OBSERVED_RANGE": 178
+      }
+    },
+    "14": {
+      "attempts": 6023,
+      "matched_pairs": 3041,
+      "both_source_ok_pairs": 1050,
+      "comparable_without_warnings": 1050,
+      "matched_with_warnings": 1991,
+      "unavailable": 2982,
+      "unavailable_by_reason": {
+        "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 308,
+        "NO_MATCHING_CONDITION": 2411,
+        "OUTSIDE_OBSERVED_RANGE": 263
+      }
+    }
+  },
+  "by_variety": [
+    {
+      "variety_code": "01",
+      "variety": "조생귤",
+      "input_rows": 1729,
+      "by_interval": {
+        "3": {
+          "attempts": 1729,
+          "matched_pairs": 1098,
+          "both_source_ok_pairs": 484,
+          "comparable_without_warnings": 484,
+          "matched_with_warnings": 614,
+          "unavailable": 631,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 358,
+            "NO_MATCHING_CONDITION": 235,
+            "OUTSIDE_OBSERVED_RANGE": 38
+          }
+        },
+        "7": {
+          "attempts": 1729,
+          "matched_pairs": 1266,
+          "both_source_ok_pairs": 565,
+          "comparable_without_warnings": 565,
+          "matched_with_warnings": 701,
+          "unavailable": 463,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 107,
+            "NO_MATCHING_CONDITION": 278,
+            "OUTSIDE_OBSERVED_RANGE": 78
+          }
+        },
+        "14": {
+          "attempts": 1729,
+          "matched_pairs": 1215,
+          "both_source_ok_pairs": 550,
+          "comparable_without_warnings": 550,
+          "matched_with_warnings": 665,
+          "unavailable": 514,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 103,
+            "NO_MATCHING_CONDITION": 288,
+            "OUTSIDE_OBSERVED_RANGE": 123
+          }
+        }
+      }
+    },
+    {
+      "variety_code": "04",
+      "variety": "비가림감귤",
+      "input_rows": 422,
+      "by_interval": {
+        "3": {
+          "attempts": 422,
+          "matched_pairs": 179,
+          "both_source_ok_pairs": 50,
+          "comparable_without_warnings": 50,
+          "matched_with_warnings": 129,
+          "unavailable": 243,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 94,
+            "NO_MATCHING_CONDITION": 120,
+            "OUTSIDE_OBSERVED_RANGE": 29
+          }
+        },
+        "7": {
+          "attempts": 422,
+          "matched_pairs": 172,
+          "both_source_ok_pairs": 40,
+          "comparable_without_warnings": 40,
+          "matched_with_warnings": 132,
+          "unavailable": 250,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 30,
+            "NO_MATCHING_CONDITION": 170,
+            "OUTSIDE_OBSERVED_RANGE": 50
+          }
+        },
+        "14": {
+          "attempts": 422,
+          "matched_pairs": 137,
+          "both_source_ok_pairs": 35,
+          "comparable_without_warnings": 35,
+          "matched_with_warnings": 102,
+          "unavailable": 285,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 37,
+            "NO_MATCHING_CONDITION": 179,
+            "OUTSIDE_OBSERVED_RANGE": 69
+          }
+        }
+      }
+    },
+    {
+      "variety_code": "05",
+      "variety": "하우스감귤",
+      "input_rows": 1685,
+      "by_interval": {
+        "3": {
+          "attempts": 1685,
+          "matched_pairs": 788,
+          "both_source_ok_pairs": 282,
+          "comparable_without_warnings": 282,
+          "matched_with_warnings": 506,
+          "unavailable": 897,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 451,
+            "NO_MATCHING_CONDITION": 424,
+            "OUTSIDE_OBSERVED_RANGE": 22
+          }
+        },
+        "7": {
+          "attempts": 1685,
+          "matched_pairs": 948,
+          "both_source_ok_pairs": 314,
+          "comparable_without_warnings": 314,
+          "matched_with_warnings": 634,
+          "unavailable": 737,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 107,
+            "NO_MATCHING_CONDITION": 595,
+            "OUTSIDE_OBSERVED_RANGE": 35
+          }
+        },
+        "14": {
+          "attempts": 1685,
+          "matched_pairs": 844,
+          "both_source_ok_pairs": 264,
+          "comparable_without_warnings": 264,
+          "matched_with_warnings": 580,
+          "unavailable": 841,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 64,
+            "NO_MATCHING_CONDITION": 727,
+            "OUTSIDE_OBSERVED_RANGE": 50
+          }
+        }
+      }
+    },
+    {
+      "variety_code": "06",
+      "variety": "극조생감귤",
+      "input_rows": 202,
+      "by_interval": {
+        "3": {
+          "attempts": 202,
+          "matched_pairs": 101,
+          "both_source_ok_pairs": 0,
+          "comparable_without_warnings": 0,
+          "matched_with_warnings": 101,
+          "unavailable": 101,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 43,
+            "NO_MATCHING_CONDITION": 58
+          }
+        },
+        "7": {
+          "attempts": 202,
+          "matched_pairs": 102,
+          "both_source_ok_pairs": 0,
+          "comparable_without_warnings": 0,
+          "matched_with_warnings": 102,
+          "unavailable": 100,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 4,
+            "NO_MATCHING_CONDITION": 96
+          }
+        },
+        "14": {
+          "attempts": 202,
+          "matched_pairs": 82,
+          "both_source_ok_pairs": 0,
+          "comparable_without_warnings": 0,
+          "matched_with_warnings": 82,
+          "unavailable": 120,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 3,
+            "NO_MATCHING_CONDITION": 117
+          }
+        }
+      }
+    },
+    {
+      "variety_code": "07",
+      "variety": "미분류(07)",
+      "input_rows": 130,
+      "by_interval": {
+        "3": {
+          "attempts": 130,
+          "matched_pairs": 51,
+          "both_source_ok_pairs": 13,
+          "comparable_without_warnings": 13,
+          "matched_with_warnings": 38,
+          "unavailable": 79,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 45,
+            "NO_MATCHING_CONDITION": 34
+          }
+        },
+        "7": {
+          "attempts": 130,
+          "matched_pairs": 39,
+          "both_source_ok_pairs": 9,
+          "comparable_without_warnings": 9,
+          "matched_with_warnings": 30,
+          "unavailable": 91,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 22,
+            "NO_MATCHING_CONDITION": 69
+          }
+        },
+        "14": {
+          "attempts": 130,
+          "matched_pairs": 14,
+          "both_source_ok_pairs": 1,
+          "comparable_without_warnings": 1,
+          "matched_with_warnings": 13,
+          "unavailable": 116,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 9,
+            "NO_MATCHING_CONDITION": 107
+          }
+        }
+      }
+    },
+    {
+      "variety_code": "08",
+      "variety": "황금향",
+      "input_rows": 1078,
+      "by_interval": {
+        "3": {
+          "attempts": 1078,
+          "matched_pairs": 510,
+          "both_source_ok_pairs": 83,
+          "comparable_without_warnings": 83,
+          "matched_with_warnings": 427,
+          "unavailable": 568,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 240,
+            "NO_MATCHING_CONDITION": 328
+          }
+        },
+        "7": {
+          "attempts": 1078,
+          "matched_pairs": 553,
+          "both_source_ok_pairs": 100,
+          "comparable_without_warnings": 100,
+          "matched_with_warnings": 453,
+          "unavailable": 525,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 72,
+            "NO_MATCHING_CONDITION": 453
+          }
+        },
+        "14": {
+          "attempts": 1078,
+          "matched_pairs": 448,
+          "both_source_ok_pairs": 77,
+          "comparable_without_warnings": 77,
+          "matched_with_warnings": 371,
+          "unavailable": 630,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 51,
+            "NO_MATCHING_CONDITION": 579
+          }
+        }
+      }
+    },
+    {
+      "variety_code": "09",
+      "variety": "미분류(09)",
+      "input_rows": 200,
+      "by_interval": {
+        "3": {
+          "attempts": 200,
+          "matched_pairs": 69,
+          "both_source_ok_pairs": 18,
+          "comparable_without_warnings": 18,
+          "matched_with_warnings": 51,
+          "unavailable": 131,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 59,
+            "NO_MATCHING_CONDITION": 72
+          }
+        },
+        "7": {
+          "attempts": 200,
+          "matched_pairs": 65,
+          "both_source_ok_pairs": 13,
+          "comparable_without_warnings": 13,
+          "matched_with_warnings": 52,
+          "unavailable": 135,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 25,
+            "NO_MATCHING_CONDITION": 110
+          }
+        },
+        "14": {
+          "attempts": 200,
+          "matched_pairs": 27,
+          "both_source_ok_pairs": 5,
+          "comparable_without_warnings": 5,
+          "matched_with_warnings": 22,
+          "unavailable": 173,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 11,
+            "NO_MATCHING_CONDITION": 162
+          }
+        }
+      }
+    },
+    {
+      "variety_code": "13",
+      "variety": "온주",
+      "input_rows": 306,
+      "by_interval": {
+        "3": {
+          "attempts": 306,
+          "matched_pairs": 165,
+          "both_source_ok_pairs": 117,
+          "comparable_without_warnings": 117,
+          "matched_with_warnings": 48,
+          "unavailable": 141,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 74,
+            "NO_MATCHING_CONDITION": 67
+          }
+        },
+        "7": {
+          "attempts": 306,
+          "matched_pairs": 198,
+          "both_source_ok_pairs": 139,
+          "comparable_without_warnings": 139,
+          "matched_with_warnings": 59,
+          "unavailable": 108,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 20,
+            "NO_MATCHING_CONDITION": 88
+          }
+        },
+        "14": {
+          "attempts": 306,
+          "matched_pairs": 191,
+          "both_source_ok_pairs": 118,
+          "comparable_without_warnings": 118,
+          "matched_with_warnings": 73,
+          "unavailable": 115,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 8,
+            "NO_MATCHING_CONDITION": 107
+          }
+        }
+      }
+    },
+    {
+      "variety_code": "15",
+      "variety": "성전",
+      "input_rows": 27,
+      "by_interval": {
+        "3": {
+          "attempts": 27,
+          "matched_pairs": 0,
+          "both_source_ok_pairs": 0,
+          "comparable_without_warnings": 0,
+          "matched_with_warnings": 0,
+          "unavailable": 27,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 8,
+            "NO_MATCHING_CONDITION": 19
+          }
+        },
+        "7": {
+          "attempts": 27,
+          "matched_pairs": 7,
+          "both_source_ok_pairs": 0,
+          "comparable_without_warnings": 0,
+          "matched_with_warnings": 7,
+          "unavailable": 20,
+          "unavailable_by_reason": {
+            "NO_MATCHING_CONDITION": 20
+          }
+        },
+        "14": {
+          "attempts": 27,
+          "matched_pairs": 3,
+          "both_source_ok_pairs": 0,
+          "comparable_without_warnings": 0,
+          "matched_with_warnings": 3,
+          "unavailable": 24,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 4,
+            "NO_MATCHING_CONDITION": 17,
+            "OUTSIDE_OBSERVED_RANGE": 3
+          }
+        }
+      }
+    },
+    {
+      "variety_code": "19",
+      "variety": "타이벡감귤",
+      "input_rows": 103,
+      "by_interval": {
+        "3": {
+          "attempts": 103,
+          "matched_pairs": 69,
+          "both_source_ok_pairs": 0,
+          "comparable_without_warnings": 0,
+          "matched_with_warnings": 69,
+          "unavailable": 34,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 20,
+            "NO_MATCHING_CONDITION": 11,
+            "OUTSIDE_OBSERVED_RANGE": 3
+          }
+        },
+        "7": {
+          "attempts": 103,
+          "matched_pairs": 82,
+          "both_source_ok_pairs": 0,
+          "comparable_without_warnings": 0,
+          "matched_with_warnings": 82,
+          "unavailable": 21,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 6,
+            "NO_MATCHING_CONDITION": 10,
+            "OUTSIDE_OBSERVED_RANGE": 5
+          }
+        },
+        "14": {
+          "attempts": 103,
+          "matched_pairs": 78,
+          "both_source_ok_pairs": 0,
+          "comparable_without_warnings": 0,
+          "matched_with_warnings": 78,
+          "unavailable": 25,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 7,
+            "NO_MATCHING_CONDITION": 10,
+            "OUTSIDE_OBSERVED_RANGE": 8
+          }
+        }
+      }
+    },
+    {
+      "variety_code": "99",
+      "variety": "기타",
+      "input_rows": 141,
+      "by_interval": {
+        "3": {
+          "attempts": 141,
+          "matched_pairs": 18,
+          "both_source_ok_pairs": 0,
+          "comparable_without_warnings": 0,
+          "matched_with_warnings": 18,
+          "unavailable": 123,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 22,
+            "NO_MATCHING_CONDITION": 100,
+            "OUTSIDE_OBSERVED_RANGE": 1
+          }
+        },
+        "7": {
+          "attempts": 141,
+          "matched_pairs": 11,
+          "both_source_ok_pairs": 0,
+          "comparable_without_warnings": 0,
+          "matched_with_warnings": 11,
+          "unavailable": 130,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 5,
+            "NO_MATCHING_CONDITION": 115,
+            "OUTSIDE_OBSERVED_RANGE": 10
+          }
+        },
+        "14": {
+          "attempts": 141,
+          "matched_pairs": 2,
+          "both_source_ok_pairs": 0,
+          "comparable_without_warnings": 0,
+          "matched_with_warnings": 2,
+          "unavailable": 139,
+          "unavailable_by_reason": {
+            "NO_MARKET_OBSERVATION_ON_TARGET_DATE": 11,
+            "NO_MATCHING_CONDITION": 118,
+            "OUTSIDE_OBSERVED_RANGE": 10
+          }
+        }
+      }
+    }
+  ],
+  "unavailable_reason_labels": {
+    "OUTSIDE_OBSERVED_RANGE": "비교일이 이 시장의 정제 가격 관측기간 밖",
+    "NO_MARKET_OBSERVATION_ON_TARGET_DATE": "비교일에 이 시장의 정제 가격 관측값 없음",
+    "NO_MATCHING_CONDITION": "비교일에 이 시장의 가격은 있으나 동일 조건 없음"
+  },
+  "comparison_warning_labels": {
+    "LOW_SAMPLE": "한쪽 이상 거래 건수 5건 미만",
+    "GRADE_UNKNOWN": "한쪽 이상 등급 미상",
+    "SIZE_UNKNOWN": "한쪽 이상 크기 미상",
+    "QUALITY_FLAG_MISSING": "품질 표시 누락",
+    "KEY_FIELD_UNKNOWN": "비교 조건 일부 미상",
+    "LABEL_MISMATCH": "같은 코드의 표시명이 날짜 간 다름"
+  },
+  "limitations": [
+    "과거 관측값 비교이며 미래 가격·보관 효과 예측이 아님",
+    "날짜쌍은 기준일·규격이 겹칠 수 있어 독립 표본 수나 농가 수가 아님",
+    "COMPARABLE은 현재 표시·규칙상 경고 없음이며 통계적 정확성 보장이 아님",
+    "미관측 원인은 휴장·미수집·거래 없음 등으로 단정하지 않음",
+    "거래정산일·경락가격은 농가 출하일·실수취액과 다름",
+    "현재 수집기간·시장 밖으로 결과를 일반화하지 않음",
+    "변동률은 정제 CSV에 표시된 소수점 둘째 자리 가격을 기준으로 계산"
+  ],
+  "input_file": "daily_prices.csv",
+  "input_sha256": "ff0a14316380f3887b91f8426b41d29b60308a732a45317bf2f236393cbe8551",
+  "units": {
+    "price": "KRW/kg",
+    "weight": "kg",
+    "price_change_pct": "percent, not fraction"
+  },
+  "pair_orientation": "target_date = base_date + interval_days",
+  "rows": 9532,
+  "availability_rows": 18069,
+  "output_hash_basis": "줄바꿈을 LF로 맞춘 파일 바이트의 SHA-256",
+  "output_sha256": {
+    "price_comparisons.csv": "28ab83c9485055d19cd9c8ceb6938112bc607d6e9f038ea2af4d4e8559800c77",
+    "price_comparison_availability.csv": "23206d2d57ebb2c7a16f8aac775cdad94c22c7ae8c78ac35194ac942e2627e52"
+  }
+}
